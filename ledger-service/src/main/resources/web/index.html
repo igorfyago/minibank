@@ -206,12 +206,12 @@
     margin-right:8px; animation:blink 1.6s infinite; }
   @keyframes blink { 50% { opacity:.2; } }
 
-  /* ticker + kafka log + trace */
-  .tick-item, .klog-item { display:flex; align-items:center; gap:9px; padding:4.5px 4px; border-radius:10px;
+  /* live activity + trace */
+  .tick-item { display:flex; align-items:center; gap:9px; padding:4.5px 4px; border-radius:10px;
     cursor:pointer; font-size:12px; }
   .tick-ic { width:24px !important; height:24px !important; font-size:12px !important; }
-  .tick-item.new, .klog-item.new { animation:slidein .25s ease; }
-  .tick-item:hover, .klog-item:hover { background:rgba(255,255,255,.04); }
+  .tick-item.new { animation:slidein .25s ease; }
+  .tick-item:hover { background:rgba(255,255,255,.04); }
   @keyframes slidein { from { opacity:0; transform:translateY(-7px); } }
   .tick-ic { width:28px; height:28px; border-radius:50%; background:#2b3245; display:flex; align-items:center;
     justify-content:center; font-size:13px; flex:none; }
@@ -220,8 +220,6 @@
   .chip { font-size:10.5px; border:1px solid var(--line); border-radius:999px; padding:1.5px 8px; color:var(--dim); flex:none; }
   .chip.eu { color:var(--accent); border-color:var(--accent); }
   .chip.uk { color:var(--violet); border-color:var(--violet); }
-  .klog-raw { display:none; color:var(--dim); font-size:11px; padding:2px 6px 8px 44px; word-break:break-all; }
-  .klog-item.open + .klog-raw { display:block; }
   .trace-step { display:flex; gap:12px; padding:7px 4px; border-left:2px solid var(--line); margin-left:8px;
     padding-left:16px; position:relative; font-size:12.5px; cursor:pointer; border-radius:0 10px 10px 0; }
   .trace-step:hover { background:rgba(255,255,255,.04); }
@@ -248,10 +246,33 @@
   /* inspector + interview map */
   .insp-title { color:var(--dim); font-size:11.5px; font-weight:600; text-transform:uppercase;
     letter-spacing:.04em; margin:12px 0 6px; }
-  .q-item { display:flex; align-items:center; gap:10px; padding:8px 6px; border-radius:10px;
-    cursor:pointer; font-size:12.5px; }
-  .q-item:hover { background:rgba(255,255,255,.04); }
-  .q-item.on { background:rgba(88,166,255,.1); }
+  .acc { border:1px solid var(--line); border-radius:12px; background:rgba(255,255,255,.02); min-width:0; }
+  .acc-head { display:flex; align-items:center; gap:10px; padding:10px 12px; cursor:pointer; border-radius:12px; }
+  .acc-head:hover { background:rgba(255,255,255,.04); }
+  .acc-chev { margin-left:auto; flex:none; color:var(--dim); transition:transform .18s; font-size:15px; }
+  .acc.open .acc-chev { transform:rotate(90deg); }
+  .acc-body { display:none; padding:2px 14px 12px; }
+  .acc.open .acc-body { display:block; }
+  .acc.open { border-color:rgba(139,148,255,.45); }
+  .acc:hover { border-color:var(--violet); }
+  .acc.open .acc-chev { color:var(--violet); }
+  .acc-flash { animation:tapeflash 1.2s ease-out; }
+  .q-ans { font-size:13px; line-height:1.55; margin:2px 0 10px; }
+  .c-ic { font-size:16px; flex:none; }
+  .c-one { display:block; color:var(--dim); font-size:11.5px; margin-top:2px; font-weight:400; }
+  .c-block { margin:8px 0; }
+  .c-block p { font-size:12.5px; line-height:1.5; margin-top:3px; }
+  .c-tag { font-size:9.5px; font-weight:700; letter-spacing:.1em; padding:2px 8px; border-radius:999px; text-transform:uppercase; }
+  .c-tag.now { background:rgba(46,204,113,.15); color:var(--green); }
+  .c-tag.big { background:rgba(139,148,255,.18); color:var(--accent); }
+  #cgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr)); gap:10px; align-items:start; margin-top:12px; }
+  #qmap { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(420px,100%),1fr)); gap:10px; align-items:start; }
+  #txgroups { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr)); gap:10px; }
+  .insp-divider { border-top:1px solid var(--line); margin-top:10px; padding-top:9px; font-weight:600; font-size:13px; }
+  #inspect-body { max-height:300px; overflow:auto; }
+  header h1 { cursor:pointer; }
+  
+  
   .q-badge { flex:none; min-width:30px; height:22px; border-radius:6px; background:var(--violet); color:#fff;
     font:700 11px system-ui; display:flex; align-items:center; justify-content:center; }
   .q-text { flex:1; }
@@ -302,9 +323,9 @@
     padding:10px 12px; font:11.5px/1.6 Consolas, monospace; color:#a5d6ff; white-space:pre; overflow-x:auto; }
 
   /* the ledger, grouped by transaction */
-  .txg { border:1px solid var(--line); border-radius:12px; padding:10px 13px; margin-bottom:9px; }
+  .txg { border:1px solid var(--line); border-radius:12px; padding:10px 13px; min-width:0; }
   .txg-head { display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:650; }
-  .txg-head .muted { font-weight:400; flex:1; }
+  .txg-head .muted { font-weight:400; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .txg-zero { font-size:10.5px; color:var(--green); border:1px solid rgba(63,185,80,.4); border-radius:999px;
     padding:1px 8px; }
   .txg-legs { margin-top:7px; }
@@ -313,7 +334,7 @@
   .txg-leg b { color:var(--text); font-weight:500; }
 
   /* the guide */
-  .guide { position:sticky; top:16px; align-self:start; max-height:calc(100vh - 32px); overflow:auto; }
+  .guide { max-height:640px; overflow:auto; }
   .guide-head { display:flex; align-items:center; margin-bottom:8px; }
   .guide-head h3 { font-size:15px; }
   .guide-tabs { display:flex; gap:6px; margin:8px 0 12px; }
@@ -327,7 +348,7 @@
   .stat:hover { background:rgba(255,255,255,.03); }
 
   /* x-ray map */
-  .xray-grid { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(0,1fr) 340px; gap:14px; align-items:start; }
+  .xray-grid { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(0,1fr); gap:14px; align-items:start; }
   .xcol { display:flex; flex-direction:column; gap:14px; min-width:0; }
   .xray-grid .card { padding:14px 16px; }
   #xsvg { display:block; }
@@ -339,10 +360,6 @@
   .node text { fill:var(--text); font-size:12px; font-weight:600; }
   .node .sub { fill:var(--dim); font-weight:400; font-size:10px; }
   .edge { stroke:var(--dim); stroke-width:1.5; marker-end:url(#arr); opacity:.7; }
-  #explain h3 { font-size:15px; margin-bottom:6px; }
-  #explain p { font-size:13px; color:var(--text); margin-bottom:8px; }
-  #explain .stat { display:flex; justify-content:space-between; border-top:1px solid var(--line);
-                   padding:5px 0; font-size:12.5px; }
   .light { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
   .ok { background:var(--green); box-shadow:0 0 8px var(--green); }
   .bad { background:var(--red); box-shadow:0 0 8px var(--red); }
@@ -409,6 +426,8 @@
     nav { overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
     nav::-webkit-scrollbar { display:none; }
     .tab-btn { padding:5px 12px; font-size:12px; white-space:nowrap; }
+    #xsvg { min-width:620px; }
+    #scalesvg { min-width:780px; }
     main { padding:12px; }
     .balance-num { font-size:38px; }
     .actions { gap:14px; }
@@ -426,7 +445,7 @@
 </head>
 <body>
 <header>
-  <h1>mini<span>bank</span></h1>
+  <h1 id="homelink">mini<span>bank</span></h1>
   <nav>
     <button class="tab-btn on" data-tab="app">App</button>
     <button class="tab-btn" data-tab="xray">X-ray</button>
@@ -573,11 +592,6 @@
           </div>
           <div id="trace-steps"></div>
         </div>
-        <div class="card" id="inspect-card" hidden>
-          <h2><span id="inspect-title">Inside</span>
-            <button class="ghost" style="float:right;padding:2px 10px" id="inspect-clear">✕</button></h2>
-          <div id="inspect-body"></div>
-        </div>
         <div class="card">
           <h2>The ecosystem, live</h2>
           <div class="eco-grid">
@@ -604,35 +618,41 @@
       </div>
 
       <div class="xcol">
+        <div class="card guide" id="guide">
+          <div class="guide-head"><span class="live-dot"></span><h3 id="guide-title">The Guide</h3></div>
+          <div class="guide-tabs">
+            <button data-d="plain" class="on">Plainly</button>
+            <button data-d="how">Mechanism</button>
+            <button data-d="win">Interview</button>
+          </div>
+          <div id="guide-body"><p class="muted">Click anything on the map · this panel answers for it: three depths, live numbers, and its actual database rows.</p></div>
+          <div id="guide-stats"></div>
+          <div id="inspect-wrap" hidden>
+            <div class="insp-divider"><span id="inspect-title">Inside</span>
+              <button class="ghost" style="float:right;padding:1px 9px" id="inspect-clear">✕</button></div>
+            <div id="inspect-body"></div>
+          </div>
+          <div id="guide-hint"></div>
+        </div>
         <div class="card">
           <h2>Live activity · every commit, publish and delivery</h2>
           <div id="ticker"><span class="muted">watching…</span></div>
         </div>
-        <div class="card">
-          <h2>The ledger it produced · every group sums to zero
-            <button class="mini" style="float:right" onclick="gotoStudio('eu','entries')">SQL ▸</button></h2>
-          <div id="txgroups"></div>
-        </div>
-      </div>
-
-      <div class="card guide" id="guide">
-        <div class="guide-head"><span class="live-dot"></span><h3 id="guide-title">The Guide</h3></div>
-        <div class="guide-tabs">
-          <button data-d="plain" class="on">Plainly</button>
-          <button data-d="how">Mechanism</button>
-          <button data-d="win">Interview</button>
-        </div>
-        <div id="guide-body"><p class="muted">Click any component, event, trace step or invariant · I explain it at three depths, with its live numbers.</p></div>
-        <div id="guide-stats"></div>
-        <div id="guide-hint"></div>
       </div>
     </div>
 
     <div class="card" style="margin-top:14px">
-      <h2>The same design at 75,000,000 customers · what scales is COUNTS, not concepts</h2>
-      <div class="muted" style="font-size:12.5px; margin-bottom:10px">The demo above runs every mechanism once.
-        Production multiplies them. Click any box · the Guide answers with the capacity math.</div>
-      <svg viewBox="0 0 980 380" width="100%">
+      <h2>The ledger it produced · every group sums to zero
+        <button class="mini" style="float:right" onclick="gotoStudio('eu','entries')">SQL ▸</button></h2>
+      <div id="txgroups"></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>The same design at 100,000,000 customers · what scales is COUNTS, not concepts</h2>
+      <div class="muted" style="font-size:12.5px; margin-bottom:10px">The demo above runs every mechanism once;
+        production multiplies them. Every concept below already lives somewhere in this demo · expand one (or click
+        a box in the diagram) and it says exactly where, and what changes at 100M.</div>
+      <svg id="scalesvg" viewBox="0 0 980 380" width="100%">
         <line class="edge" x1="150" y1="46" x2="185" y2="46"/>
         <line class="edge" x1="400" y1="46" x2="435" y2="46"/>
         <line class="edge" x1="610" y1="60" x2="610" y2="92"/>
@@ -665,12 +685,12 @@
           <text x="55" y="62" text-anchor="middle" class="sub" style="font-size:9.5px">+ 2 async read replicas</text></g>
         <g class="node" data-node="scale:replica" transform="translate(460,120)">
           <rect width="150" height="72" rx="10"/>
-          <text x="75" y="24" text-anchor="middle" style="font-size:11.5px">…shard k (≈20–40)</text>
+          <text x="75" y="24" text-anchor="middle" style="font-size:11.5px">…shard k (≈25-50)</text>
           <text x="75" y="42" text-anchor="middle" class="sub" style="font-size:9.5px">writes → primary only</text>
           <text x="75" y="56" text-anchor="middle" class="sub" style="font-size:9.5px">reads → replicas (ms stale)</text></g>
         <g class="node" data-node="scale:directory" transform="translate(10,120)">
           <rect width="150" height="60" rx="10"/><text x="75" y="26" text-anchor="middle">Directory</text>
-          <text x="75" y="43" text-anchor="middle" class="sub">75M rows ≈ GBs · cached everywhere</text></g>
+          <text x="75" y="43" text-anchor="middle" class="sub">100M rows ≈ GBs · cached everywhere</text></g>
         <g class="node" data-node="scale:kafka" transform="translate(180,248)">
           <rect width="380" height="52" rx="10"/><text x="190" y="22" text-anchor="middle">Kafka · 3+ brokers · RF=3 · min.insync=2</text>
           <text x="190" y="39" text-anchor="middle" class="sub">payments partitioned BY CUSTOMER → per-customer order survives scale</text></g>
@@ -686,14 +706,16 @@
         <g class="node" data-node="scale:shard" transform="translate(710,92)">
           <rect width="90" height="0" rx="0" style="fill:none;stroke:none"/></g>
       </svg>
+      <div id="cgrid"></div>
     </div>
 
     <div class="card" style="margin-top:14px">
       <h2>The interview map · 16 questions, and where this bank answers them</h2>
-      <div class="muted" style="font-size:12px;margin-bottom:8px">Run the hour like Revolut runs it:
-        <b>clarify</b> (requirements, throughput, consistency needs) → <b>high-level</b> (this map)
-        → <b>deep dive</b> (any question below) → <b>trade-offs</b> (the Interview tab of each answer)
-        → <b>wrap-up</b>. Strong consistency where money moves, eventual where echoes ripple · say it early.</div>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">Run the hour like the interviewer runs it:
+        <b>clarify</b> (requirements, throughput, consistency needs) → <b>high-level</b> (the map above)
+        → <b>deep dive</b> (any question here · the full answer opens in place, at three depths)
+        → <b>trade-offs</b> (each answer's Interview tab) → <b>wrap-up</b>.
+        Strong consistency where money moves, eventual where echoes ripple · say it early.</div>
       <div id="qmap"></div>
     </div>
 
@@ -1244,6 +1266,14 @@ const GUIDE = {
     plain: c => [`${evLine(c.ev)} · into its own database, deduped by event_key primary key.`],
     how: () => [`The feed the app shows is this table, not the ledger · a read model fed by events.`],
     win: () => [`Database-per-service: the ledger never grants anyone else a JOIN.`] },
+  'ev:trade': { t: 'A trade executed',
+    plain: c => [`${evLine(c.ev)}. One ACID transaction, four entries across two currencies: euros leave the customer and land on the broker, units of the asset go the other way. Each currency sums to zero on its own.`],
+    how: () => [`The execution price is written into the trade event · euros and units live in the ledger, their ratio IS the price paid. No position table exists; holdings are just an account in another currency.`],
+    win: () => [`Multi-currency double-entry: the sum-zero invariant holds per currency, so one audit query still covers the whole bank, assets included.`] },
+  'ev:mortgage': { t: 'A loan disbursed',
+    plain: c => [`${evLine(c.ev)}. The loan account went negative, the main account went positive, one commit · net worth unchanged, which the Total wealth tile shows live.`],
+    how: () => [`The loan floor is a CHECK constraint (≥ −100,000 schema-side, ≤ 20,000 policy-side) · the schema enforces what the product promises. Repayment is a plain transfer back.`],
+    win: () => [`Credit is not new machinery: it is an account allowed to be negative, guarded by constraints in the same commit as the money.`] },
   entry: { t: 'A ledger entry',
     plain: () => [`One leg of a double-entry transaction: −30 here means +30 somewhere else in the same commit, always, per currency. The balance column is a cache of SUM(entries), reconciled live.`],
     how: () => [`Append-only, enforced by a trigger · UPDATE or DELETE raises an exception. Corrections are reversing entries.`],
@@ -1265,50 +1295,6 @@ const GUIDE = {
       `Today's prod: the same containers via compose on one box · the manifests are the cluster shape.`],
     how: () => [`Clones (Deployments) vs territories (StatefulSets with names and disks). Readiness probes gate traffic; config is env vars · same image everywhere.`],
     win: () => [`Residency enforced by the scheduler turns a compliance requirement into an infrastructure invariant.`] },
-  'scale:edge': { t: 'Edge at 75M · anycast, WAF, gateway limits',
-    plain: () => [`Global anycast fronts everything; TLS terminates at the edge; the WAF eats floods before they cost compute. The demo's per-instance token bucket becomes a GATEWAY policy with shared state (Redis) · same algorithm, fleet-wide.`],
-    how: () => [`Budget: ~1B payments/month ≈ 400 req/s average on the money path, peaks 10–20× (paydays, Black Friday) ≈ 5–8k/s · plus an order of magnitude more reads. Rate limits per user AND per device AND per endpoint class.`],
-    win: () => [`Demo→prod mapping: Caddy → anycast LB + WAF; TokenBucket.java → gateway policy. Nothing conceptually new enters the system at the edge.`] },
-  'scale:app': { t: 'App tier at 75M · hundreds of stateless pods',
-    plain: () => [`The tier that scales by COUNT: hundreds of stateless pods, autoscaled on p99 latency, deployed canary-first. Correctness never lived here · it lives in the databases · which is exactly WHY replicas:300 is a safe number to type.`],
-    how: () => [`Every pod carries a pool per shard, so the connection math is pods × shards × pool · 300 pods × 30 shards × 5 would be 45,000 server connections: impossible. That is why the PgBouncer tier is mandatory, not optional.`],
-    win: () => [`“What scales freely? The stateless tier. What must be budgeted? Its connections.” Pool math before replica math · every time.`] },
-  'scale:bouncer': { t: 'PgBouncer tier · the connection dam',
-    plain: () => [`Transaction-mode poolers collapse ~10,000 app-side connections into a few hundred real Postgres backends per shard. Each Postgres connection is a forked process · the database drowns in connections before it drowns in data.`],
-    how: () => [`Per shard: cap real backends near CPU cores × small factor (~50–100); everything above queues in the bouncer, which is backpressure. JDBC gotcha at this layer: prepareThreshold=0. The demo runs this exact thing on :6432.`],
-    win: () => [`Measured in this repo: connection-per-query was 14× slower than pooling. At fleet scale the same physics, three orders of magnitude bigger.`] },
-  'scale:shard': { t: 'Sharding at 75M · the write budget math',
-    plain: () => [`Shard COUNT comes from a budget, not a guess: peak ~5–8k payments/s, each a small multi-row ACID commit; a healthy primary carries ~2k such tx/s with headroom → 20–40 shards globally, hashed by customer id, spread across regions.`],
-    how: () => [`Why by CUSTOMER: the only fallible decision (payer's funds) stays a local row lock; per-customer ordering is free; a customer is a self-contained unit you can MOVE (the demo's relocation, batched, is the resharding runbook). Hot-key risk is low · no single customer dominates a bank's writes.`],
-    win: () => [`“I size shards from the write budget: peak tx/s ÷ per-primary budget, ×2 headroom. Growth doubles? Split shards by moving customers · milliseconds of write-pause each, no global event.”`] },
-  'scale:replica': { t: 'Replicas · HA and the read path',
-    plain: () => [`Every shard is a trio+: a PRIMARY (all writes), a SYNC standby (commit returns only when it also has the WAL → zero-data-loss failover in seconds), and 2+ ASYNC read replicas serving statements, exports and dashboards milliseconds behind.`],
-    how: () => [`Postgres WAL streaming, built-in · no Kafka involved in replication. Route by staleness tolerance: balance checks before a debit → primary; statement pages → replica. That split removes most read load from the write path.`],
-    win: () => [`“Replicas scale READS and buy failover; they never scale writes · that is what the shards are for. RPO 0 via sync standby, RTO seconds via promotion.” The demo teaches the split; production multiplies it.`] },
-  'scale:directory': { t: 'Directory at 75M · small data, huge fan-out',
-    plain: () => [`75M customer→shard rows is only gigabytes · a SMALL dataset with enormous read fan-out. Answer: replicate it to every region, cache it in every app pod, invalidate through Kafka change events.`],
-    how: () => [`Lookups are ~100% cache hits (a home shard changes approximately never). Writes are rare (signup, relocation) and serialize through one writer. The moving flag is the same write-pause the demo performs.`],
-    win: () => [`“The routing tier people fear is the easiest tier: tiny, immutable-ish, infinitely cacheable. It is a lookup, not a bottleneck.”`] },
-  'scale:kafka': { t: 'Kafka at 75M · partitions and guarantees',
-    plain: () => [`3+ brokers, replication factor 3, min.insync.replicas 2 · so acks=all (which the relay already demands) means two disks before the outbox row is marked. The payments topic is partitioned BY CUSTOMER: per-customer ordering survives any scale.`],
-    how: () => [`Throughput is trivial (peak ~8k events/s × 1KB ≈ 8MB/s); PARTITION COUNT is really a consumer-parallelism decision · 100+ partitions lets appliers scale to 100+ instances. Retention days, compacted where snapshots make sense.`],
-    win: () => [`“Kafka sizing is rarely about MB/s for payments · it is about ordering keys and consumer parallelism. Key by customer, partitions ≥ max consumer count you will ever want.”`] },
-  'scale:consumers': { t: 'Consumers at 75M · scale-out that stays safe',
-    plain: () => [`Appliers and notifications become GROUPS of N instances · Kafka assigns partitions across them. N scales to lag, and lag (end − committed, live in this site's Console) is the SLO that pages someone.`],
-    how: () => [`Scaling consumers is only safe because every handler is idempotent · the txId gates and event_key PKs the demo proves. Redelivery, rebalance, replay: all no-ops. Fraud scoring is just one more group on the same topic.`],
-    win: () => [`“At-least-once + idempotent handlers means my scaling knob is literally 'add instances'. The demo proves the idempotency; production turns the knob.”`] },
-  'scale:dlq': { t: 'Dead-letter queues · poison, quarantined',
-    plain: () => [`An event that fails processing N times moves to the group's DLQ instead of blocking the partition behind it. Money stays safe (in_transit holds it); a human or a repair job replays the DLQ later.`],
-    how: () => [`Without a DLQ one malformed event halts a partition forever · the classic Kafka outage. The demo's bounce-refund is the same philosophy applied to a business failure: compensate, never wedge.`],
-    win: () => [`“Every consumer group ships with a DLQ and a replay tool from day one. A stuck partition at 3am is how you learn this; I prefer learning it in the design review.”`] },
-  'scale:cdc': { t: 'CDC · where analytics lives',
-    plain: () => [`The warehouse/lake is JUST ANOTHER CONSUMER: outbox events (or CDC on the ledgers) stream into OLAP storage. Analysts get everything; the money path feels nothing.`],
-    how: () => [`This is the strong-OLTP / eventual-OLAP split: FOR UPDATE locks and CHECK constraints on one side, columnar scans on the other, an event stream between. Never point a BI tool at a primary.`],
-    win: () => [`“Fit-for-purpose consistency ends at the warehouse: strong where money moves, eventual where dashboards render. Same events, two destinies.”`] },
-  'scale:regions': { t: 'Regions at 75M · fault domain = legal domain',
-    plain: () => [`3+ regions, each a complete stack: its shards, its poolers, its consumers. A region is simultaneously the unit of data-residency LAW and the unit of blast radius · one region down ≠ the bank down.`],
-    how: () => [`Cross-region flows ride ONLY the event fabric (the demo's saga) · no synchronous cross-region calls on the money path, ever: a partition between regions delays settlement, it cannot corrupt it. In k8s terms: nodeSelector pins every stateful set to its soil.`],
-    win: () => [`“My cross-region invariant: the fleet-wide in_transit sum. It is the reconciliation control AND the honesty metric · money in flight, visible on a balance sheet, zero when drained.”`] },
   trace: { t: 'A transaction’s journey',
     plain: c => [`${who(c.tr.payer)} → ${who(c.tr.payee || 'the pipe')}${c.tr.amount ? ', ' + eur(c.tr.amount) : ''}: ${c.tr.steps.length} recorded steps, ${c.total}ms end to end. Click a step; ▶ replays it.`],
     how: () => [`Assembled from timestamps the system already writes · commits, published_at, notification inserts. No tracing agent exists.`],
@@ -1344,7 +1330,11 @@ function gShow(subject, ctx = {}) {
     $('#guide-title').textContent = g.t;
     $('#guide-body').innerHTML = '<p class="muted">fetching live numbers…</p>';
     $('#guide-stats').innerHTML = '';
-    xrayTick().then(() => { if (gSubject === subject) gShow(subject, ctx); });
+    xrayTick().then(() => {
+      if (gSubject !== subject) return;
+      if (lastSummary) gShow(subject, ctx);
+      else setTimeout(() => { if (gSubject === subject) gShow(subject, ctx); }, 1500);
+    });
     return;
   }
   $('#guide-title').textContent = g.t;
@@ -1360,12 +1350,16 @@ function gShow(subject, ctx = {}) {
   }).join('') : '';
   document.querySelectorAll('.node').forEach(n => n.classList.toggle('sel', n.dataset.node === subject));
 }
-document.querySelectorAll('.guide-tabs button').forEach(b => b.onclick = () => {
+document.querySelectorAll('#guide .guide-tabs button').forEach(b => b.onclick = () => {
   gDepth = b.dataset.d;
-  document.querySelectorAll('.guide-tabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('#guide .guide-tabs button').forEach(x => x.classList.toggle('on', x === b));
   gShow(gSubject, gCtx);
 });
-document.querySelectorAll('.node').forEach(n => n.onclick = () => { gShow(n.dataset.node); inspect(n.dataset.node); });
+document.querySelectorAll('.node').forEach(n => n.onclick = () => {
+  const k = n.dataset.node;
+  if (k && k.indexOf('scale:') === 0) { openConcept(k); return; }
+  gShow(k); inspect(k);
+});
 
 /* ---- the inspector: click a component, see ITS real rows ---- */
 let inspectNode = null, prevInspSig = '';
@@ -1382,7 +1376,7 @@ async function refreshInspect() {
   const sig = JSON.stringify(d);
   if (sig === prevInspSig) return;
   prevInspSig = sig;
-  $('#inspect-card').hidden = false;
+  $('#inspect-wrap').hidden = false;
   const SDB = { shard0: ['eu', 'accounts'], shard1: ['uk', 'accounts'], api: ['directory', 'customers'],
     kafka: ['eu', 'outbox'], applier: ['uk', 'transactions'], notif: ['notifications', 'notifications'],
     intransit: ['eu', 'in_flight'] };
@@ -1393,13 +1387,11 @@ async function refreshInspect() {
     <table><thead><tr>${tb.cols.map(c2 => `<th>${c2}</th>`).join('')}</tr></thead>
     <tbody>${tb.rows.map(r => `<tr>${r.map(v => `<td class="${String(v).startsWith('-') ? 'amount-neg' : ''}">${v}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${tb.cols.length}" class="muted">empty</td></tr>`}</tbody></table>`).join('');
 }
-function closeInspect() { inspectNode = null; prevInspSig = ''; $('#inspect-card').hidden = true; }
+function closeInspect() { inspectNode = null; prevInspSig = ''; $('#inspect-wrap').hidden = true; }
 $('#inspect-clear').onclick = closeInspect;
 
-/* ---- the interview map: 12 real questions -> the component that answers ---- */
+/* ---- the interview map: 16 real questions -> answered in place ---- */
 function Shard0Name(s) { return s === 0 ? 'eu' : 'uk'; }
-const NODENAME = { api: 'router', shard0: 'eu', shard1: 'uk', kafka: 'kafka', applier: 'applier',
-  notif: 'notifications', intransit: 'in-flight', browser: 'browser' };
 const QUESTIONS = [
   { short: 'the lost update', q: 'Two requests update the same balance at once · what goes wrong?',
     nodes: ['shard0'], edges: ['api_shard0'],
@@ -1484,24 +1476,100 @@ const QUESTIONS = [
     how: 'BEFORE UPDATE OR DELETE on entries and transactions → RAISE EXCEPTION. There is a test that tries to tamper and asserts the database says no. Add the trace timeline (every state change timestamped) and you have the audit trail a regulator actually wants.',
     win: '“Immutability is enforced, not promised: append-only by trigger, corrections by reversing entries, every movement traceable end-to-end. Compliance lives in the schema, next to the credit limit.”' },
 ];
-QUESTIONS.forEach((qq, i) => GUIDE['q:' + i] = { t: 'Q' + (i + 1) + ' · ' + qq.short,
-  plain: () => [qq.plain], how: () => [qq.how], win: () => [qq.win] });
-$('#qmap').innerHTML = QUESTIONS.map((qq, i) => `
-  <div class="q-item" data-i="${i}"><span class="q-badge">Q${i + 1}</span>
-    <span class="q-text">${qq.q}</span><span class="chip">${qq.nodes.map(n => NODENAME[n]).join(' · ')}</span></div>`).join('');
-document.querySelectorAll('.q-item').forEach(el => el.onclick = () => {
-  const i = Number(el.dataset.i), qq = QUESTIONS[i];
-  document.querySelectorAll('.q-item').forEach(x => x.classList.toggle('on', x === el));
+window.qOnMap = i => { const qq = QUESTIONS[i];
   document.querySelectorAll('.node').forEach(n => n.classList.toggle('onpath', qq.nodes.includes(n.dataset.node)));
   qq.edges.forEach((e, j) => pulse(e, 'var(--violet)', j * 320));
-  gShow('q:' + i, {});
-  $('#guide').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-});
+  $('#xsvg').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+window.qDepth = (i, d, btn) => {
+  $('#qans-' + i).textContent = QUESTIONS[i][d];
+  btn.parentNode.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === btn)); };
+$('#qmap').innerHTML = QUESTIONS.map((qq, i) => `
+  <div class="acc q-acc" data-i="${i}">
+    <div class="acc-head"><span class="q-badge">Q${i + 1}</span>
+      <span class="q-text">${qq.q}</span><span class="acc-chev">›</span></div>
+    <div class="acc-body">
+      <div class="guide-tabs">
+        <button class="on" onclick="event.stopPropagation();qDepth(${i},'plain',this)">Plainly</button>
+        <button onclick="event.stopPropagation();qDepth(${i},'how',this)">Mechanism</button>
+        <button onclick="event.stopPropagation();qDepth(${i},'win',this)">Interview</button></div>
+      <p class="q-ans" id="qans-${i}">${qq.plain}</p>
+      <button class="mini" onclick="event.stopPropagation();qOnMap(${i})">show on the map ↑</button>
+    </div>
+  </div>`).join('');
+document.querySelectorAll('.q-acc .acc-head').forEach(h => h.onclick = () => h.parentNode.classList.toggle('open'));
+
+/* ---- scaling to 100M: every concept, each mapped demo → production ---- */
+const CONCEPTS = [
+  { k: 'scale:edge', ic: '🌐', t: 'Edge & CDN', one: 'One front door: TLS, WAF, rate limits, static from the edge.',
+    demo: 'Caddy terminates TLS and stamps X-Forwarded-For; a per-caller token bucket (60 burst, 25/s) answers 429 before a request can touch a database lock.',
+    prod: 'Global anycast + WAF eats floods before they cost compute; a CDN serves the static app from a node near the user; the same token-bucket algorithm moves to the gateway with shared state. Peak money traffic at 100M: ~1.3B payments/month ≈ 500/s average, 10-20x on paydays ≈ 5-10k/s.' },
+  { k: 'scale:cache', ic: '⚡', t: 'Caching · at every layer', one: 'The fastest query is the one you never run · and a cache must never lie about money.',
+    demo: 'Three real caches run right now: the balance column (a cached projection of the ledger, reconciled live by the drift audit), the directory cache (in-process, because a home region changes approximately never), and the 60s price cache honestly labeled live/cached/fallback.',
+    prod: 'Add the CDN for static, Redis for sessions and hot reads, read replicas as the cache of record. The rule never changes: cache what tolerates staleness (statements, prices, routing) and NEVER the funds check before a debit · that read goes to the primary, under a row lock.' },
+  { k: 'scale:index', ic: '🗂', t: 'Indexing · why any of this is fast', one: 'Every millisecond here rides a B-tree.',
+    demo: 'Primary keys drive the locks and gates: accounts(id) for FOR UPDATE, transactions(id) where the idempotency gate IS a unique index doing double duty, notifications(event_key) for dedup. Plus one secondary index, idx_entries_account(account_id, id), so statements and the drift audit never scan the whole ledger.',
+    prod: 'At billions of rows: composite indexes shaped like the real queries (account_id, created_at DESC), covering indexes so statements are index-only scans, partial indexes for rare flags. Every index taxes every INSERT · you index for reads you actually serve, and you decide with EXPLAIN, not vibes.' },
+  { k: 'scale:app', ic: '⬡', t: 'App tier · stateless, by the hundreds', one: 'The only tier that scales by just typing a bigger number.',
+    demo: 'One JVM, virtual thread per request, zero session state · correctness lives in the databases, which is exactly why replicas: 3 in the k8s manifest is safe to raise.',
+    prod: 'Hundreds of pods autoscaled on p99, deployed canary-first. The catch is connection math: pods × shards × pool size hits Postgres, so 300 pods × 40 shards × 5 would be 60,000 server connections · impossible, and why the PgBouncer tier is mandatory.' },
+  { k: 'scale:bouncer', ic: '🚪', t: 'PgBouncer · the connection dam', one: 'A database drowns in connections before it drowns in data.',
+    demo: 'Measured in this repo: connection-per-query was 14x slower than pooling. The hand-written pool queues borrowers when empty (backpressure), and the pool lessons prove the ops-grade version against a real PgBouncer in transaction mode on :6432.',
+    prod: 'Poolers collapse ~10,000 app-side connections into a few hundred real backends per shard (each Postgres connection is a forked process). Cap backends near cores × small factor; everything above queues at the bouncer. JDBC gotcha: prepareThreshold=0.' },
+  { k: 'scale:shard', ic: '🗄', t: 'Sharding · the write budget', one: 'Shard count is arithmetic, not vibes.',
+    demo: 'Two real shards, split by customer id, so the only decision that can fail (does the payer have the money) is always a local row lock. No distributed locking exists anywhere.',
+    prod: 'Peak ~5-10k payments/s ÷ ~2k small ACID commits/s per healthy primary → a handful of primaries would carry the current peak. Multiply by 3+ regions (each region runs its own shards), 2x failure headroom and years of growth runway → 25-50 shards globally, hashed by customer. Growth doubles? Split shards by MOVING customers · the relocation this demo performs, batched, is the resharding runbook.' },
+  { k: 'scale:replica', ic: '🪞', t: 'Replicas · HA and the read path', one: 'Replicas scale reads and buy failover; they never scale writes.',
+    demo: 'The concept is taught by the balance cache: one truth (entries), derived copies (balances), reconciled continuously. Replication is the same idea at the storage layer.',
+    prod: 'Every shard is a trio+: primary (all writes), sync standby (commit waits for its WAL → zero-loss failover in seconds), 2+ async read replicas serving statements and dashboards milliseconds behind. Postgres WAL streaming, built-in · Kafka is never the replication mechanism. Route by staleness tolerance: funds check → primary; statement page → replica.' },
+  { k: 'scale:directory', ic: '🧭', t: 'Directory · small data, huge fan-out', one: 'The routing tier people fear is the easiest tier.',
+    demo: 'customer → region in its own database on the control-plane Postgres (:5433), cached in-process; the moving flag is a millisecond write-pause during relocation. Click the API node · the inspector shows the actual table.',
+    prod: '100M rows is only gigabytes: replicate it to every region, cache it in every pod, invalidate through Kafka change events. Lookups are ~100% cache hits; writes (signup, relocation) are rare and serialize through one writer. A lookup, not a bottleneck.' },
+  { k: 'scale:kafka', ic: '📨', t: 'Kafka · partitions and guarantees', one: 'Sizing Kafka for payments is about ordering keys, not MB/s.',
+    demo: 'One broker, topic payments, acks=all + idempotent producer, outbox marked published only after the ack · the crash-safety argument in one ordering.',
+    prod: '3+ brokers, RF=3, min.insync.replicas=2, so acks=all means two disks before the mark. Partition BY CUSTOMER: per-customer order survives any scale, and partition count = maximum consumer parallelism (throughput itself is trivial: ~10k events/s × 1KB ≈ 10MB/s).' },
+  { k: 'scale:consumers', ic: '⚙', t: 'Consumers · scale-out that stays safe', one: 'When handlers are idempotent, the scaling knob is literally "add instances".',
+    demo: 'Two groups read the same topic independently: the applier (moves money, gated by txId) and notifications (event_key PK). Redelivery, rebalance, replay: all provably no-ops here.',
+    prod: 'Groups of N instances; Kafka assigns partitions across them. N scales to LAG (end minus committed · live in this site\'s Console), and lag is the SLO that pages someone. Fraud scoring is just one more group on the same topic.' },
+  { k: 'scale:dlq', ic: '☠', t: 'Dead-letter queues', one: 'One poison event must never block the money behind it.',
+    demo: 'The bounce-refund is the same philosophy for business failures: compensate and move on, never wedge. in_transit holds the money safely meanwhile.',
+    prod: 'An event that fails N times moves to the group\'s DLQ instead of halting its partition (the classic Kafka outage). A replay tool and a human deal with it later. Every consumer group ships with one from day one.' },
+  { k: 'scale:cdc', ic: '🏔', t: 'CDC · where analytics lives', one: 'Strong where money moves, eventual where dashboards render.',
+    demo: 'The notifications service is already the pattern: a separate store fed only by events, never a JOIN into the ledger.',
+    prod: 'The warehouse/lake is just another consumer: outbox events or CDC stream into columnar storage. Analysts get everything, the money path feels nothing. Never point a BI tool at a primary.' },
+  { k: 'scale:regions', ic: '🌍', t: 'Regions · fault domain = legal domain', one: 'One region down is not the bank down.',
+    demo: 'eu and uk run separate Postgres servers, each with its own pool, outbox and relay (one JVM hosts both here); cross-region money rides ONLY the event fabric · the saga you can watch on the map. The fleet-wide in_transit sum is the reconciliation control.',
+    prod: '3+ regions, each with its shards, poolers and consumers. No synchronous cross-region call exists on the money path, ever: a partition between regions DELAYS settlement, it cannot corrupt it. Residency is a scheduling constraint (nodeSelector pins databases to their soil).' },
+  { k: 'scale:obs', ic: '🔭', t: 'Observability', one: 'You cannot run what you cannot see.',
+    demo: 'This page IS the observability: live invariants (sum-zero, drift), consumer lag in the Console, and the trace card · assembled from timestamps the system already writes, no agent installed.',
+    prod: 'The same three signals, industrialized: metrics (p99, lag, the in-flight sum) with SLO alerts that page a human, structured logs, OpenTelemetry traces. The production dashboards graph the very numbers this page shows.' },
+  { k: 'scale:backpressure', ic: '🧯', t: 'Backpressure & resilience', one: 'Systems die of overload before they die of bugs · every layer must be able to say "not now".',
+    demo: 'Three layers already say it: the bounded pool borrow queues callers instead of collapsing Postgres, the token bucket answers 429, and Kafka absorbs consumer downtime as lag, never loss.',
+    prod: 'Add timeouts on every remote call, circuit breakers around dependencies (a slow price feed must never stall a payment), load shedding at the gateway. Degrade gracefully, never fall over.' },
+  { k: 'scale:deploy', ic: '🚀', t: 'Deploys without downtime', one: 'At 100M users there is no maintenance window, ever.',
+    demo: 'The two properties that make rolling deploys safe already hold: the app tier is stateless and every handler is idempotent. Readiness probes gate traffic; config is env vars, one image everywhere.',
+    prod: 'Canary first: 1% of pods, watch p99 and lag, then 100%; rollback is a repoint. Schema changes go expand → migrate → contract so old and new code run against the same database mid-deploy.' },
+];
+$('#cgrid').innerHTML = CONCEPTS.map(c => `
+  <div class="acc c-acc" data-k="${c.k}">
+    <div class="acc-head"><span class="c-ic">${c.ic}</span>
+      <span class="q-text"><b>${c.t}</b><span class="c-one">${c.one}</span></span><span class="acc-chev">›</span></div>
+    <div class="acc-body">
+      <div class="c-block"><span class="c-tag now">in this demo</span><p>${c.demo}</p></div>
+      <div class="c-block"><span class="c-tag big">at 100M</span><p>${c.prod}</p></div>
+    </div>
+  </div>`).join('');
+document.querySelectorAll('.c-acc .acc-head').forEach(h => h.onclick = () => h.parentNode.classList.toggle('open'));
+function openConcept(k) {
+  const el = document.querySelector(`.c-acc[data-k="${k}"]`); if (!el) return;
+  el.classList.add('open');
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.remove('acc-flash'); void el.getBoundingClientRect(); el.classList.add('acc-flash');
+}
 
 /* ---- the live stream ---- */
-const seen = new Set(), tickIds = new Set(), klogIds = new Set();
+const seen = new Set(), tickIds = new Set();
 let firstPoll = true, activeTrace = null, latestEvents = [];
-let prevTickSig = '', prevKlogSig = '', prevEntSig = '';
+let prevTickSig = '', prevEntSig = '';
 const ICON = { transfer_local: '💸', depart: '🛫', published: '📤', arrive: '🛬', refund: '↩️', notify: '🔔' };
 
 async function xrayTick() {
@@ -1539,41 +1607,6 @@ async function xrayTick() {
     top.forEach(e => tickIds.add(e.type + e.tx + e.ts));
   }
 
-  const pubs = evs.filter(e => e.type === 'published').slice(0, 5);
-  const notified = new Set(evs.filter(e => e.type === 'notify').map(e => e.tx));
-  const arrived = new Set(evs.filter(e => e.type === 'arrive').map(e => e.tx));
-  const ksig = pubs.map(e => e.tx + e.ts + (arrived.has(e.tx) ? 'a' : '') + (notified.has(e.tx) ? 'n' : '')).join('|');
-  if ($('#kafkalog') && ksig !== prevKlogSig) {
-    prevKlogSig = ksig;
-    const openIds = new Set([...document.querySelectorAll('.klog-item.open')].map(el => el.dataset.id));
-    $('#kafkalog').innerHTML = pubs.map(e => {
-      const id = 'k' + e.tx + e.ts, isNew = !klogIds.has(id) && !firstPoll;
-      const pl = e.payload || '', ty = (pl.match(/"type":"([^"]+)"/) || [])[1] || 'event';
-      const from = (pl.match(/"from":(\d+)/) || [])[1], to = (pl.match(/"to":(\d+)/) || [])[1];
-      const cust = (pl.match(/"customer":(\d+)/) || [])[1];
-      const amt = (pl.match(/"amount":"([^"]+)"/) || [])[1] || (pl.match(/"eur":"([^"]+)"/) || [])[1];
-      const side = (pl.match(/"side":"(\w+)"/) || [])[1];
-      const asset = (pl.match(/"asset":"(\w+)"/) || [])[1];
-      const name = id2 => id2 == null ? '·'
-        : (accounts.find(a => a.id === Number(id2)) || {}).owner || (id2 === '1' ? 'world' : 'user ' + id2);
-      const headline =
-          ty === 'transfer.departed' ? (from === to ? `✈ relocation · ${who(name(from))} · ${eur(amt)}`
-                                                    : `🛫 ${who(name(from))} → ${who(name(to))} · ${eur(amt)} · cross-region`)
-        : ty === 'transfer.bounced' ? `↩️ bounce → refund ${who(name(from))} · ${eur(amt)}`
-        : ty === 'trade.executed' ? `${asset === 'btc' ? '₿' : '🍏'} ${who(name(cust))} ${side === 'buy' ? 'bought' : 'sold'} ${eur(amt)} of ${asset === 'btc' ? 'Bitcoin' : 'Apple'}`
-        : ty === 'mortgage.approved' ? `🏦 loan ${eur(amt)} disbursed to ${who(name(cust))}`
-        : ty === 'payment.completed' ? `💸 ${who(name(from))} → ${who(name(to))} · ${eur(amt)}`
-        : `📨 ${ty}`;
-      const fate = [arrived.has(e.tx) ? 'applier ✓ settled' : (ty === 'transfer.departed' ? 'applier … in flight' : ''),
-                    notified.has(e.tx) ? 'notified ✓' : ''].filter(Boolean).join(' · ');
-      return `<div class="klog-item${isNew ? ' new' : ''}${openIds.has(id) ? ' open' : ''}" data-id="${id}" onclick="this.classList.toggle('open');traceTx('${e.tx}', true)">
-          <div class="tick-ic">📤</div>
-          <div class="tick-main">${headline}<div class="tick-sub">${new Date(e.ts).toLocaleTimeString()} · from ${e.region}'s outbox · ${fate || 'delivered'}</div></div>
-          <span class="chip">key ${e.tx.slice(0, 8)}…</span>
-        </div><div class="klog-raw">${pl.replace(/</g, '&lt;')}</div>`;
-    }).join('') || '<span class="muted">no events published yet</span>';
-    pubs.forEach(e => klogIds.add('k' + e.tx + e.ts));
-  }
   firstPoll = false;
 
   const entries = await api('/api/xray/entries');
@@ -1612,7 +1645,9 @@ async function xrayTick() {
   }
   } catch (e) { /* transient fetch failure · the next tick retries */ }
 }
-window.tickClick = evJson => { const e = JSON.parse(evJson); gShow('ev:' + e.type, { ev: e }); traceTx(e.tx, true); };
+window.tickClick = evJson => { const e = JSON.parse(evJson);
+  const subj = e.type.indexOf('trade:') === 0 ? 'ev:trade' : e.type === 'mortgage' ? 'ev:mortgage' : 'ev:' + e.type;
+  gShow(GUIDE[subj] ? subj : 'entry', { ev: e }); traceTx(e.tx, true); };
 
 function renderTrace(tr, tx) {
   activeTrace = tr;
@@ -1968,7 +2003,7 @@ const SHOW = [
   { cap: 'Everything explains itself at three depths, down to its actual database rows. This is the routing directory · the real one.',
     run: () => { gShow('api'); inspect('api'); }, dwell: 4800 },
   { cap: 'And the architecture maps itself to the questions it answers: twelve of them, from lost updates to resharding.',
-    run: () => { const q = document.querySelector('.q-item[data-i="9"]'); if (q) { q.click(); q.scrollIntoView({ behavior: 'smooth', block: 'center' }); } }, dwell: 5200 },
+    run: () => { const q = document.querySelector('.q-acc[data-i="9"]'); if (q) { q.classList.add('open'); qOnMap(9); q.scrollIntoView({ behavior: 'smooth', block: 'center' }); } }, dwell: 5200 },
   { cap: 'Raw Java 21 · zero frameworks · 30 executable lessons prove every mechanism · built from first principles · github.com/igorfyago/minibank',
     run: () => window.scrollTo({ top: 0, behavior: 'smooth' }), dwell: 6500 },
 ];
@@ -2327,6 +2362,7 @@ $('#q-next').onclick = () => {
 
 /* ---------------- boot ---------------- */
 loadAccounts(); loadStatement(); loadPortfolio(); renderQuiz(); gShow('welcome');
+$('#homelink').onclick = () => switchTab('app');
 if (['#xray', '#quiz', '#console'].includes(location.hash)) document.querySelector('[data-tab="' + location.hash.slice(1) + '"]').click();
 if (location.hash === '#send') { $('#send-panel').classList.remove('hidden'); segPaint(); }
 setInterval(() => { loadAccounts(); loadStatement(); loadPortfolio(); renderExt(); if (!$('#tab-xray').classList.contains('hidden')) xrayTick(); if (!$('#tab-console').classList.contains('hidden')) kafkaTick(); }, 2000);
