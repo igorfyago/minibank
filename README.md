@@ -32,6 +32,10 @@ Every design decision is recorded and argued — the point of this repo is under
 - **D1** Raw JDBC via `DriverManager`, one connection per call — *deliberately naive*; stage 4 measures the cost and fixes it.
 - **D2** Each racing test thread gets its own connection — sharing one connection would queue, not race; real systems race because every request has its own connection.
 - **D3** Stage 0 stores balance as a mutable column — *deliberately wrong*; stage 1 replaces it with an append-only ledger and shows why.
+- **D4** (Igor) Ledger schema: double-entry with a cached balance, built as pure double-entry first, cache derived after — chosen to maximise interview-relevant depth: the sum-to-zero invariant, truth-vs-projection, and reconciliation.
+- **D5** Money only enters the bank by transfer: accounts are born empty and the external *world* account funds them (going negative — its job). Keeps the invariant pure: cache == SUM(entries), always, for everyone.
+- **D6** Business rules live in the schema: the balance check is kind-aware — customers never negative, externals unbounded.
+- **D7** Concurrency correctness belongs to the database, not the JVM: ordered FOR UPDATE locking (ascending account id) makes deadlock impossible; the caller-supplied transaction id doubles as the idempotency key via the primary key.
 
 ## The curriculum
 
@@ -59,8 +63,9 @@ Money is strict now; echoes arrive milliseconds later.
 
 ## Status
 
-- [ ] Stage 0 — in progress
-- [ ] Stage 1–6
+- [x] Stage 0 — the lost update, killed three ways
+- [x] Stage 1 — the double-entry ledger (deadlock provoked and cured, idempotent retries, reconciliation)
+- [ ] Stage 2–6
 
 ## Run
 
