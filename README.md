@@ -44,6 +44,11 @@ Every design decision is recorded and argued — the point of this repo is under
 - **D11** The pool hands out PROXIES whose close() returns the connection instead of closing it — so every existing try-with-resources kept working, unchanged, when the bank flipped to pooling. On every return the pool rolls back any open transaction and resets autocommit: state never leaks between borrowers.
 - **D12** `Db.open()` transparently serves pooled connections once `Db.usePool(n)` runs; `Db.openPhysical()` keeps the naive path alive so the lessons can keep measuring the tax.
 - **D13** PgBouncer runs in transaction pooling mode; the JDBC gotcha is server-side prepared statements, disarmed with `prepareThreshold=0` in the URL.
+- **D14** Shard by CUSTOMER id (demo: id mod 2 — igor even → shard 0, coco odd → shard 1, so the demo exercises the hard path by default). The reason is precise: the only decision that can FAIL — does the payer have the money — always stays local to one shard, under a plain row lock. Credits cannot fail. No distributed locking exists anywhere. Region sharding is this idea with residency law satisfied by the key.
+- **D15** Cross-shard transfer = SAGA, not two-phase commit: depart (local ACID: payer −A, in_transit +A, outbox event in the same commit) → Kafka → arrive (local ACID on the destination shard, gated by the same txId on ITS transactions table). 2PC blocks both shards while a coordinator decides and the coordinator is a new single point of failure; the saga keeps every transaction local and pays with a visible, honest in-between state.
+- **D16** in_transit is a CLEARING account on every shard — the double-entry way to say "in the pipe". Each shard's books sum to zero at every instant; the fleet-wide SUM of in_transit balances = money in flight right now, zero when drained. That one number is the cross-shard reconciliation control (banks call the pattern nostro/vostro).
+- **D17** Missing destination → the saga COMPENSATES: a refund on the source shard, gated by a deterministic UUID derived from the original txId (idempotent even if the bounce is processed twice). Money can be briefly in flight; it can never be lost, doubled, or in limbo.
+- **D18** System accounts (world, in_transit; ids < 10) exist on EVERY shard, so top-ups never cross shards; each shard runs its own outbox relay and its own connection pool. The applier is one more idempotent Kafka consumer — the stage-2 machinery, promoted from delivering notifications to moving the money.
 - **D7** Concurrency correctness belongs to the database, not the JVM: ordered FOR UPDATE locking (ascending account id) makes deadlock impossible; the caller-supplied transaction id doubles as the idempotency key via the primary key.
 
 ## The curriculum
@@ -77,7 +82,8 @@ Money is strict now; echoes arrive milliseconds later.
 - [x] Stage 2 — Kafka + the transactional outbox (events commit with the money; at-least-once + idempotent consumer = effectively once)
 - [x] Stage 3 — the bank gets a face: raw JDK HttpServer (a virtual thread per request), the app, the X-ray map where every component explains itself, and the Quiz
 - [x] Stage 4 — the connection lesson: the tax measured (~14x), a pool written by hand, the whole bank flipped to it, and PgBouncer as the ops-grade version
-- [ ] Stage 5–6
+- [x] Stage 5 — the bank shards by customer: two real Postgres servers, a one-line router, cross-shard transfers as sagas over the outbox, the in_transit clearing account, and the compensating refund — all visible live in the X-ray
+- [ ] Stage 6
 
 ## Run
 

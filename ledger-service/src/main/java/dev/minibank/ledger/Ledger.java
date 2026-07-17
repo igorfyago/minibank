@@ -42,10 +42,14 @@ public final class Ledger {
     public static final String KIND_CUSTOMER = "customer";
     public static final String KIND_EXTERNAL = "external";
 
-    public sealed interface TransferResult permits Ok, AlreadyProcessed, InsufficientFunds {}
+    public sealed interface TransferResult permits Ok, AlreadyProcessed, InsufficientFunds, NoSuchAccount {}
     public record Ok() implements TransferResult {}
     public record AlreadyProcessed() implements TransferResult {}
     public record InsufficientFunds() implements TransferResult {}
+    /** Stage 5: a cross-shard arrival can discover the destination does not
+     *  exist — by then the money already left the source shard, so this is
+     *  not an error to throw but a fact to compensate (see Shard.refund). */
+    public record NoSuchAccount() implements TransferResult {}
 
     private Ledger() {}
 
@@ -53,7 +57,15 @@ public final class Ledger {
     // schema
     // ------------------------------------------------------------------
     public static void createTables() throws SQLException {
-        try (Connection c = Db.open(); var st = c.createStatement()) {
+        try (Connection c = Db.open()) {
+            createSchemaOn(c);
+        }
+    }
+
+    /** Stage 5: the same schema must exist on EVERY shard — each shard is a
+     *  complete little bank (accounts, ledger, its own outbox). */
+    public static void createSchemaOn(Connection c) throws SQLException {
+        try (var st = c.createStatement()) {
             st.execute("""
                 CREATE TABLE IF NOT EXISTS accounts (
                     id      BIGINT PRIMARY KEY,
@@ -86,7 +98,7 @@ public final class Ledger {
         }
         // the outbox is not optional decoration: a transfer writes to it,
         // so the ledger cannot exist without it.
-        Outbox.createTable();
+        Outbox.createTableOn(c);
     }
 
     /** Accounts are born empty. Money only arrives BY TRANSFER — customer
@@ -94,9 +106,14 @@ public final class Ledger {
      *  invariant pure: cached balance == SUM(ledger entries), for everyone,
      *  from the very first cent. */
     public static void createAccount(long id, String owner, String kind) throws SQLException {
-        try (Connection c = Db.open();
-             PreparedStatement ps = c.prepareStatement(
-                     "INSERT INTO accounts(id, owner, balance, version, kind) VALUES (?,?,0,0,?)")) {
+        try (Connection c = Db.open()) {
+            createAccountOn(c, id, owner, kind);
+        }
+    }
+
+    public static void createAccountOn(Connection c, long id, String owner, String kind) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO accounts(id, owner, balance, version, kind) VALUES (?,?,0,0,?)")) {
             ps.setLong(1, id);
             ps.setString(2, owner);
             ps.setString(3, kind);
@@ -108,21 +125,26 @@ public final class Ledger {
     // the transfer — the heart of the bank
     // ------------------------------------------------------------------
     public static TransferResult transfer(UUID txId, long fromId, long toId, BigDecimal amount) throws SQLException {
+        try (Connection conn = Db.open()) {
+            return transferOn(conn, txId, fromId, toId, amount);
+        }
+    }
+
+    /** The same six steps on a caller-supplied connection — stage 5 runs
+     *  this unchanged against whichever SHARD both accounts live on. The
+     *  logic did not change when the bank sharded; only the address did. */
+    public static TransferResult transferOn(Connection conn, UUID txId, long fromId, long toId, BigDecimal amount) throws SQLException {
         if (amount.signum() <= 0) throw new IllegalArgumentException("amount must be positive");
         if (fromId == toId) throw new IllegalArgumentException("cannot transfer to self");
 
-        try (Connection conn = Db.open()) {
+        {
             conn.setAutoCommit(false);                       // BEGIN
             try {
                 // 1. IDEMPOTENCY GATE. Claim the transaction id first. If it
                 //    already exists, this transfer already happened: do nothing.
-                try (PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO transactions(id, kind) VALUES (?, 'transfer') ON CONFLICT (id) DO NOTHING")) {
-                    ps.setObject(1, txId);
-                    if (ps.executeUpdate() == 0) {
-                        conn.rollback();
-                        return new AlreadyProcessed();
-                    }
+                if (!claimTx(conn, txId, "transfer")) {
+                    conn.rollback();
+                    return new AlreadyProcessed();
                 }
 
                 // 2. ORDERED LOCKING. Lock BOTH account rows, always ascending
@@ -170,9 +192,21 @@ public final class Ledger {
         }
     }
 
-    private record Account(long id, String kind, BigDecimal balance) {}
+    record Account(long id, String kind, BigDecimal balance) {}
 
-    private static Account lockAccount(Connection conn, long id) throws SQLException {
+    /** The idempotency gate as a reusable primitive: claim this operation id,
+     *  true if we are first, false if it was already done. Stage 5 leans on
+     *  it hard — departure, arrival and refund each gate on their own shard. */
+    static boolean claimTx(Connection conn, UUID txId, String kind) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "INSERT INTO transactions(id, kind) VALUES (?, ?) ON CONFLICT (id) DO NOTHING")) {
+            ps.setObject(1, txId);
+            ps.setString(2, kind);
+            return ps.executeUpdate() == 1;
+        }
+    }
+
+    static Account lockAccount(Connection conn, long id) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT kind, balance FROM accounts WHERE id = ? FOR UPDATE")) {
             ps.setLong(1, id);
@@ -183,7 +217,7 @@ public final class Ledger {
         }
     }
 
-    private static void insertEntry(Connection conn, UUID txId, long accountId, BigDecimal amount) throws SQLException {
+    static void insertEntry(Connection conn, UUID txId, long accountId, BigDecimal amount) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
                 "INSERT INTO entries(tx_id, account_id, amount) VALUES (?,?,?)")) {
             ps.setObject(1, txId);
@@ -193,7 +227,7 @@ public final class Ledger {
         }
     }
 
-    private static void updateCachedBalance(Connection conn, long accountId, BigDecimal delta) throws SQLException {
+    static void updateCachedBalance(Connection conn, long accountId, BigDecimal delta) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
                 "UPDATE accounts SET balance = balance + ? WHERE id = ?")) {
             ps.setBigDecimal(1, delta);
@@ -208,8 +242,13 @@ public final class Ledger {
 
     /** Fast read: one row. This is what the app shows. */
     public static BigDecimal cachedBalance(long accountId) throws SQLException {
-        try (Connection c = Db.open();
-             PreparedStatement ps = c.prepareStatement("SELECT balance FROM accounts WHERE id = ?")) {
+        try (Connection c = Db.open()) {
+            return cachedBalanceOn(c, accountId);
+        }
+    }
+
+    public static BigDecimal cachedBalanceOn(Connection c, long accountId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT balance FROM accounts WHERE id = ?")) {
             ps.setLong(1, accountId);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
@@ -234,8 +273,14 @@ public final class Ledger {
     /** Bank-wide invariant #1: every transaction's entries sum to zero.
      *  Must ALWAYS return an empty list. One query audits the whole bank. */
     public static List<UUID> sumZeroViolations() throws SQLException {
+        try (Connection c = Db.open()) {
+            return sumZeroViolationsOn(c);
+        }
+    }
+
+    public static List<UUID> sumZeroViolationsOn(Connection c) throws SQLException {
         List<UUID> bad = new ArrayList<>();
-        try (Connection c = Db.open(); var st = c.createStatement();
+        try (var st = c.createStatement();
              ResultSet rs = st.executeQuery(
                      "SELECT tx_id FROM entries GROUP BY tx_id HAVING SUM(amount) <> 0")) {
             while (rs.next()) bad.add(rs.getObject(1, UUID.class));
@@ -248,8 +293,14 @@ public final class Ledger {
      *  cache contract. Works because accounts are born empty and all money
      *  moves by transfer. This is a continuous data-quality check in one query. */
     public static List<Long> driftedAccounts() throws SQLException {
+        try (Connection c = Db.open()) {
+            return driftedAccountsOn(c);
+        }
+    }
+
+    public static List<Long> driftedAccountsOn(Connection c) throws SQLException {
         List<Long> bad = new ArrayList<>();
-        try (Connection c = Db.open(); var st = c.createStatement();
+        try (var st = c.createStatement();
              ResultSet rs = st.executeQuery("""
                      SELECT a.id
                      FROM accounts a

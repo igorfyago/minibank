@@ -10,6 +10,31 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  # STAGE 5 — sharding. Two MORE Postgres servers, deliberately separate
+  # containers: a shard is a different MACHINE. You cannot JOIN across them,
+  # and that impossibility is the whole lesson.
+  shard0:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: minibank
+      POSTGRES_USER: minibank
+      POSTGRES_DB: minibank
+    ports:
+      - "5434:5432"
+    volumes:
+      - shard0data:/var/lib/postgresql/data
+
+  shard1:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: minibank
+      POSTGRES_USER: minibank
+      POSTGRES_DB: minibank
+    ports:
+      - "5435:5432"
+    volumes:
+      - shard1data:/var/lib/postgresql/data
+
   pgbouncer:
     image: edoburu/pgbouncer:latest
     environment:
@@ -44,3 +69,5 @@ services:
 
 volumes:
   pgdata:
+  shard0data:
+  shard1data:

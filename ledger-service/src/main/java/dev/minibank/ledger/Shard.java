@@ -1,0 +1,261 @@
+package dev.minibank.ledger;
+
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * STAGE 5 — ONE SHARD: a complete little bank on its own machine.
+ *
+ * Sharding is the write-scaling move: when one Postgres cannot carry the
+ * write load (replicas only scale READS), you split the CUSTOMERS across
+ * independent databases. Each shard holds everything about its customers —
+ * accounts, ledger entries, its own outbox — so everyday operations stay
+ * single-shard, single-transaction, fully ACID. Same six steps as stage 1;
+ * only the address changed.
+ *
+ * THE PRICE, faced honestly: a transfer between customers on DIFFERENT
+ * shards can no longer be one ACID transaction — there is no BEGIN that
+ * spans two machines (two-phase commit exists and nobody wants it: it
+ * blocks everyone while a coordinator makes up its mind, and the
+ * coordinator is a new single point of failure). The industry answer is a
+ * SAGA — two local transactions glued by the machinery we already built:
+ *
+ *   depart (source shard, ACID):  igor −30, IN_TRANSIT +30, outbox event
+ *   ... Kafka carries the event, at-least-once ...
+ *   arrive (dest shard, ACID):    IN_TRANSIT −30, coco +30, gated by txId
+ *
+ * IN_TRANSIT is a clearing account — the double-entry way to say "the money
+ * is in the pipe". Each shard's books balance at every instant, and the sum
+ * of all IN_TRANSIT balances across the fleet = money currently in flight
+ * (zero when the pipes are drained). Real banks settle across borders with
+ * exactly this pattern (nostro/vostro accounts).
+ *
+ * WHY THIS NEEDS NO DISTRIBUTED LOCK: the only decision that can FAIL is
+ * "does the payer have the money" — and the payer lives on the source
+ * shard, where depart() checks it under a plain local row lock. Credits
+ * cannot fail (a missing destination bounces: refund(), the saga's
+ * compensating transaction). That is WHY you shard by customer and not,
+ * say, by transaction id: it keeps every fallible decision local.
+ */
+public final class Shard {
+
+    /** System accounts exist on EVERY shard (ids below 10 are reserved):
+     *  the world (money enters the bank) and the clearing account. */
+    public static final long WORLD = 1;
+    public static final long IN_TRANSIT = 3;
+
+    public final int index;
+    public final String name;
+    private final MiniPool pool;   // stage 4 pays off: a pool per shard
+
+    public Shard(int index, String url, String user, String password, int poolSize) throws SQLException {
+        this.index = index;
+        this.name = "shard" + index;
+        this.pool = new MiniPool(url, user, password, poolSize);
+    }
+
+    public Connection open() throws SQLException {
+        return pool.borrow(5, TimeUnit.SECONDS);
+    }
+
+    public MiniPool pool() { return pool; }
+
+    // ------------------------------------------------------------------
+    // schema + system accounts
+    // ------------------------------------------------------------------
+    public void createSchema() throws SQLException {
+        try (Connection c = open()) {
+            Ledger.createSchemaOn(c);
+            ensureSystemAccount(c, WORLD, "world");
+            ensureSystemAccount(c, IN_TRANSIT, "in_transit");
+        }
+    }
+
+    private static void ensureSystemAccount(Connection c, long id, String owner) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO accounts(id, owner, balance, version, kind) VALUES (?,?,0,0,?) ON CONFLICT (id) DO NOTHING")) {
+            ps.setLong(1, id);
+            ps.setString(2, owner);
+            ps.setString(3, Ledger.KIND_EXTERNAL);
+            ps.executeUpdate();
+        }
+    }
+
+    public void createCustomer(long id, String owner) throws SQLException {
+        try (Connection c = open()) {
+            Ledger.createAccountOn(c, id, owner, Ledger.KIND_CUSTOMER);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // the easy case: both accounts on THIS shard — stage 1, unchanged
+    // ------------------------------------------------------------------
+    public Ledger.TransferResult transferLocal(UUID txId, long fromId, long toId, BigDecimal amount) throws SQLException {
+        try (Connection c = open()) {
+            return Ledger.transferOn(c, txId, fromId, toId, amount);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // the saga, half one: money leaves the payer INTO the pipe
+    // ------------------------------------------------------------------
+    public Ledger.TransferResult depart(UUID txId, long fromId, long toId, BigDecimal amount) throws SQLException {
+        if (amount.signum() <= 0) throw new IllegalArgumentException("amount must be positive");
+        try (Connection conn = open()) {
+            conn.setAutoCommit(false);
+            try {
+                // the SAME idempotency gate — a retried "send" departs once
+                if (!Ledger.claimTx(conn, txId, "depart")) {
+                    conn.rollback();
+                    return new Ledger.AlreadyProcessed();
+                }
+                // ordered locking, local rows only: IN_TRANSIT (3) sorts
+                // before every customer id, so the order is fixed here too
+                Ledger.lockAccount(conn, IN_TRANSIT);
+                Ledger.Account from = Ledger.lockAccount(conn, fromId);
+
+                // THE decision that can fail — and it is LOCAL. This line is
+                // why the bank shards by customer: the payer's money and the
+                // payer's lock are always on the same machine.
+                if (Ledger.KIND_CUSTOMER.equals(from.kind()) && from.balance().compareTo(amount) < 0) {
+                    conn.rollback();
+                    return new Ledger.InsufficientFunds();
+                }
+
+                Ledger.insertEntry(conn, txId, fromId, amount.negate());
+                Ledger.insertEntry(conn, txId, IN_TRANSIT, amount);
+                Ledger.updateCachedBalance(conn, fromId, amount.negate());
+                Ledger.updateCachedBalance(conn, IN_TRANSIT, amount);
+
+                // the event IS the second half of the transfer. It commits
+                // with the money (outbox) and Kafka will deliver it
+                // at-least-once — so arrival must be idempotent, and is.
+                Outbox.append(conn, "payments", "departed:" + txId,
+                        "{\"type\":\"transfer.departed\",\"txId\":\"" + txId +
+                        "\",\"from\":" + fromId + ",\"to\":" + toId +
+                        ",\"amount\":\"" + amount.toPlainString() + "\"}");
+
+                conn.commit();
+                return new Ledger.Ok();
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // the saga, half two: money leaves the pipe INTO the recipient
+    // ------------------------------------------------------------------
+    public Ledger.TransferResult arrive(UUID txId, long toId, BigDecimal amount) throws SQLException {
+        try (Connection conn = open()) {
+            conn.setAutoCommit(false);
+            try {
+                // the SAME txId gates here too — but on THIS shard's own
+                // transactions table. Kafka may deliver the event five
+                // times; the money arrives once.
+                if (!Ledger.claimTx(conn, txId, "arrive")) {
+                    conn.rollback();
+                    return new Ledger.AlreadyProcessed();
+                }
+                if (!accountExists(conn, toId)) {
+                    // the money already left the source shard — this is not
+                    // an exception, it is a fact the saga must compensate.
+                    conn.rollback();
+                    return new Ledger.NoSuchAccount();
+                }
+                Ledger.lockAccount(conn, IN_TRANSIT);
+                Ledger.lockAccount(conn, toId);
+
+                Ledger.insertEntry(conn, txId, IN_TRANSIT, amount.negate());
+                Ledger.insertEntry(conn, txId, toId, amount);
+                Ledger.updateCachedBalance(conn, IN_TRANSIT, amount.negate());
+                Ledger.updateCachedBalance(conn, toId, amount);
+                // no funds check: credits cannot fail. And no new outbox
+                // event — the departed event already told the world.
+                conn.commit();
+                return new Ledger.Ok();
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // the compensating transaction: the bounce
+    // ------------------------------------------------------------------
+    /** Destination didn't exist: put the money back where it came from.
+     *  Gated by a DETERMINISTIC id derived from the original tx — so even
+     *  the refund is idempotent if the bounce is processed twice. */
+    public Ledger.TransferResult refund(UUID origTxId, long fromId, BigDecimal amount) throws SQLException {
+        UUID refundId = UUID.nameUUIDFromBytes(("refund:" + origTxId).getBytes(StandardCharsets.UTF_8));
+        try (Connection conn = open()) {
+            conn.setAutoCommit(false);
+            try {
+                if (!Ledger.claimTx(conn, refundId, "refund")) {
+                    conn.rollback();
+                    return new Ledger.AlreadyProcessed();
+                }
+                Ledger.lockAccount(conn, IN_TRANSIT);
+                Ledger.lockAccount(conn, fromId);
+
+                Ledger.insertEntry(conn, refundId, IN_TRANSIT, amount.negate());
+                Ledger.insertEntry(conn, refundId, fromId, amount);
+                Ledger.updateCachedBalance(conn, IN_TRANSIT, amount.negate());
+                Ledger.updateCachedBalance(conn, fromId, amount);
+
+                Outbox.append(conn, "payments", "bounced:" + origTxId,
+                        "{\"type\":\"transfer.bounced\",\"txId\":\"" + origTxId +
+                        "\",\"from\":" + fromId +
+                        ",\"amount\":\"" + amount.toPlainString() + "\"}");
+                conn.commit();
+                return new Ledger.Ok();
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // reads
+    // ------------------------------------------------------------------
+    public BigDecimal balance(long accountId) throws SQLException {
+        try (Connection c = open()) {
+            return Ledger.cachedBalanceOn(c, accountId);
+        }
+    }
+
+    /** This shard's slice of "money in the pipe": positive where transfers
+     *  depart, negative where they arrive. The FLEET-WIDE sum is the real
+     *  number — see Shards.inFlight(). */
+    public BigDecimal inTransitBalance() throws SQLException {
+        return balance(IN_TRANSIT);
+    }
+
+    public boolean hasAccount(long id) throws SQLException {
+        try (Connection c = open()) {
+            return accountExists(c, id);
+        }
+    }
+
+    private static boolean accountExists(Connection c, long id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM accounts WHERE id = ?")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    public void close() {
+        pool.close();
+    }
+}

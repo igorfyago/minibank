@@ -1,55 +1,43 @@
 package dev.minibank.ledger;
 
-import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.util.UUID;
-
 /**
- * The whole bank, one process (for now — services split into their own
- * processes when the lessons demand it):
+ * The whole bank, one process (each piece is a service waiting to be cut
+ * loose — the boundaries are already database-shaped):
  *
- *   HTTP API + web app ........ :8080   (virtual thread per request)
- *   outbox relay .............. virtual thread, polls -> Kafka
- *   notifications consumer .... virtual thread, Kafka -> its own database
+ *   HTTP API + router + web app ... :8080  (virtual thread per request)
+ *   ledger, SHARDED ............... shard0 :5434, shard1 :5435
+ *                                   (a pool per shard; igor lives on 0,
+ *                                    coco on 1 — every igor->coco payment
+ *                                    is a real cross-shard saga)
+ *   outbox relays ................. one virtual thread PER SHARD -> Kafka
+ *   shard applier ................. Kafka -> destination shard (arrivals)
+ *   notifications consumer ........ Kafka -> its own database
  *
- * Requires: docker compose up -d   (postgres :5433, kafka :9092)
+ * Requires: docker compose up -d   (shards :5434/:5435, kafka :9092,
+ *                                   postgres :5433 hosts notifications)
  */
 public final class Main {
-
-    static final long WORLD = 1, CAFE = 2, IGOR = 10, COCO = 11;
 
     public static void main(String[] args) throws Exception {
         String kafka = System.getenv().getOrDefault("MINIBANK_KAFKA", "localhost:9092");
         int port = Integer.parseInt(System.getenv().getOrDefault("MINIBANK_PORT", "8080"));
+        int poolSize = Integer.parseInt(System.getenv().getOrDefault("MINIBANK_POOL", "10"));
 
-        Db.usePool(Integer.parseInt(System.getenv().getOrDefault("MINIBANK_POOL", "10")));
-        Ledger.createTables();
+        Shards.boot(
+                System.getenv().getOrDefault("MINIBANK_SHARD0_URL", "jdbc:postgresql://localhost:5434/minibank"),
+                System.getenv().getOrDefault("MINIBANK_SHARD1_URL", "jdbc:postgresql://localhost:5435/minibank"),
+                "minibank", "minibank", poolSize);
+        Shards.createAndSeed();
         Notifications.createOwnDatabase();
-        seedIfEmpty();
 
-        OutboxRelay relay = new OutboxRelay(kafka);
-        relay.runLoop(500);
+        for (Shard s : Shards.all()) {
+            new OutboxRelay(kafka, s::open).runLoop(500);   // a relay per shard
+        }
+        ShardApplier.start(kafka);
         NotificationsConsumer.start(kafka);
         HttpApi.start(port);
 
-        System.out.println("minibank up: http://localhost:" + port);
+        System.out.println("minibank up (sharded): http://localhost:" + port);
         Thread.currentThread().join();   // the virtual threads do the work
-    }
-
-    /** Demo cast, created once: igor and coco funded by the world. */
-    private static void seedIfEmpty() throws Exception {
-        try (Connection c = Db.open(); var st = c.createStatement();
-             ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM accounts")) {
-            rs.next();
-            if (rs.getLong(1) > 0) return;
-        }
-        Ledger.createAccount(WORLD, "world", Ledger.KIND_EXTERNAL);
-        Ledger.createAccount(CAFE, "cafe", Ledger.KIND_EXTERNAL);
-        Ledger.createAccount(IGOR, "igor", Ledger.KIND_CUSTOMER);
-        Ledger.createAccount(COCO, "coco", Ledger.KIND_CUSTOMER);
-        Ledger.transfer(UUID.randomUUID(), WORLD, IGOR, new BigDecimal("500.00"));
-        Ledger.transfer(UUID.randomUUID(), WORLD, COCO, new BigDecimal("500.00"));
-        System.out.println("seeded: igor and coco funded with 500.00 each");
     }
 }

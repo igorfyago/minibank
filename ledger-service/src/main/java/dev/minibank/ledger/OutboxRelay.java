@@ -20,8 +20,16 @@ import java.util.Properties;
 public final class OutboxRelay implements AutoCloseable {
 
     private final Producer<String, String> producer;
+    private final ConnectionSource db;
 
     public OutboxRelay(String bootstrapServers) {
+        this(bootstrapServers, Db::open);
+    }
+
+    /** Stage 5: every shard has its own outbox, so every shard gets its own
+     *  relay — same code, pointed at a different database. */
+    public OutboxRelay(String bootstrapServers, ConnectionSource db) {
+        this.db = db;
         Properties p = new Properties();
         p.put("bootstrap.servers", bootstrapServers);
         p.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
@@ -33,17 +41,19 @@ public final class OutboxRelay implements AutoCloseable {
 
     /** One pass: publish every unpublished event, oldest first. Returns count. */
     public int publishPending() throws SQLException {
-        List<Outbox.Event> events = Outbox.pollUnpublished(100);
-        for (Outbox.Event e : events) {
-            try {
-                // send synchronously: only after the broker acks do we mark.
-                producer.send(new ProducerRecord<>(e.topic(), e.key(), e.payload())).get();
-            } catch (Exception ex) {
-                throw new RuntimeException("publish failed for outbox id " + e.id(), ex);
+        try (java.sql.Connection c = db.open()) {
+            List<Outbox.Event> events = Outbox.pollUnpublishedOn(c, 100);
+            for (Outbox.Event e : events) {
+                try {
+                    // send synchronously: only after the broker acks do we mark.
+                    producer.send(new ProducerRecord<>(e.topic(), e.key(), e.payload())).get();
+                } catch (Exception ex) {
+                    throw new RuntimeException("publish failed for outbox id " + e.id(), ex);
+                }
+                Outbox.markPublishedOn(c, e.id());   // crash before this line -> resent later. At-least-once.
             }
-            Outbox.markPublished(e.id());   // crash before this line -> resent later. At-least-once.
+            return events.size();
         }
-        return events.size();
     }
 
     /** Production mode: forever, on a virtual thread. */

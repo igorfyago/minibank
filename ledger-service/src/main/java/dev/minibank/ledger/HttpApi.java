@@ -45,18 +45,24 @@ public final class HttpApi {
 
     // ------------------------------------------------------------------ app
 
+    /** Customers only, each from its home shard — the union IS the customer
+     *  list, because the router is a partition: no overlaps, no gaps. */
     private static Response accounts(HttpExchange ex) throws Exception {
         StringBuilder b = new StringBuilder("[");
-        try (Connection c = Db.open(); var st = c.createStatement();
-             ResultSet rs = st.executeQuery("SELECT id, owner, kind, balance FROM accounts ORDER BY id")) {
-            boolean first = true;
-            while (rs.next()) {
-                if (!first) b.append(',');
-                first = false;
-                b.append("{\"id\":").append(rs.getLong(1))
-                 .append(",\"owner\":\"").append(Json.esc(rs.getString(2)))
-                 .append("\",\"kind\":\"").append(rs.getString(3))
-                 .append("\",\"balance\":\"").append(rs.getBigDecimal(4).toPlainString()).append("\"}");
+        boolean first = true;
+        for (Shard s : Shards.all()) {
+            try (Connection c = s.open(); var st = c.createStatement();
+                 ResultSet rs = st.executeQuery(
+                         "SELECT id, owner, kind, balance FROM accounts WHERE kind = 'customer' ORDER BY id")) {
+                while (rs.next()) {
+                    if (!first) b.append(',');
+                    first = false;
+                    b.append("{\"id\":").append(rs.getLong(1))
+                     .append(",\"owner\":\"").append(Json.esc(rs.getString(2)))
+                     .append("\",\"kind\":\"").append(rs.getString(3))
+                     .append("\",\"balance\":\"").append(rs.getBigDecimal(4).toPlainString())
+                     .append("\",\"shard\":").append(s.index).append("}");
+                }
             }
         }
         return Response.json(200, b.append(']').toString());
@@ -76,14 +82,22 @@ public final class HttpApi {
             return Response.json(400, "{\"error\":\"need txId, from, to, amount\"}");
 
         try {
-            var result = Ledger.transfer(UUID.fromString(txId),
-                    Long.parseLong(from), Long.parseLong(to), new BigDecimal(amount));
+            // THE ROUTER: same shard -> the stage-1 ACID transfer, unchanged.
+            // Different shards -> the saga departs; Kafka settles the rest.
+            Shards.Plan plan = Shards.plan(Long.parseLong(from), Long.parseLong(to));
+            Ledger.TransferResult result = plan.crossShard()
+                    ? plan.source().depart(UUID.fromString(txId),
+                            Long.parseLong(from), Long.parseLong(to), new BigDecimal(amount))
+                    : plan.source().transferLocal(UUID.fromString(txId),
+                            Long.parseLong(from), Long.parseLong(to), new BigDecimal(amount));
             String kind = switch (result) {
                 case Ledger.Ok ok -> "ok";
                 case Ledger.AlreadyProcessed a -> "already_processed";
                 case Ledger.InsufficientFunds i -> "insufficient_funds";
+                case Ledger.NoSuchAccount n -> "no_such_account";
             };
-            return Response.json(200, "{\"result\":\"" + kind + "\"}");
+            return Response.json(200, "{\"result\":\"" + kind +
+                    "\",\"crossShard\":" + plan.crossShard() + "}");
         } catch (IllegalArgumentException e) {
             return Response.json(400, "{\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
         }
@@ -109,57 +123,95 @@ public final class HttpApi {
     // ------------------------------------------------------------------ x-ray
 
     private static Response xraySummary(HttpExchange ex) throws Exception {
-        long accounts, transactions, entries, outboxPending, outboxPublished;
-        try (Connection c = Db.open(); var st = c.createStatement()) {
-            accounts = one(st.executeQuery("SELECT COUNT(*) FROM accounts"));
-            transactions = one(st.executeQuery("SELECT COUNT(*) FROM transactions"));
-            entries = one(st.executeQuery("SELECT COUNT(*) FROM entries"));
-            outboxPending = one(st.executeQuery("SELECT COUNT(*) FROM outbox WHERE published_at IS NULL"));
-            outboxPublished = one(st.executeQuery("SELECT COUNT(*) FROM outbox WHERE published_at IS NOT NULL"));
+        long tAccounts = 0, tTransactions = 0, tEntries = 0, tPending = 0, tPublished = 0;
+        int tViolations = 0, tDrifted = 0;
+        StringBuilder shardsJson = new StringBuilder("[");
+        for (Shard s : Shards.all()) {
+            long accounts, transactions, entries, pending, published;
+            int violations, drifted;
+            String inTransit;
+            try (Connection c = s.open(); var st = c.createStatement()) {
+                accounts = one(st.executeQuery("SELECT COUNT(*) FROM accounts"));
+                transactions = one(st.executeQuery("SELECT COUNT(*) FROM transactions"));
+                entries = one(st.executeQuery("SELECT COUNT(*) FROM entries"));
+                pending = one(st.executeQuery("SELECT COUNT(*) FROM outbox WHERE published_at IS NULL"));
+                published = one(st.executeQuery("SELECT COUNT(*) FROM outbox WHERE published_at IS NOT NULL"));
+                violations = Ledger.sumZeroViolationsOn(c).size();
+                drifted = Ledger.driftedAccountsOn(c).size();
+                inTransit = Ledger.cachedBalanceOn(c, Shard.IN_TRANSIT).toPlainString();
+            }
+            tAccounts += accounts; tTransactions += transactions; tEntries += entries;
+            tPending += pending; tPublished += published;
+            tViolations += violations; tDrifted += drifted;
+            if (s.index > 0) shardsJson.append(',');
+            shardsJson.append("{\"shard\":").append(s.index)
+                    .append(",\"accounts\":").append(accounts)
+                    .append(",\"transactions\":").append(transactions)
+                    .append(",\"entries\":").append(entries)
+                    .append(",\"outboxPending\":").append(pending)
+                    .append(",\"outboxPublished\":").append(published)
+                    .append(",\"sumZeroViolations\":").append(violations)
+                    .append(",\"driftedAccounts\":").append(drifted)
+                    .append(",\"inTransit\":\"").append(inTransit)
+                    .append("\",\"poolBusy\":").append(s.pool().borrowedCount())
+                    .append(",\"poolSize\":").append(s.pool().size()).append('}');
         }
-        int notifCount = Notifications.count();
-        int sumZeroViolations = Ledger.sumZeroViolations().size();
-        int drifted = Ledger.driftedAccounts().size();
+        shardsJson.append(']');
         return Response.json(200,
-                "{\"accounts\":" + accounts + ",\"transactions\":" + transactions +
-                ",\"entries\":" + entries + ",\"outboxPending\":" + outboxPending +
-                ",\"outboxPublished\":" + outboxPublished + ",\"notifications\":" + notifCount +
-                ",\"sumZeroViolations\":" + sumZeroViolations + ",\"driftedAccounts\":" + drifted + "}");
+                "{\"accounts\":" + tAccounts + ",\"transactions\":" + tTransactions +
+                ",\"entries\":" + tEntries + ",\"outboxPending\":" + tPending +
+                ",\"outboxPublished\":" + tPublished + ",\"notifications\":" + Notifications.count() +
+                ",\"sumZeroViolations\":" + tViolations + ",\"driftedAccounts\":" + tDrifted +
+                ",\"inFlight\":\"" + Shards.inFlight().toPlainString() +
+                "\",\"shards\":" + shardsJson + "}");
     }
 
     private static Response xrayEntries(HttpExchange ex) throws Exception {
-        StringBuilder b = new StringBuilder("[");
-        try (Connection c = Db.open(); var st = c.createStatement();
-             ResultSet rs = st.executeQuery("""
-                     SELECT e.tx_id, a.owner, e.amount, e.created_at
-                     FROM entries e JOIN accounts a ON a.id = e.account_id
-                     ORDER BY e.id DESC LIMIT 30""")) {
-            boolean first = true;
-            while (rs.next()) {
-                if (!first) b.append(',');
-                first = false;
-                b.append("{\"tx\":\"").append(rs.getString(1))
-                 .append("\",\"owner\":\"").append(Json.esc(rs.getString(2)))
-                 .append("\",\"amount\":\"").append(rs.getBigDecimal(3).toPlainString())
-                 .append("\",\"at\":\"").append(rs.getTimestamp(4).toInstant()).append("\"}");
+        record Row(String tx, String owner, String amount, java.time.Instant at, int shard) {}
+        java.util.List<Row> rows = new java.util.ArrayList<>();
+        for (Shard s : Shards.all()) {
+            try (Connection c = s.open(); var st = c.createStatement();
+                 ResultSet rs = st.executeQuery("""
+                         SELECT e.tx_id, a.owner, e.amount, e.created_at
+                         FROM entries e JOIN accounts a ON a.id = e.account_id
+                         ORDER BY e.id DESC LIMIT 30""")) {
+                while (rs.next()) {
+                    rows.add(new Row(rs.getString(1), rs.getString(2),
+                            rs.getBigDecimal(3).toPlainString(), rs.getTimestamp(4).toInstant(), s.index));
+                }
             }
+        }
+        rows.sort((a, b2) -> b2.at().compareTo(a.at()));
+        StringBuilder b = new StringBuilder("[");
+        int n = 0;
+        for (Row r : rows) {
+            if (n++ == 30) break;
+            if (n > 1) b.append(',');
+            b.append("{\"tx\":\"").append(r.tx())
+             .append("\",\"owner\":\"").append(Json.esc(r.owner()))
+             .append("\",\"amount\":\"").append(r.amount())
+             .append("\",\"at\":\"").append(r.at())
+             .append("\",\"shard\":").append(r.shard()).append('}');
         }
         return Response.json(200, b.append(']').toString());
     }
 
     private static Response xrayOutbox(HttpExchange ex) throws Exception {
         StringBuilder b = new StringBuilder("[");
-        try (Connection c = Db.open(); var st = c.createStatement();
-             ResultSet rs = st.executeQuery(
-                     "SELECT id, key, payload, published_at FROM outbox ORDER BY id DESC LIMIT 20")) {
-            boolean first = true;
-            while (rs.next()) {
-                if (!first) b.append(',');
-                first = false;
-                b.append("{\"id\":").append(rs.getLong(1))
-                 .append(",\"key\":\"").append(rs.getString(2))
-                 .append("\",\"payload\":\"").append(Json.esc(rs.getString(3)))
-                 .append("\",\"published\":").append(rs.getTimestamp(4) != null).append("}");
+        boolean first = true;
+        for (Shard s : Shards.all()) {
+            try (Connection c = s.open(); var st = c.createStatement();
+                 ResultSet rs = st.executeQuery(
+                         "SELECT id, key, payload, published_at FROM outbox ORDER BY id DESC LIMIT 10")) {
+                while (rs.next()) {
+                    if (!first) b.append(',');
+                    first = false;
+                    b.append("{\"id\":").append(rs.getLong(1))
+                     .append(",\"key\":\"").append(rs.getString(2))
+                     .append("\",\"payload\":\"").append(Json.esc(rs.getString(3)))
+                     .append("\",\"published\":").append(rs.getTimestamp(4) != null)
+                     .append(",\"shard\":").append(s.index).append('}');
+                }
             }
         }
         return Response.json(200, b.append(']').toString());

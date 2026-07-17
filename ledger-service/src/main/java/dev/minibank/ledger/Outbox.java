@@ -35,7 +35,13 @@ public final class Outbox {
     private Outbox() {}
 
     public static void createTable() throws SQLException {
-        try (Connection c = Db.open(); var st = c.createStatement()) {
+        try (Connection c = Db.open()) {
+            createTableOn(c);
+        }
+    }
+
+    public static void createTableOn(Connection c) throws SQLException {
+        try (var st = c.createStatement()) {
             st.execute("""
                 CREATE TABLE IF NOT EXISTS outbox (
                     id           BIGSERIAL PRIMARY KEY,
@@ -62,9 +68,14 @@ public final class Outbox {
 
     /** The relay's read: oldest unpublished events first. */
     public static List<Event> pollUnpublished(int limit) throws SQLException {
+        try (Connection c = Db.open()) {
+            return pollUnpublishedOn(c, limit);
+        }
+    }
+
+    public static List<Event> pollUnpublishedOn(Connection c, int limit) throws SQLException {
         List<Event> events = new ArrayList<>();
-        try (Connection c = Db.open();
-             PreparedStatement ps = c.prepareStatement(
+        try (PreparedStatement ps = c.prepareStatement(
                      "SELECT id, topic, key, payload FROM outbox WHERE published_at IS NULL ORDER BY id LIMIT ?")) {
             ps.setInt(1, limit);
             try (ResultSet rs = ps.executeQuery()) {
@@ -79,9 +90,14 @@ public final class Outbox {
     /** Marked AFTER the broker confirmed. Crash before this line = the event
      *  will be sent again = at-least-once. Never mark before sending. */
     public static void markPublished(long id) throws SQLException {
-        try (Connection c = Db.open();
-             PreparedStatement ps = c.prepareStatement(
-                     "UPDATE outbox SET published_at = now() WHERE id = ?")) {
+        try (Connection c = Db.open()) {
+            markPublishedOn(c, id);
+        }
+    }
+
+    public static void markPublishedOn(Connection c, long id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE outbox SET published_at = now() WHERE id = ?")) {
             ps.setLong(1, id);
             ps.executeUpdate();
         }
