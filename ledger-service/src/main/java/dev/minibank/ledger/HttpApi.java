@@ -40,6 +40,7 @@ public final class HttpApi {
         server.createContext("/api/mortgage", ex -> handle(ex, HttpApi::mortgageApply));
         server.createContext("/api/card", ex -> handle(ex, HttpApi::cardOps));
         server.createContext("/api/signup", ex -> handle(ex, HttpApi::signup));
+        server.createContext("/api/support", ex -> handle(ex, HttpApi::support));
         server.createContext("/api/notifications", ex -> handle(ex, HttpApi::notifications));
         server.createContext("/api/xray/summary", ex -> handle(ex, HttpApi::xraySummary));
         server.createContext("/api/xray/events", ex -> handle(ex, HttpApi::xrayEvents));
@@ -841,6 +842,36 @@ public final class HttpApi {
             return Response.json(200, "{\"result\":\"" + kind + "\"}");
         } catch (IllegalArgumentException e) {
             return Response.json(400, "{\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
+        }
+    }
+
+    // Rita's own meters: the model call costs real money, so it gets its
+    // own buckets IN FRONT of it — a few questions per caller, a daily
+    // global allowance, 429 with grace beyond that.
+    private static final java.util.Map<String, TokenBucket> supportBuckets = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final TokenBucket supportGlobal = new TokenBucket(300, 300.0 / 86400, System.nanoTime());
+
+    /** Rita, the support agent — grounded in live account data, read-only */
+    private static Response support(HttpExchange ex) throws Exception {
+        if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
+        if (!SupportAgent.enabled())
+            return Response.json(200, "{\"reply\":\"Rita is offline in this environment (no model key configured) — but the Guide on the X-ray tab explains everything I would have, at three depths.\"}");
+        String ip = ex.getRequestHeaders().getFirst("X-Forwarded-For");
+        ip = ip != null ? ip.split(",")[0].trim() : ex.getRemoteAddress().getAddress().getHostAddress();
+        if (!supportBuckets.computeIfAbsent(ip, k -> new TokenBucket(4, 1.0 / 15, System.nanoTime())).take(System.nanoTime())
+                || !supportGlobal.take(System.nanoTime()))
+            return Response.json(429, "{\"reply\":\"I need a tiny breather — ask me again in a moment. (My own token bucket: even support is rate-limited here.)\"}");
+
+        String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String customer = Json.num(body, "customer"), message = Json.str(body, "message"), transcript = Json.str(body, "transcript");
+        if (customer == null || message == null) return Response.json(400, "{\"error\":\"need customer, message\"}");
+        if (message.length() > 400) message = message.substring(0, 400);
+        if (transcript != null && transcript.length() > 1600) transcript = transcript.substring(transcript.length() - 1600);
+        try {
+            String reply = SupportAgent.reply(Long.parseLong(customer), message, transcript);
+            return Response.json(200, "{\"reply\":\"" + Json.esc(reply) + "\"}");
+        } catch (Exception e) {
+            return Response.json(200, "{\"reply\":\"Sorry — I hiccuped mid-thought. Try once more? (If this keeps happening the model behind me is having a day.)\"}");
         }
     }
 
