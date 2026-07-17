@@ -48,6 +48,11 @@ public final class Main {
         }
         ShardApplier.start(kafka);
         NotificationsConsumer.start(kafka);
+
+        // THE FX SERVICE · its own container in production (FX_URL set);
+        // the one-command dev run embeds it on :8090
+        if (System.getenv("FX_URL") == null) dev.minibank.fx.FxService.start(8090);
+
         HttpApi.start(port);
 
         System.out.println("minibank up (sharded): http://localhost:" + port);

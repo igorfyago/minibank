@@ -45,14 +45,9 @@
   /* the operations tape · a market tape: each transaction crosses once, steps in order, then gone */
   #ticker-bar { position:fixed; left:0; right:0; bottom:0; height:34px; z-index:45; overflow:hidden;
     background:rgba(7,12,16,.96); border-top:1px solid #143024; backdrop-filter:blur(8px);
-    display:flex; align-items:center; font:11.5px 'Cascadia Code', Consolas, monospace; }
-  #tape-led { flex:none; display:flex; align-items:center; gap:7px; height:100%; padding:0 14px 0 13px;
-    color:#3ddc84; font-size:9.5px; font-weight:700; letter-spacing:.16em; border-right:1px solid #12241c; }
-  #tape-led i { width:7px; height:7px; border-radius:50%; background:#22c55e;
-    box-shadow:0 0 9px #22c55e; animation:ledpulse 2.4s ease-in-out infinite; }
-  #tape-led.hold { color:var(--amber); }
-  #tape-led.hold i { background:var(--amber); box-shadow:0 0 9px var(--amber); animation:none; }
-  @keyframes ledpulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+    display:flex; align-items:center; font:11.5px 'Cascadia Code', Consolas, monospace;
+    transform:translateY(110%); transition:transform .45s ease; }
+  #ticker-bar.on { transform:none; }
   #tk-belt { position:relative; flex:1; height:100%; overflow:hidden;
     -webkit-mask:linear-gradient(90deg, transparent, #000 26px, #000 calc(100% - 26px), transparent);
     mask:linear-gradient(90deg, transparent, #000 26px, #000 calc(100% - 26px), transparent); }
@@ -573,8 +568,11 @@
               <rect width="200" height="52" rx="9"/><text x="100" y="22" text-anchor="middle">Rita · support agent</text>
               <text x="100" y="38" text-anchor="middle" class="sub">gpt-4o-mini · 7 tools · Allow/Deny</text></g>
             <g class="node" data-node="pricefeed" transform="translate(430,470)">
-              <rect width="210" height="52" rx="9"/><text x="105" y="22" text-anchor="middle">PriceFeed</text>
-              <text x="105" y="38" text-anchor="middle" class="sub">CoinGecko · Yahoo · EURUSD · 60s cache</text></g>
+              <rect width="168" height="52" rx="9"/><text x="84" y="22" text-anchor="middle">PriceFeed</text>
+              <text x="84" y="38" text-anchor="middle" class="sub">CoinGecko · Yahoo · 60s</text></g>
+            <g class="node" data-node="fx" transform="translate(610,470)">
+              <rect width="104" height="52" rx="9"/><text x="52" y="22" text-anchor="middle">FX</text>
+              <text x="52" y="38" text-anchor="middle" class="sub">own process :8090</text></g>
             <g id="pulse-layer"></g>
           </svg>
           <div class="muted" style="text-align:center; font-size:11.5px; margin-top:6px">
@@ -787,7 +785,7 @@
   </div>
 </div>
 
-<div id="ticker-bar"><div id="tape-led"><i></i><b>LIVE</b></div><div id="tk-belt"><div id="tk-track"></div></div></div>
+<div id="ticker-bar"><div id="tk-belt"><div id="tk-track"></div></div></div>
 
 <button id="chat-fab" title="Rita">💬</button>
 <div id="chat-panel" class="hidden">
@@ -826,6 +824,7 @@ document.querySelectorAll('.tab-btn[data-tab]').forEach(b => b.onclick = () => {
 /* ---------------- app tab ---------------- */
 let me = null, accounts = [], lastTx = null, prevStmtSig = '';
 const fmt = v => '€' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const usdFmt = (v, d) => '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 
 async function loadAccounts() {
   accounts = await api('/api/accounts');
@@ -987,7 +986,7 @@ async function loadChart(key, asset) {
   const up = vs[vs.length - 1] >= vs[0];
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:64px;display:block" preserveAspectRatio="none">
       <polyline points="${pts}" fill="none" stroke="${up ? 'var(--green)' : 'var(--red)'}" stroke-width="1.6"/></svg>
-    <div class="ph-row"><span>30 days · real ${asset === 'btc' ? 'CoinGecko' : 'Yahoo × EURUSD'} data</span><b>${fmt(min)} – ${fmt(max)}</b></div>`;
+    <div class="ph-row"><span>30 days · real ${asset === 'btc' ? 'CoinGecko' : 'Yahoo × fx-service'} data, in €</span><b>${fmt(min)} – ${fmt(max)}</b></div>`;
 }
 async function loadProdHist(key, acct) {
   const el = document.querySelector('#ph-' + key);
@@ -1028,7 +1027,7 @@ async function loadPortfolio() {
   $('#prods').innerHTML =
     `<div class="prod"><div class="prod-name">💠 Total wealth</div>
       <div class="prod-val">${fmt(total)}</div>
-      <div class="prod-sub">main + savings + assets + card + loan · prices: ${pf.priceSource}</div></div>`
+      <div class="prod-sub">main + savings + assets + card + loan · prices ${pf.priceSource} · $→€ ${Number(pf.fxRate).toFixed(4)} via fx-service</div></div>`
     + tile('sv',
       `<div class="prod-name">💰 Savings</div><div class="prod-val">${fmt(pf.savings)}</div>
        <div class="prod-sub">a second account, nothing more</div>`,
@@ -1048,7 +1047,7 @@ async function loadPortfolio() {
        <div class="ph" id="ph-cd"></div>`)
     + tile('bt',
       `<div class="prod-name">₿ Bitcoin</div><div class="prod-val">${fmtBtc(pf.btc)} <span class="prod-sub">≈ ${fmt(pf.btcEur)}</span></div>
-       <div class="prod-sub">@ ${fmt(pf.btcPrice)} · live CoinGecko</div>`,
+       <div class="prod-sub">@ ${usdFmt(pf.btcUsd, 0)} · live CoinGecko</div>`,
       `<div class="ch" id="ch-bt"></div>` + slider('bt', 10, 250, 5, 50) +
       `<div class="prod-btns"><button class="mini" onclick="pTrade('btc','buy',false)">buy</button>
        ${Number(pf.btcEur) > 0.5 ? `<button class="mini" onclick="pTrade('btc','sell',false)">sell</button>
@@ -1057,7 +1056,7 @@ async function loadPortfolio() {
        <div class="ph" id="ph-bt"></div>`)
     + tile('ap',
       `<div class="prod-name">🍏 Apple stock</div><div class="prod-val">${Number(pf.aapl).toFixed(4)} sh <span class="prod-sub">≈ ${fmt(pf.aaplEur)}</span></div>
-       <div class="prod-sub">@ ${fmt(pf.aaplPrice)} · Yahoo × EURUSD</div>`,
+       <div class="prod-sub">@ ${usdFmt(pf.aaplUsd, 2)} · Yahoo</div>`,
       `<div class="ch" id="ch-ap"></div>` + slider('ap', 10, 250, 5, 50) +
       `<div class="prod-btns"><button class="mini" onclick="pTrade('aapl','buy',false)">buy</button>
        ${Number(pf.aaplEur) > 0.5 ? `<button class="mini" onclick="pTrade('aapl','sell',false)">sell</button>
@@ -1238,8 +1237,12 @@ const GUIDE = {
     plain: () => [`gpt-4o-mini behind a raw JDK HttpClient call (no SDK). Grounded per request: your live balances, recent ledger rows and the cast list are queried and injected into her context. Seven tools · exactly the app's buttons.`],
     how: () => [`She PROPOSES tool calls; your browser executes on Allow via the same public API as the buttons · same idempotency keys, limiter, constraints. Metered by her own token buckets (4-burst per caller, 300/day global).`],
     win: () => [`Agents and humans get the same power; the human's click is the gate. Least privilege beats prompt engineering: an injection can render a card you decline · never move money.`] },
+  fx: { t: 'FX · the first true microservice',
+    plain: () => [`Its own process on :8090 (its own container in production): one responsibility, exchange rates. USD→EUR from frankfurter.app, cached 60s, no database, no ledger access · the only contract between it and the bank is HTTP. Asset prices display in dollars; the ledger settles euros through this rate.`],
+    how: () => [`The bank calls it with a HARD ~500ms deadline and a fallback: FX slow or down → the last good rate, honestly labeled, and the payment path never stalls. Deadline + fallback is the circuit-breaker pattern at demo scale · there is a test that kills the service and proves the client survives.`],
+    win: () => [`Microservices are boundaries around DATA OWNERSHIP, not a performance tool. Rates change owner, schema and deploy cadence independently of money · this boundary earns its network hop by sharing zero state with the ledger. Split when a boundary earns it; until then a modular monolith with database-shaped seams (this bank) is the defensible answer.`] },
   pricefeed: { t: 'PriceFeed · live market data',
-    plain: () => [`BTC/EUR from CoinGecko; AAPL from Yahoo (USD) converted at the live EURUSD rate from frankfurter.app. All keyless, cached 60s, source labeled (live/cached/fallback) so the UI never lies about freshness.`],
+    plain: () => [`BTC from CoinGecko (EUR and USD in one call); AAPL from Yahoo in USD, euros derived through the FX service. All keyless, cached 60s, source labeled (live/cached/fallback) so the UI never lies about freshness.`],
     how: () => [`The price is captured AT EXECUTION and written into the trade event · the ledger stores euros and units; their ratio IS the price paid. Feeds down? Fallback prices, honestly labeled.`],
     win: () => [`Never let a UI display a price the ledger didn't record. Execution price lives in the transaction, not in a cache.`] },
   'ev:transfer_local': { t: 'A local transfer',
@@ -1365,7 +1368,7 @@ document.querySelectorAll('.node').forEach(n => n.onclick = () => {
 let inspectNode = null, prevInspSig = '';
 async function inspect(node) {
   node = ({ directory: 'api' })[node] || node;
-  if (['browser', 'caddy', 'rita', 'pricefeed'].includes(node)) { closeInspect(); return; }
+  if (['browser', 'caddy', 'rita', 'pricefeed', 'fx'].includes(node)) { closeInspect(); return; }
   inspectNode = node; prevInspSig = '';
   await refreshInspect();
 }
@@ -1543,7 +1546,7 @@ const CONCEPTS = [
     demo: 'This page IS the observability: live invariants (sum-zero, drift), consumer lag in the Console, and the trace card · assembled from timestamps the system already writes, no agent installed.',
     prod: 'The same three signals, industrialized: metrics (p99, lag, the in-flight sum) with SLO alerts that page a human, structured logs, OpenTelemetry traces. The production dashboards graph the very numbers this page shows.' },
   { k: 'scale:backpressure', ic: '🧯', t: 'Backpressure & resilience', one: 'Systems die of overload before they die of bugs · every layer must be able to say "not now".',
-    demo: 'Three layers already say it: the bounded pool borrow queues callers instead of collapsing Postgres, the token bucket answers 429, and Kafka absorbs consumer downtime as lag, never loss.',
+    demo: 'Four layers already say it: the bounded pool borrow queues callers instead of collapsing Postgres, the token bucket answers 429, Kafka absorbs consumer downtime as lag (never loss), and the FX service call carries a hard 500ms deadline with a fallback rate · a circuit breaker at demo scale.',
     prod: 'Add timeouts on every remote call, circuit breakers around dependencies (a slow price feed must never stall a payment), load shedding at the gateway. Degrade gracefully, never fall over.' },
   { k: 'scale:deploy', ic: '🚀', t: 'Deploys without downtime', one: 'At 100M users there is no maintenance window, ever.',
     demo: 'The two properties that make rolling deploys safe already hold: the app tier is stateless and every handler is idempotent. Readiness probes gate traffic; config is env vars, one image everywhere.',
@@ -1835,10 +1838,8 @@ const tapeEsc = s => String(s == null ? '' : s).replace(/</g, '&lt;');
 const tapeEur = a => '€' + Number(a).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const tapeSys = s => !s || s === 'world' || s === 'in_transit' || s === 'cafe' || s.startsWith('broker');
 if (matchMedia('(hover: hover)').matches) {
-  $('#ticker-bar').addEventListener('mouseenter', () => { tapePaused = true;
-    $('#tape-led').classList.add('hold'); $('#tape-led b').textContent = 'HOLD'; });
-  $('#ticker-bar').addEventListener('mouseleave', () => { tapePaused = false;
-    $('#tape-led').classList.remove('hold'); $('#tape-led b').textContent = 'LIVE'; });
+  $('#ticker-bar').addEventListener('mouseenter', () => { tapePaused = true; });
+  $('#ticker-bar').addEventListener('mouseleave', () => { tapePaused = false; });
 }
 
 function tapeTrain(e) {
@@ -1916,6 +1917,7 @@ function tapePush(tr, tx) {
   const end = tapeTrack.scrollWidth;
   if (end < enterAt) el.style.marginLeft = (enterAt - end) + 'px';
   tapeTrack.appendChild(el);
+  $('#ticker-bar').classList.add('on');
 }
 
 function tapeFrame(now) {
@@ -1926,7 +1928,8 @@ function tapeFrame(now) {
     let head = tapeTrack.firstChild;
     while (head && head.offsetLeft + head.offsetWidth + tapeX < -10) {
       const next = head.nextSibling;
-      if (!next) { tapeTrack.innerHTML = ''; tapeX = 0; head = null; break; }
+      if (!next) { tapeTrack.innerHTML = ''; tapeX = 0; head = null;
+        $('#ticker-bar').classList.remove('on'); break; }
       const before = next.getBoundingClientRect().left;
       head.remove();
       tapeX += before - next.getBoundingClientRect().left;
@@ -1959,7 +1962,7 @@ async function tapeTick() {
     const keep = evs.map(e => e.type + e.tx + e.ts);
     tapeSeen.clear(); keep.forEach(k => tapeSeen.add(k));
   }
-  if (tapeFirst) { tapeFirst = false; tapePush({ h: '●', s: ['MINIBANK OPERATIONS TAPE'], d: [] }, null); }
+  if (tapeFirst) tapeFirst = false;
   // a hidden tab gets no animation frames: do not build a backlog it would replay for minutes
   if (document.hidden || tapeTrack.children.length > 30) return;
   fresh.sort((a, b) => new Date(a.ts) - new Date(b.ts));

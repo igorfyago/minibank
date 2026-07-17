@@ -786,6 +786,7 @@ public final class HttpApi {
             }
         }
         PriceFeed.Px btc = PriceFeed.get("btc"), aapl = PriceFeed.get("aapl");
+        FxClient.Rate fx = FxClient.usdToEur();
         BigDecimal btcU = bal.getOrDefault(id + Products.BTC, BigDecimal.ZERO);
         BigDecimal aaplU = bal.getOrDefault(id + Products.AAPL, BigDecimal.ZERO);
         return Response.json(200,
@@ -801,6 +802,10 @@ public final class HttpApi {
                 "\",\"loan\":\"" + plain(bal.getOrDefault(id + Products.LOAN, BigDecimal.ZERO)) +
                 "\",\"btcPrice\":\"" + plain(btc.price()) +
                 "\",\"aaplPrice\":\"" + plain(aapl.price()) +
+                "\",\"btcUsd\":\"" + plain(btc.usd()) +
+                "\",\"aaplUsd\":\"" + plain(aapl.usd()) +
+                "\",\"fxRate\":\"" + fx.rate().toPlainString() +
+                "\",\"fxSource\":\"" + Json.esc(fx.source()) +
                 "\",\"priceSource\":\"" + btc.source() + "\"}");
     }
 
