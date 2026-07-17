@@ -376,7 +376,11 @@
     </div>
 
     <div class="card" style="margin-top:14px">
-      <h2>The interview map — 12 questions, and where this bank answers them</h2>
+      <h2>The interview map — 16 questions, and where this bank answers them</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">Run the hour like Revolut runs it:
+        <b>clarify</b> (requirements, throughput, consistency needs) → <b>high-level</b> (this map)
+        → <b>deep dive</b> (any question below) → <b>trade-offs</b> (the Interview tab of each answer)
+        → <b>wrap-up</b>. Strong consistency where money moves, eventual where echoes ripple — say it early.</div>
       <div id="qmap"></div>
     </div>
 
@@ -510,8 +514,10 @@ async function loadPortfolio() {
         <button class="mini" onclick="prodMove(-1)">− €50</button></div></div>
     <div class="prod"><div class="prod-name">💳 Credit card</div>
       <div class="prod-val">${fmt(pf.card)}</div>
-      <div class="prod-sub">limit €1,000 — enforced by a CHECK constraint</div>
+      <div class="prod-sub">limit €1,000 (CHECK constraint)${Number(pf.held) > 0 ? ' · held: ' + fmt(pf.held) : ''}</div>
       <div class="prod-btns"><button class="mini" onclick="cardPay()">café −€12</button>
+        <button class="mini" onclick="cardAuth()">hold €25</button>
+        ${lastAuth[me] ? '<button class="mini" onclick="cardCapture()">capture</button><button class="mini" onclick="cardRelease()">release</button>' : ''}
         ${card < 0 ? '<button class="mini" onclick="cardRepay()">repay</button>' : ''}</div></div>
     <div class="prod"><div class="prod-name">₿ Bitcoin</div>
       <div class="prod-val">${fmtBtc(pf.btc)} <span class="prod-sub">≈ ${fmt(pf.btcEur)}</span></div>
@@ -536,6 +542,31 @@ window.prodMove = async dir => {
   const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from, to, amount: '50.00' }) });
   say(r.result === 'ok' ? (dir > 0 ? '✓ €50 to savings — a transfer between your own accounts, same shard, plain ACID' : '✓ €50 back to main')
       : '✗ ' + (r.result || r.error), r.result === 'ok' ? 'var(--green)' : 'var(--red)');
+  refreshAll();
+};
+const lastAuth = {};
+window.cardAuth = async () => {
+  const tx = uuid();
+  const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: 'authorize', customer: me, tx, amount: '25.00' }) });
+  if (r.result === 'ok') { lastAuth[me] = tx;
+    say('✓ €25 AUTHORIZED — held, not spent. The card carries the hold, so the limit counts it automatically. Now capture or release.', 'var(--green)'); }
+  else say(r.result === 'insufficient_funds' ? '✗ not enough available credit (the limit counts holds)' : '✗ ' + (r.result || r.error), 'var(--amber)');
+  refreshAll();
+};
+window.cardCapture = async () => {
+  const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: 'capture', customer: me, tx: lastAuth[me] }) });
+  say(r.result === 'ok' ? '✓ CAPTURED — the hold drained to the merchant. A redelivered capture would be a no-op: deterministic id.'
+      : r.result === 'already_processed' ? '↩ already captured — the deterministic capture id said no twice'
+      : r.result === 'insufficient_funds' ? '✗ nothing held — was it already released? The double-spend dies politely.'
+      : '✗ ' + (r.result || r.error), r.result === 'ok' ? 'var(--green)' : 'var(--amber)');
+  if (r.result === 'ok' || r.result === 'already_processed') delete lastAuth[me];
+  refreshAll();
+};
+window.cardRelease = async () => {
+  const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: 'release', customer: me, tx: lastAuth[me] }) });
+  say(r.result === 'ok' ? '✓ RELEASED — the hold returned to the card, nothing was spent' : '✗ ' + (r.result || r.error),
+      r.result === 'ok' ? 'var(--green)' : 'var(--amber)');
+  if (r.result === 'ok') delete lastAuth[me];
   refreshAll();
 };
 window.cardPay = async () => {
@@ -917,6 +948,26 @@ const QUESTIONS = [
     plain: 'A balance is money, and money already knows how to move: by transfer. Relocation = drain the whole balance through the standard cross-region flow, then flip one pointer in the directory. Hit Relocate on the App tab and watch this map do it.',
     how: 'Steps: create the empty account in the new region; set MOVING (the router refuses new transfers with a retriable 409 — a write-pause of milliseconds, reads unaffected); transfer the balance; flip the pointer. Every step is idempotent, so a crash mid-way just retries.',
     win: '“Resharding without downtime: per-customer moves, milliseconds of write-pause each, no global locks — the payoff of sharding by customer. Even the duplicate Kafka delivery of the move lands on a closed idempotency gate.”' },
+  { short: 'CAP, applied', q: 'Consistency vs availability — where do you sit? (CAP, fit-for-purpose)',
+    nodes: ['shard0', 'kafka', 'notif'], edges: ['shard0_kafka', 'kafka_notif'],
+    plain: 'Not one answer — one PER DATA CLASS. Balances: strong consistency, single-region ACID, locks (a wrong balance is unacceptable; a moment of unavailability is survivable). Echoes — notifications, analytics, the feed: eventual, over Kafka, seconds behind and honestly so.',
+    how: 'Under partition, the money side chooses C over A: a region that cannot reach its database refuses writes rather than guessing. The event side chooses availability: the outbox holds events until the broker returns; consumers catch up. This page IS that split, running.',
+    win: '“Fit-for-purpose consistency: strong where money moves, eventual where echoes ripple. I choose per data class, not per system — and my in-flight pill shows the eventual part being honest about itself.”' },
+  { short: 'card authorization', q: 'Design card authorization — what happens when you tap your card?',
+    nodes: ['api', 'shard0'], edges: ['browser_api', 'api_shard0'],
+    plain: 'Two moments, not one. AUTHORIZE reserves the money — a transfer from card to a holds account, one local ACID commit, milliseconds. Days later CAPTURE moves the held money to the merchant, or RELEASE gives it back. Try it: the card tile on the App has all three buttons.',
+    how: 'The card account CARRIES its holds, so the credit-limit CHECK constraint counts them automatically. Capture and release use DETERMINISTIC ids derived from the authorization — the card network can redeliver either, and each happens at most once. Capture-after-release finds the holds account short and dies politely.',
+    win: '“Auth is latency-critical (one local ACID tx, no network hops — that is your sub-200ms), capture is eventual. If the network times out: decline by default; never guess with money. The hold lifecycle is three gated transfers — no new machinery.”' },
+  { short: 'rate limiting', q: 'How do you protect the ledger from a retry storm?',
+    nodes: ['api'], edges: ['browser_api'],
+    plain: 'A token bucket at the edge: every caller gets a burst allowance that refills at a steady rate; an empty bucket answers 429 before the request ever touches a database lock. This site runs one right now — 25 requests/second per caller.',
+    how: 'The bucket is a counter and a timestamp: refill = elapsed × rate, capped at capacity; take one token or refuse. Per-instance here (and honestly labeled as such); a fleet shares the state at the gateway or in Redis — same algorithm, different address.',
+    win: '“Idempotency makes retries SAFE, rate limiting makes them CHEAP — you need both. And 429 with Retry-After is backpressure at the edge, the same idea as my bounded connection pool, one layer up.”' },
+  { short: 'immutable audit', q: 'A regulator asks: can anyone edit transaction history?',
+    nodes: ['shard0', 'shard1'], edges: [],
+    plain: 'No — and not because we promise not to. A database trigger REFUSES every UPDATE and DELETE on the ledger. Corrections are reversing entries: history grows, it never changes.',
+    how: 'BEFORE UPDATE OR DELETE on entries and transactions → RAISE EXCEPTION. There is a test that tries to tamper and asserts the database says no. Add the trace timeline (every state change timestamped) and you have the audit trail a regulator actually wants.',
+    win: '“Immutability is enforced, not promised: append-only by trigger, corrections by reversing entries, every movement traceable end-to-end. Compliance lives in the schema, next to the credit limit.”' },
 ];
 QUESTIONS.forEach((qq, i) => GUIDE['q:' + i] = { t: 'Q' + (i + 1) + ' — ' + qq.short,
   plain: () => [qq.plain], how: () => [qq.how], win: () => [qq.win] });
@@ -1333,6 +1384,18 @@ const QUIZ = [
   { q: 'The relocation calls arrive() directly, AND Kafka later delivers the same departed event. Why is that safe?',
     o: ['Kafka deduplicates', 'Luck', 'The arrival gate (txId on the destination’s own transactions table) was already claimed — the echo is a no-op', 'The applier is disabled'], a: 2,
     e: 'Idempotency is not bolted on for retries — it is what makes bold moves stay simple. The duplicate settles into a closed gate. There is a test that does exactly this, twice.' },
+  { q: 'Consistency vs availability in a bank — the fit-for-purpose answer is…',
+    o: ['Strong everywhere', 'Eventual everywhere', 'Strong where money moves, eventual where echoes ripple — chosen per DATA CLASS', 'Whatever the CTO likes'], a: 2,
+    e: 'Balances refuse writes rather than guess (C over A); notifications and analytics catch up seconds later over Kafka. One system, two deliberate consistency choices.' },
+  { q: 'You tap your card in a shop. What did the bank actually do?',
+    o: ['Moved the money instantly', 'AUTHORIZED: reserved it in a holds account — capture pays the merchant later, release undoes it', 'Emailed the merchant', 'Updated a cache'], a: 1,
+    e: 'Auth is one local ACID transfer card→holds (fast, and the limit counts the hold automatically). Capture/release use deterministic ids derived from the auth — redeliveries are no-ops.' },
+  { q: 'A buggy client retries 100×/second. What saves the ledger?',
+    o: ['Bigger database', 'A token bucket at the edge: 429 when the burst allowance empties — refilled at a steady rate', 'Kafka', 'Threads'], a: 1,
+    e: 'Idempotency already made the retries SAFE; the rate limiter makes them CHEAP by refusing at the edge before any lock is touched. This site runs one at 25/s per caller.' },
+  { q: 'Can transaction history be edited?',
+    o: ['With admin rights', 'Only on Sundays', 'No: a database trigger refuses UPDATE/DELETE on the ledger — corrections are reversing entries', 'Yes, silently'], a: 2,
+    e: 'Append-only enforced by the schema, not by promises. There is a test that attempts tampering and asserts the database itself says no.' },
 ];
 let qi = 0, score = 0, answered = false;
 function renderQuiz() {

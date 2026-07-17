@@ -138,6 +138,54 @@ class ProductLessonTest {
     }
 
     // ------------------------------------------------------------------
+    @Test
+    @DisplayName("lesson 5: card authorization is a HOLD — authorize reserves, capture pays, release undoes")
+    void lesson5_authCaptureRelease() throws Exception {
+        var home = Shards.forCustomer(IGOR);
+        long card = IGOR + Products.CARD, holds = IGOR + Products.HOLDS;
+
+        UUID auth = UUID.randomUUID();
+        assertInstanceOf(Ledger.Ok.class, Products.authorize(auth, IGOR, eur("25.00")));
+        assertEquals(0, eur("-25.00").compareTo(home.balance(card)), "the card carries the hold");
+        assertEquals(0, eur("25.00").compareTo(home.balance(holds)), "the money is reserved, not spent");
+
+        assertInstanceOf(Ledger.Ok.class, Products.capture(auth, IGOR));
+        assertEquals(0, BigDecimal.ZERO.compareTo(home.balance(holds)), "the hold drained to the merchant");
+        assertEquals(0, eur("-25.00").compareTo(home.balance(card)), "what was held is now owed");
+        // the card network redelivers the capture: deterministic id, one payment
+        assertInstanceOf(Ledger.AlreadyProcessed.class, Products.capture(auth, IGOR));
+
+        UUID auth2 = UUID.randomUUID();
+        assertInstanceOf(Ledger.Ok.class, Products.authorize(auth2, IGOR, eur("30.00")));
+        assertInstanceOf(Ledger.Ok.class, Products.release(auth2, IGOR));
+        assertEquals(0, eur("-25.00").compareTo(home.balance(card)), "released hold returned to the card");
+        // capture AFTER release: the holds account is short -> refused
+        assertInstanceOf(Ledger.InsufficientFunds.class, Products.capture(auth2, IGOR),
+                "the double-spend dies politely");
+        // and the limit counts holds automatically, because the card CARRIES them
+        assertInstanceOf(Ledger.InsufficientFunds.class, Products.authorize(UUID.randomUUID(), IGOR, eur("980.00")));
+    }
+
+    // ------------------------------------------------------------------
+    @Test
+    @DisplayName("lesson 6: the ledger is append-only — the DATABASE refuses edits to history")
+    void lesson6_appendOnly() throws Exception {
+        var home = Shards.forCustomer(IGOR);
+        var ex1 = org.junit.jupiter.api.Assertions.assertThrows(Exception.class, () -> {
+            try (Connection c = home.open(); var st = c.createStatement()) {
+                st.execute("UPDATE entries SET amount = amount + 1");
+            }
+        });
+        assertTrue(ex1.getMessage().contains("append-only"), "tampering is a database error, not a code review comment");
+        var ex2 = org.junit.jupiter.api.Assertions.assertThrows(Exception.class, () -> {
+            try (Connection c = home.open(); var st = c.createStatement()) {
+                st.execute("DELETE FROM entries");
+            }
+        });
+        assertTrue(ex2.getMessage().contains("append-only"), "corrections are reversing entries, never edits");
+    }
+
+    // ------------------------------------------------------------------
     private static BigDecimal eur(String v) {
         return new BigDecimal(v);
     }

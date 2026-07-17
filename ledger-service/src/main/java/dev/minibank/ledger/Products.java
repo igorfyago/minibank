@@ -34,7 +34,7 @@ import java.util.UUID;
  */
 public final class Products {
 
-    public static final long SAVINGS = 100, BTC = 200, AAPL = 300, CARD = 400, LOAN = 500;
+    public static final long SAVINGS = 100, BTC = 200, AAPL = 300, CARD = 400, LOAN = 500, HOLDS = 600;
     public static final BigDecimal MORTGAGE_CAP = new BigDecimal("20000.00");
 
     private Products() {}
@@ -49,8 +49,9 @@ public final class Products {
             ensure(c, customerId + AAPL, "apple stock", "customer", "AAPL");
             ensure(c, customerId + CARD, "card", "credit", "EUR");
             ensure(c, customerId + LOAN, "mortgage", "loan", "EUR");
+            ensure(c, customerId + HOLDS, "card hold", "customer", "EUR");
         }
-        for (long off : new long[]{SAVINGS, BTC, AAPL, CARD, LOAN}) {
+        for (long off : new long[]{SAVINGS, BTC, AAPL, CARD, LOAN, HOLDS}) {
             try {
                 Directory.register(customerId + off, label(off), home.index);
             } catch (Exception ignored) {
@@ -62,7 +63,56 @@ public final class Products {
 
     private static String label(long off) {
         return off == SAVINGS ? "savings" : off == BTC ? "bitcoin"
-                : off == AAPL ? "apple stock" : off == CARD ? "card" : "mortgage";
+                : off == AAPL ? "apple stock" : off == CARD ? "card"
+                : off == HOLDS ? "card hold" : "mortgage";
+    }
+
+    // ------------------------------------------------------------------
+    // card authorization: the hold lifecycle, as transfers
+    // ------------------------------------------------------------------
+    // A card payment is TWO moments, not one. AUTHORIZE reserves the money
+    // (card -> holds: the card's balance already carries the hold, so the
+    // credit-limit CHECK constraint counts holds automatically). CAPTURE
+    // moves the held money on to the merchant; RELEASE gives it back.
+    // Every step is a plain gated transfer — capture and release use
+    // DETERMINISTIC ids derived from the authorization, so each can happen
+    // at most once no matter how the card network retries.
+
+    public static Ledger.TransferResult authorize(UUID authTx, long customerId, BigDecimal amount) throws SQLException {
+        return Shards.forCustomer(customerId)
+                .transferLocal(authTx, customerId + CARD, customerId + HOLDS, amount);
+    }
+
+    public static Ledger.TransferResult capture(UUID authTx, long customerId) throws SQLException {
+        BigDecimal amt = heldAmount(authTx, customerId);
+        UUID captureId = UUID.nameUUIDFromBytes(("capture:" + authTx).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        // capture-after-release finds the holds account short -> the funds
+        // check answers InsufficientFunds: the double-spend dies politely
+        return Shards.forCustomer(customerId)
+                .transferLocal(captureId, customerId + HOLDS, Shard.CAFE, amt);
+    }
+
+    public static Ledger.TransferResult release(UUID authTx, long customerId) throws SQLException {
+        BigDecimal amt = heldAmount(authTx, customerId);
+        UUID releaseId = UUID.nameUUIDFromBytes(("release:" + authTx).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return Shards.forCustomer(customerId)
+                .transferLocal(releaseId, customerId + HOLDS, customerId + CARD, amt);
+    }
+
+    /** the authorization's own entry says how much was held — the ledger is
+     *  the source of truth for the hold, like for everything else */
+    private static BigDecimal heldAmount(UUID authTx, long customerId) throws SQLException {
+        Shard home = Shards.forCustomer(customerId);
+        try (Connection c = home.open();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT amount FROM entries WHERE tx_id = ? AND account_id = ? AND amount > 0")) {
+            ps.setObject(1, authTx);
+            ps.setLong(2, customerId + HOLDS);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) throw new IllegalArgumentException("no such authorization: " + authTx);
+                return rs.getBigDecimal(1);
+            }
+        }
     }
 
     private static void ensure(Connection c, long id, String owner, String kind, String currency) throws SQLException {

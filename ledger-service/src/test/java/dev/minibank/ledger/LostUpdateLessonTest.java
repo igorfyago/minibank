@@ -62,7 +62,7 @@ class LostUpdateLessonTest {
     @BeforeEach
     void freshAccount() throws Exception {
         try (Connection c = Db.open(); var st = c.createStatement()) {
-            st.execute("DELETE FROM accounts");
+            st.execute("TRUNCATE accounts CASCADE");
             st.execute("INSERT INTO accounts(id, owner, balance, version) VALUES (1, 'joint', 100.00, 0)");
         }
     }

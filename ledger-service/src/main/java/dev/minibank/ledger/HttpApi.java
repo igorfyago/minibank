@@ -38,6 +38,7 @@ public final class HttpApi {
         server.createContext("/api/portfolio", ex -> handle(ex, HttpApi::portfolio));
         server.createContext("/api/trade", ex -> handle(ex, HttpApi::trade));
         server.createContext("/api/mortgage", ex -> handle(ex, HttpApi::mortgageApply));
+        server.createContext("/api/card", ex -> handle(ex, HttpApi::cardOps));
         server.createContext("/api/notifications", ex -> handle(ex, HttpApi::notifications));
         server.createContext("/api/xray/summary", ex -> handle(ex, HttpApi::xraySummary));
         server.createContext("/api/xray/events", ex -> handle(ex, HttpApi::xrayEvents));
@@ -725,9 +726,26 @@ public final class HttpApi {
         Response run(HttpExchange ex) throws Exception;
     }
 
+    // the edge: a token bucket per caller. Generous for humans, a wall for
+    // retry storms. Per-instance by design (a fleet shares state at the
+    // gateway or in Redis); the map grows with caller cardinality — a real
+    // deployment expires idle buckets.
+    private static final java.util.Map<String, TokenBucket> buckets = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static boolean allowed(HttpExchange ex) {
+        String ip = ex.getRequestHeaders().getFirst("X-Forwarded-For");
+        ip = ip != null ? ip.split(",")[0].trim() : ex.getRemoteAddress().getAddress().getHostAddress();
+        return buckets.computeIfAbsent(ip, k -> new TokenBucket(60, 25, System.nanoTime()))
+                .take(System.nanoTime());
+    }
+
     private static void handle(HttpExchange ex, Handler h) throws IOException {
         Response r;
         try {
+            if (ex.getRequestURI().getPath().startsWith("/api/") && !allowed(ex)) {
+                r = Response.json(429, "{\"error\":\"rate limited — the token bucket is empty; it refills at 25/s. " +
+                        "Idempotency makes retries safe, this makes them cheap.\"}");
+            } else
             r = h.run(ex);
         } catch (Exception e) {
             r = Response.json(500, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");
@@ -751,7 +769,7 @@ public final class HttpApi {
              var ps = c.prepareStatement("SELECT id, balance FROM accounts WHERE id = ? OR (id > ? AND id <= ?)")) {
             ps.setLong(1, id);
             ps.setLong(2, id);
-            ps.setLong(3, id + 500);
+            ps.setLong(3, id + 600);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) bal.put(rs.getLong(1), rs.getBigDecimal(2));
             }
@@ -763,6 +781,7 @@ public final class HttpApi {
                 "{\"main\":\"" + plain(bal.getOrDefault(id, BigDecimal.ZERO)) +
                 "\",\"savings\":\"" + plain(bal.getOrDefault(id + Products.SAVINGS, BigDecimal.ZERO)) +
                 "\",\"card\":\"" + plain(bal.getOrDefault(id + Products.CARD, BigDecimal.ZERO)) +
+                "\",\"held\":\"" + plain(bal.getOrDefault(id + Products.HOLDS, BigDecimal.ZERO)) +
                 "\",\"cardLimit\":\"1000\"" +
                 ",\"btc\":\"" + plain(btcU) +
                 "\",\"btcEur\":\"" + btcU.multiply(btc.price()).setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() +
@@ -810,6 +829,35 @@ public final class HttpApi {
             return Response.json(400, "{\"error\":\"need txId, customer, amount\"}");
         try {
             var result = Products.mortgage(UUID.fromString(txId), Long.parseLong(customer), new BigDecimal(amount));
+            String kind = switch (result) {
+                case Ledger.Ok ok -> "ok";
+                case Ledger.AlreadyProcessed a -> "already_processed";
+                case Ledger.InsufficientFunds i -> "insufficient_funds";
+                case Ledger.NoSuchAccount n -> "no_such_account";
+            };
+            return Response.json(200, "{\"result\":\"" + kind + "\"}");
+        } catch (IllegalArgumentException e) {
+            return Response.json(400, "{\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
+        }
+    }
+
+    /** the card network's three verbs: authorize (hold), capture, release */
+    private static Response cardOps(HttpExchange ex) throws Exception {
+        if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
+        String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String action = Json.str(body, "action"), customer = Json.num(body, "customer"), tx = Json.str(body, "tx");
+        String amount = Json.str(body, "amount");
+        if (action == null || customer == null || tx == null)
+            return Response.json(400, "{\"error\":\"need action, customer, tx\"}");
+        try {
+            long id = Long.parseLong(customer);
+            UUID txId = UUID.fromString(tx);
+            var result = switch (action) {
+                case "authorize" -> Products.authorize(txId, id, new BigDecimal(amount));
+                case "capture" -> Products.capture(txId, id);
+                case "release" -> Products.release(txId, id);
+                default -> throw new IllegalArgumentException("action: authorize|capture|release");
+            };
             String kind = switch (result) {
                 case Ledger.Ok ok -> "ok";
                 case Ledger.AlreadyProcessed a -> "already_processed";

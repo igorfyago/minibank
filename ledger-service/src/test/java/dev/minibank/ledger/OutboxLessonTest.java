@@ -46,10 +46,7 @@ class OutboxLessonTest {
     @BeforeEach
     void freshBank() throws Exception {
         try (Connection c = Db.open(); var st = c.createStatement()) {
-            st.execute("DELETE FROM outbox");
-            st.execute("DELETE FROM entries");
-            st.execute("DELETE FROM transactions");
-            st.execute("DELETE FROM accounts");
+            st.execute("TRUNCATE outbox, entries, transactions, accounts CASCADE");
         }
         Ledger.createAccount(WORLD, "world", Ledger.KIND_EXTERNAL);
         Ledger.createAccount(IGOR, "igor", Ledger.KIND_CUSTOMER);

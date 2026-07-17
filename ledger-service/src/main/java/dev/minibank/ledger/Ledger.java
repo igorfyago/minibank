@@ -103,6 +103,21 @@ public final class Ledger {
                 )""");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_account ON entries(account_id, id)");
             st.execute("ALTER TABLE entries ALTER COLUMN amount TYPE NUMERIC(20,8)");
+            // COMPLIANCE IS SCHEMA TOO: the ledger is append-only, enforced by
+            // the database, not by politeness. Corrections are REVERSING
+            // entries — history is never edited, which is what an auditor
+            // means by "immutable". (TRUNCATE stays possible for the demo
+            // reset ritual; row UPDATE/DELETE is what tampering looks like.)
+            st.execute("""
+                CREATE OR REPLACE FUNCTION ledger_immutable() RETURNS trigger AS $$
+                BEGIN RAISE EXCEPTION 'the ledger is append-only'; END
+                $$ LANGUAGE plpgsql""");
+            st.execute("DROP TRIGGER IF EXISTS entries_immutable ON entries");
+            st.execute("CREATE TRIGGER entries_immutable BEFORE UPDATE OR DELETE ON entries " +
+                       "FOR EACH ROW EXECUTE FUNCTION ledger_immutable()");
+            st.execute("DROP TRIGGER IF EXISTS transactions_immutable ON transactions");
+            st.execute("CREATE TRIGGER transactions_immutable BEFORE UPDATE OR DELETE ON transactions " +
+                       "FOR EACH ROW EXECUTE FUNCTION ledger_immutable()");
         }
         // the outbox is not optional decoration: a transfer writes to it,
         // so the ledger cannot exist without it.
