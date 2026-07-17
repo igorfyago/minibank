@@ -39,6 +39,7 @@ public final class HttpApi {
         server.createContext("/api/trade", ex -> handle(ex, HttpApi::trade));
         server.createContext("/api/mortgage", ex -> handle(ex, HttpApi::mortgageApply));
         server.createContext("/api/card", ex -> handle(ex, HttpApi::cardOps));
+        server.createContext("/api/signup", ex -> handle(ex, HttpApi::signup));
         server.createContext("/api/notifications", ex -> handle(ex, HttpApi::notifications));
         server.createContext("/api/xray/summary", ex -> handle(ex, HttpApi::xraySummary));
         server.createContext("/api/xray/events", ex -> handle(ex, HttpApi::xrayEvents));
@@ -708,7 +709,9 @@ public final class HttpApi {
             if (in == null) return Response.json(404, "{\"error\":\"not found\"}");
             String type = path.endsWith(".html") ? "text/html; charset=utf-8"
                     : path.endsWith(".js") ? "application/javascript"
-                    : path.endsWith(".css") ? "text/css" : "application/octet-stream";
+                    : path.endsWith(".css") ? "text/css"
+                    : path.endsWith(".svg") ? "image/svg+xml"
+                    : path.endsWith(".json") ? "application/manifest+json" : "application/octet-stream";
             return new Response(200, type, in.readAllBytes());
         }
     }
@@ -839,6 +842,49 @@ public final class HttpApi {
         } catch (IllegalArgumentException e) {
             return Response.json(400, "{\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
         }
+    }
+
+    /** self-serve onboarding: pick a name and a REGION — residency is a
+     *  choice you make at signup, exactly like the real product. The new
+     *  customer gets an account on their region's shard, 500 from the
+     *  world, and the full product shelf. */
+    private static Response signup(HttpExchange ex) throws Exception {
+        if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
+        String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String name = Json.str(body, "name"), region = Json.str(body, "region");
+        if (name == null || region == null) return Response.json(400, "{\"error\":\"need name, region\"}");
+        name = name.trim().toLowerCase();
+        if (!name.matches("[a-z]{3,12}"))
+            return Response.json(400, "{\"error\":\"name: 3-12 letters, a-z only\"}");
+        int shard = "uk".equals(region) ? 1 : 0;
+
+        long id;
+        try (Connection c = Directory.openForRead(); var st = c.createStatement()) {
+            try (ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM customers WHERE customer_id < 100")) {
+                rs.next();
+                if (rs.getLong(1) >= 25)
+                    return Response.json(409, "{\"error\":\"the demo cast is full (25 customers) — relocate someone instead\"}");
+            }
+            try (var ps = c.prepareStatement("SELECT 1 FROM customers WHERE owner = ? AND customer_id < 100")) {
+                ps.setString(1, name);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) return Response.json(409, "{\"error\":\"that name is taken\"}");
+                }
+            }
+            try (ResultSet rs = st.executeQuery("SELECT COALESCE(MAX(customer_id), 9) + 1 FROM customers WHERE customer_id < 100")) {
+                rs.next();
+                id = rs.getLong(1);
+            }
+        }
+        // first-write-wins in the directory settles races on the id
+        Directory.register(id, name, shard);
+        if (!name.equals(Directory.owner(id)))
+            return Response.json(409, "{\"error\":\"two signups collided — try again\"}");
+        Shard home = Shards.s(shard);
+        home.createCustomer(id, name);
+        home.transferLocal(UUID.randomUUID(), Shard.WORLD, id, new BigDecimal("500.00"));
+        Products.ensureFor(id);
+        return Response.json(200, "{\"result\":\"ok\",\"id\":" + id + ",\"region\":\"" + Shards.regionName(shard) + "\"}");
     }
 
     /** the card network's three verbs: authorize (hold), capture, release */

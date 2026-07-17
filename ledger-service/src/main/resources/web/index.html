@@ -3,6 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
 <title>minibank</title>
 <style>
   :root { --bg:#0d1117; --panel:#161b22; --line:#21262d; --text:#e6edf3; --dim:#8b949e;
@@ -59,7 +65,9 @@
                radial-gradient(100% 130% at 100% 0%, rgba(88,166,255,.08), transparent 40%), var(--panel); }
   .action-ic { background:linear-gradient(135deg, var(--violet), #7a5cff) !important; transition:transform .15s, filter .15s; }
   .action:hover .action-ic { transform:scale(1.08); }
-  .prod-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .prod-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; }
+  .prod { min-width:0; }
+  .prod-val, .prod-sub { overflow-wrap:break-word; }
   .prod { border:1px solid var(--line); border-radius:14px; padding:11px 13px; }
   .prod-name { color:var(--dim); font-size:11.5px; font-weight:650; }
   .prod-val { font-size:16px; font-weight:700; margin:3px 0 1px; font-variant-numeric:tabular-nums; }
@@ -75,7 +83,7 @@
     margin-right:5px; animation:pendpulse 1.2s infinite; }
 
   .phone { max-width: 540px; margin: 0 auto; }
-  .who { display:flex; gap:8px; margin-bottom:16px; }
+  .who { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
   .who button { flex:none; }
   .who .on { background:var(--violet); border-color:var(--violet); color:#fff; }
   .acct-card, .tx-card { border-radius:18px; }
@@ -213,6 +221,27 @@
   #q-explain { margin-top:12px; padding:12px; border:1px solid var(--line); border-radius:8px;
                font-size:13px; display:none; }
   .hidden { display:none !important; }
+
+  /* mobile: the same bank, pocket-sized — nothing hidden except the tagline */
+  @media (max-width: 760px) {
+    header { padding:10px 12px; gap:10px; }
+    header > .muted { display:none; }
+    nav { overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+    nav::-webkit-scrollbar { display:none; }
+    .tab-btn { padding:5px 12px; font-size:12px; white-space:nowrap; }
+    main { padding:12px; }
+    .balance-num { font-size:38px; }
+    .actions { gap:14px; }
+    .action-ic { width:42px; height:42px; }
+    .hero-title { font-size:42px; }
+    .hero-tag { font-size:14.5px; }
+    .eco-grid { grid-template-columns:1fr; }
+    #showbar { bottom:10px; padding:10px 14px; width:94vw; }
+    #show-cap { font-size:13.5px; }
+    .guide { position:static; max-height:none; }
+    .tx-after { display:block; }
+  }
+  .card { overflow-x:auto; }
 </style>
 </head>
 <body>
@@ -233,6 +262,18 @@
   <section id="tab-app">
     <div class="phone">
       <div class="who" id="who"></div>
+      <div class="card acct-card hidden" id="signup-panel" style="margin-bottom:16px">
+        <h2>New customer</h2>
+        <div class="send-row" style="margin-top:8px">
+          <input id="su-name" type="text" size="12" maxlength="12" placeholder="yourname" autocomplete="off">
+          <button class="ghost" id="su-eu">🇪🇺 eu</button>
+          <button class="ghost" id="su-uk">🇬🇧 uk</button>
+          <button class="primary" id="su-go">Create</button>
+        </div>
+        <div class="muted" style="margin-top:8px">pick your region — that choice decides WHICH DATABASE you live on
+          (data residency, the stage-6 lesson). The world funds you €500.</div>
+        <div id="su-result" style="margin-top:6px; font-size:13px; min-height:18px"></div>
+      </div>
       <div class="card acct-card">
         <div class="acct-label" id="acct-label">Main · EUR</div>
         <div class="balance-num" id="balance">—</div>
@@ -448,7 +489,8 @@ async function loadAccounts() {
   const customers = accounts.filter(a => a.kind === 'customer');
   if (me === null) me = customers[0]?.id;
   $('#who').innerHTML = customers.map(a =>
-    `<button class="ghost ${a.id === me ? 'on' : ''}" onclick="switchUser(${a.id})">${a.owner} <span style="opacity:.55;font-size:11px">· ${a.region}</span></button>`).join('');
+    `<button class="ghost ${a.id === me ? 'on' : ''}" onclick="switchUser(${a.id})">${a.owner} <span style="opacity:.55;font-size:11px">· ${a.region}</span></button>`).join('')
+    + `<button class="ghost" onclick="toggleSignup()" title="create your own customer">+</button>`;
   const mine = accounts.find(a => a.id === me);
   $('#balance').textContent = mine ? fmt(mine.balance) : '—';
   $('#acct-label').textContent = mine ? `Main · EUR · ${mine.region} region` : 'Main · EUR';
@@ -458,6 +500,32 @@ async function loadAccounts() {
 window.switchUser = id => { me = id; lastTx = null; prevStmtSig = ''; prevPortSig = ''; loadAccounts(); loadStatement(); loadPortfolio(); };
 
 function uuid() { return crypto.randomUUID(); }
+
+/* ---- self-serve signup: name + REGION (residency is a signup choice) ---- */
+let suRegion = 'eu';
+window.toggleSignup = () => { $('#signup-panel').classList.toggle('hidden'); $('#su-name').focus(); };
+function suPaint() {
+  $('#su-eu').classList.toggle('on', suRegion === 'eu');
+  $('#su-uk').classList.toggle('on', suRegion === 'uk');
+}
+$('#su-eu').onclick = () => { suRegion = 'eu'; suPaint(); };
+$('#su-uk').onclick = () => { suRegion = 'uk'; suPaint(); };
+suPaint();
+$('#su-name').addEventListener('keydown', e => { if (e.key === 'Enter') $('#su-go').click(); });
+$('#su-go').onclick = async () => {
+  const name = $('#su-name').value.trim().toLowerCase();
+  const el = $('#su-result');
+  if (!/^[a-z]{3,12}$/.test(name)) { el.textContent = '3–12 letters, a–z only'; el.style.color = 'var(--amber)'; return; }
+  el.textContent = 'creating…'; el.style.color = 'var(--dim)';
+  const r = await api('/api/signup', { method: 'POST', body: JSON.stringify({ name, region: suRegion }) });
+  if (r.result === 'ok') {
+    $('#signup-panel').classList.add('hidden');
+    $('#su-name').value = '';
+    me = r.id; lastTx = null;
+    say(`✓ welcome, ${name} — you live in ${r.region}: your account was just created on that region's database, and the world funded you €500`, 'var(--green)');
+    refreshAll();
+  } else { el.textContent = '✗ ' + (r.error || r.result); el.style.color = 'var(--red)'; }
+};
 function say(msg, color) { const el = $('#send-result'); el.textContent = msg; el.style.color = color; }
 
 async function doTransfer(txId) {

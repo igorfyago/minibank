@@ -1,0 +1,11 @@
+{
+  "name": "minibank — a real bank from first principles",
+  "short_name": "minibank",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
