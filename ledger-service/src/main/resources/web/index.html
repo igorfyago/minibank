@@ -82,7 +82,7 @@
   .mini:hover { border-color:var(--violet); color:var(--violet); }
   .seg { display:inline-flex; gap:4px; }
   .seg .on { background:var(--violet); border-color:var(--violet); color:#fff; }
-  .ext-card { border:1px solid var(--line); border-radius:14px; padding:11px 13px; margin-bottom:10px; }
+  .ext-card { border:1px solid var(--line); border-radius:14px; padding:11px 13px; margin-top:12px; background:rgba(255,255,255,.02); }
   .ext-top { display:flex; justify-content:space-between; font-weight:650; font-size:13.5px; }
   .ext-sub { color:var(--dim); font-size:11.5px; margin-top:2px; }
   .ext-stages { display:flex; gap:6px; margin-top:9px; }
@@ -409,6 +409,7 @@
           <button class="primary" id="send-btn">Send</button>
         </div>
         <div id="send-result"></div>
+        <div id="extlist"></div>
       </div>
       <div class="card tx-card">
         <h2>Products</h2>
@@ -416,7 +417,6 @@
       </div>
       <div class="card tx-card">
         <h2>Transactions</h2>
-        <div id="extlist"></div>
         <div id="txlist"></div>
       </div>
     </div>
