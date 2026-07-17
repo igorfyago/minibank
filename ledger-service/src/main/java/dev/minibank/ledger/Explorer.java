@@ -49,13 +49,13 @@ public final class Explorer {
             FROM outbox
             ORDER BY id DESC
             LIMIT 20"""),
-        new Q("audit_sumzero", "AUDIT — every tx sums to zero per currency (expect 0 rows)", """
+        new Q("audit_sumzero", "audit: sum-zero — every tx sums to 0, per currency (expect 0 rows)", """
             SELECT e.tx_id, a.currency, SUM(e.amount) AS should_be_zero
             FROM entries e
             JOIN accounts a ON a.id = e.account_id
             GROUP BY e.tx_id, a.currency
             HAVING SUM(e.amount) <> 0"""),
-        new Q("audit_drift", "AUDIT — cached balance = SUM(entries) (expect 0 rows)", """
+        new Q("audit_drift", "audit: cache drift — balance must equal SUM(entries) (expect 0 rows)", """
             SELECT a.id, a.owner, trim_scale(a.balance) AS cached,
                    trim_scale(COALESCE(e.s, 0)) AS from_ledger
             FROM accounts a
