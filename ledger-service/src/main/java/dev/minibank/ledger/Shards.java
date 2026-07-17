@@ -29,9 +29,32 @@ public final class Shards {
     /** ids below this are per-shard system accounts, not customers. */
     public static final long FIRST_CUSTOMER_ID = 10;
 
+    /** STAGE 6: the routing rule became pluggable. Default: arithmetic
+     *  (id mod N — load sharding). Production: the Directory (residency —
+     *  a lookup, because law is a fact about the customer, not a formula). */
+    @FunctionalInterface
+    public interface Resolver {
+        int shardIndexOf(long customerId);
+    }
+
     private static volatile Shard[] shards;
+    private static volatile Resolver resolver;      // null = id mod N
+    private static volatile String[] regionNames;   // null = "shard0"/"shard1"
 
     private Shards() {}
+
+    public static void setResolver(Resolver r) {
+        resolver = r;
+    }
+
+    public static void nameRegions(String... names) {
+        regionNames = names;
+    }
+
+    public static String regionName(int index) {
+        String[] n = regionNames;
+        return n != null && index < n.length ? n[index] : "shard" + index;
+    }
 
     public static void boot(String url0, String url1, String user, String password, int poolSize) throws SQLException {
         shards = new Shard[]{
@@ -52,9 +75,13 @@ public final class Shards {
         return accountId < FIRST_CUSTOMER_ID;
     }
 
-    /** The routing function. Deterministic, no lookups, no state. */
+    /** The routing function. With no resolver set: deterministic arithmetic.
+     *  With the Directory plugged in: residency lookup (may throw
+     *  Directory.CustomerMoving during a relocation — retry, briefly). */
     public static Shard forCustomer(long customerId) {
-        return shards[(int) (customerId % shards.length)];
+        Resolver r = resolver;
+        int idx = r != null ? r.shardIndexOf(customerId) : (int) (customerId % shards.length);
+        return shards[idx];
     }
 
     /** Where does this transfer run? System accounts live everywhere, so

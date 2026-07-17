@@ -27,6 +27,17 @@ public final class Main {
                 System.getenv().getOrDefault("MINIBANK_SHARD0_URL", "jdbc:postgresql://localhost:5434/minibank"),
                 System.getenv().getOrDefault("MINIBANK_SHARD1_URL", "jdbc:postgresql://localhost:5435/minibank"),
                 "minibank", "minibank", poolSize);
+
+        // STAGE 6: the shards become REGIONS — routing by residency
+        // (directory lookup), not by arithmetic. igor starts in eu, coco
+        // in uk; the Relocate button moves people and the directory
+        // remembers across restarts (register is first-write-wins).
+        Directory.createOwnDatabase();
+        Shards.nameRegions("eu", "uk");
+        Directory.register(10, "igor", 0);
+        Directory.register(11, "coco", 1);
+        Shards.setResolver(Directory::shardOf);
+
         Shards.createAndSeed();
         Notifications.createOwnDatabase();
 

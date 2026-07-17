@@ -1,0 +1,22 @@
+# The front door. TLS terminates here; behind it, three identical app pods.
+# (cert-manager annotation shown — it fetches and renews the certificate.)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minibank
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  tls:
+    - hosts: [bank.b4rruf3t.com]
+      secretName: minibank-tls
+  rules:
+    - host: bank.b4rruf3t.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minibank
+                port: { number: 80 }

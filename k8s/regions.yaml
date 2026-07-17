@@ -1,0 +1,144 @@
+# THE TERRITORIES. One StatefulSet per REGION — and the nodeSelector is the
+# law made executable: pg-uk schedules only onto nodes physically in the UK,
+# pg-eu only onto EU nodes. Data residency is not a policy document here;
+# it is a scheduling constraint the cluster cannot violate.
+#
+# StatefulSet, not Deployment: a database pod has a NAME and a DISK that
+# must survive it. Clones are interchangeable; territories are not.
+#
+# (In production each region would be a managed Postgres with streaming-
+# replication standbys for failover + read replicas for heavy queries —
+# WAL shipping is built into Postgres, no Kafka involved. Kafka's job is
+# BETWEEN services, never inside one database's replication.)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pg-eu
+spec:
+  serviceName: pg-eu
+  replicas: 1
+  selector:
+    matchLabels: { db: pg-eu }
+  template:
+    metadata:
+      labels: { db: pg-eu }
+    spec:
+      nodeSelector:
+        topology.kubernetes.io/region: eu-west-1   # <- residency, enforced
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports: [{ containerPort: 5432 }]
+          env:
+            - name: POSTGRES_USER
+              value: minibank
+            - name: POSTGRES_DB
+              value: minibank
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: minibank-db, key: password }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 10Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: pg-eu }
+spec:
+  clusterIP: None          # headless: pods get stable DNS names
+  selector: { db: pg-eu }
+  ports: [{ port: 5432 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pg-uk
+spec:
+  serviceName: pg-uk
+  replicas: 1
+  selector:
+    matchLabels: { db: pg-uk }
+  template:
+    metadata:
+      labels: { db: pg-uk }
+    spec:
+      nodeSelector:
+        topology.kubernetes.io/region: eu-west-2   # <- London. UK data on UK soil.
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports: [{ containerPort: 5432 }]
+          env:
+            - name: POSTGRES_USER
+              value: minibank
+            - name: POSTGRES_DB
+              value: minibank
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: minibank-db, key: password }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 10Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: pg-uk }
+spec:
+  clusterIP: None
+  selector: { db: pg-uk }
+  ports: [{ port: 5432 }]
+---
+# the control plane database: the directory (which region is home) and the
+# notifications service's own db. Tiny, boring, and deliberately separate
+# from the money.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pg-control
+spec:
+  serviceName: pg-control
+  replicas: 1
+  selector:
+    matchLabels: { db: pg-control }
+  template:
+    metadata:
+      labels: { db: pg-control }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports: [{ containerPort: 5432 }]
+          env:
+            - name: POSTGRES_USER
+              value: minibank
+            - name: POSTGRES_DB
+              value: minibank
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: minibank-db, key: password }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 2Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: pg-control }
+spec:
+  clusterIP: None
+  selector: { db: pg-control }
+  ports: [{ port: 5432 }]

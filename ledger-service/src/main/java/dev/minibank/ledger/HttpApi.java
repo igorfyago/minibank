@@ -33,6 +33,7 @@ public final class HttpApi {
 
         server.createContext("/api/accounts", ex -> handle(ex, HttpApi::accounts));
         server.createContext("/api/transfer", ex -> handle(ex, HttpApi::transfer));
+        server.createContext("/api/relocate", ex -> handle(ex, HttpApi::relocate));
         server.createContext("/api/notifications", ex -> handle(ex, HttpApi::notifications));
         server.createContext("/api/xray/summary", ex -> handle(ex, HttpApi::xraySummary));
         server.createContext("/api/xray/entries", ex -> handle(ex, HttpApi::xrayEntries));
@@ -45,8 +46,10 @@ public final class HttpApi {
 
     // ------------------------------------------------------------------ app
 
-    /** Customers only, each from its home shard — the union IS the customer
-     *  list, because the router is a partition: no overlaps, no gaps. */
+    /** Customers only, each from its HOME region — reads route through the
+     *  directory exactly like writes do. After a relocation the emptied
+     *  account still exists on the old region as an archive; it is not the
+     *  customer's account anymore, so it does not appear here. */
     private static Response accounts(HttpExchange ex) throws Exception {
         StringBuilder b = new StringBuilder("[");
         boolean first = true;
@@ -55,13 +58,22 @@ public final class HttpApi {
                  ResultSet rs = st.executeQuery(
                          "SELECT id, owner, kind, balance FROM accounts WHERE kind = 'customer' ORDER BY id")) {
                 while (rs.next()) {
+                    long id = rs.getLong(1);
+                    boolean home;
+                    try {
+                        home = Shards.forCustomer(id).index == s.index;
+                    } catch (RuntimeException e) {
+                        home = true;   // mid-relocation or no directory: show as-is
+                    }
+                    if (!home) continue;   // an archive on a former region
                     if (!first) b.append(',');
                     first = false;
-                    b.append("{\"id\":").append(rs.getLong(1))
+                    b.append("{\"id\":").append(id)
                      .append(",\"owner\":\"").append(Json.esc(rs.getString(2)))
                      .append("\",\"kind\":\"").append(rs.getString(3))
                      .append("\",\"balance\":\"").append(rs.getBigDecimal(4).toPlainString())
-                     .append("\",\"shard\":").append(s.index).append("}");
+                     .append("\",\"shard\":").append(s.index)
+                     .append(",\"region\":\"").append(Shards.regionName(s.index)).append("\"}");
                 }
             }
         }
@@ -98,6 +110,29 @@ public final class HttpApi {
             };
             return Response.json(200, "{\"result\":\"" + kind +
                     "\",\"crossShard\":" + plan.crossShard() + "}");
+        } catch (Directory.CustomerMoving e) {
+            // not a failure — an instruction. The write-pause of a relocation.
+            return Response.json(409, "{\"result\":\"relocating\",\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
+        } catch (IllegalArgumentException e) {
+            return Response.json(400, "{\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
+        }
+    }
+
+    /** STAGE 6: move a customer to another region — the balance travels
+     *  through the standard saga, then the directory pointer flips. */
+    private static Response relocate(HttpExchange ex) throws Exception {
+        if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
+        String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String customer = Json.num(body, "customer");
+        String to = Json.num(body, "to");
+        if (customer == null || to == null)
+            return Response.json(400, "{\"error\":\"need customer, to\"}");
+        try {
+            Relocation.relocate(Long.parseLong(customer), Integer.parseInt(to));
+            return Response.json(200, "{\"result\":\"ok\",\"region\":\"" +
+                    Shards.regionName(Integer.parseInt(to)) + "\"}");
+        } catch (Directory.CustomerMoving e) {
+            return Response.json(409, "{\"result\":\"relocating\",\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
         } catch (IllegalArgumentException e) {
             return Response.json(400, "{\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
         }
@@ -145,7 +180,8 @@ public final class HttpApi {
             tViolations += violations; tDrifted += drifted;
             if (s.index > 0) shardsJson.append(',');
             shardsJson.append("{\"shard\":").append(s.index)
-                    .append(",\"accounts\":").append(accounts)
+                    .append(",\"region\":\"").append(Shards.regionName(s.index))
+                    .append("\",\"accounts\":").append(accounts)
                     .append(",\"transactions\":").append(transactions)
                     .append(",\"entries\":").append(entries)
                     .append(",\"outboxPending\":").append(pending)

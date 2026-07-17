@@ -75,7 +75,7 @@
 <body>
 <header>
   <h1>mini<span>bank</span></h1>
-  <span class="muted">raw Java 21 · PostgreSQL ×2 shards · Kafka — every mechanism proven by a test</span>
+  <span class="muted">raw Java 21 · PostgreSQL ×2 regions · Kafka — every mechanism proven by a test</span>
   <nav>
     <button class="tab-btn on" data-tab="app">App</button>
     <button class="tab-btn" data-tab="xray">X-ray</button>
@@ -100,6 +100,7 @@
           <button class="primary" id="send-btn">Send</button>
           <button class="ghost" id="retry-btn" title="replays the SAME transaction id">Retry same tx</button>
           <button class="ghost" id="topup-btn" title="world → you: money enters the bank by transfer">Top up €100</button>
+          <button class="ghost" id="move-btn" title="the balance travels through the standard saga, then the directory pointer flips">Relocate</button>
         </div>
         <div id="send-result"></div>
         <div class="muted">the txId is minted in your browser — the caller owns the idempotency key.
@@ -134,19 +135,19 @@
             <text x="50" y="39" text-anchor="middle" class="sub">this page</text></g>
           <g class="node" data-node="api" transform="translate(165,35)">
             <rect width="120" height="50" rx="9"/><text x="60" y="24" text-anchor="middle">API + Router</text>
-            <text x="60" y="39" text-anchor="middle" class="sub">id mod 2 → shard</text></g>
+            <text x="60" y="39" text-anchor="middle" class="sub">directory → region</text></g>
           <g class="node" data-node="intransit" transform="translate(165,160)">
             <rect width="120" height="46" rx="23"/><text x="60" y="21" text-anchor="middle">in flight</text>
             <text x="60" y="37" text-anchor="middle" class="sub" id="inflight-num">€0.00</text></g>
           <g class="node" data-node="shard0" transform="translate(355,105)">
             <ellipse cx="67" cy="12" rx="67" ry="12"/><rect y="12" width="134" height="46"/>
             <ellipse cx="67" cy="58" rx="67" ry="12"/>
-            <text x="67" y="34" text-anchor="middle">Shard 0 — igor</text>
+            <text x="67" y="34" text-anchor="middle" id="shard0-label">eu — shard 0</text>
             <text x="67" y="50" text-anchor="middle" class="sub">:5434 · pool · outbox</text></g>
           <g class="node" data-node="shard1" transform="translate(355,225)">
             <ellipse cx="67" cy="12" rx="67" ry="12"/><rect y="12" width="134" height="46"/>
             <ellipse cx="67" cy="58" rx="67" ry="12"/>
-            <text x="67" y="34" text-anchor="middle">Shard 1 — coco</text>
+            <text x="67" y="34" text-anchor="middle" id="shard1-label">uk — shard 1</text>
             <text x="67" y="50" text-anchor="middle" class="sub">:5435 · pool · outbox</text></g>
           <g class="node" data-node="kafka" transform="translate(555,160)">
             <rect width="115" height="50" rx="9"/><text x="57" y="24" text-anchor="middle">Kafka</text>
@@ -203,11 +204,11 @@ async function loadAccounts() {
   const customers = accounts.filter(a => a.kind === 'customer');
   if (me === null) me = customers[0]?.id;
   $('#who').innerHTML = customers.map(a =>
-    `<button class="ghost ${a.id === me ? 'on' : ''}" onclick="switchUser(${a.id})">${a.owner} <span style="opacity:.55;font-size:11px">· shard ${a.shard}</span></button>`).join('');
+    `<button class="ghost ${a.id === me ? 'on' : ''}" onclick="switchUser(${a.id})">${a.owner} <span style="opacity:.55;font-size:11px">· ${a.region}</span></button>`).join('');
   const mine = accounts.find(a => a.id === me);
   $('#balance').textContent = mine ? '€' + mine.balance : '—';
   $('#balance-sub').textContent = mine
-    ? `${mine.owner} lives on shard ${mine.shard} — this number is a projection of that shard’s double-entry ledger`
+    ? `${mine.owner} lives in the ${mine.region} region (shard ${mine.shard}) — this number is a projection of that region’s double-entry ledger`
     : 'truth: a projection of the double-entry ledger';
   $('#send-to').innerHTML = accounts.filter(a => a.id !== me)
     .map(a => `<option value="${a.id}">${a.owner}${a.kind === 'external' ? ' (external)' : ''}</option>`).join('');
@@ -228,11 +229,24 @@ async function doTransfer(txId) {
     el.style.color = 'var(--green)';
   }
   else if (r.result === 'already_processed') { el.textContent = '↩ already processed — same txId, money moved once'; el.style.color = 'var(--amber)'; }
+  else if (r.result === 'relocating') { el.textContent = '⏸ ' + r.error + ' (the write-pause of a relocation — retry in a moment)'; el.style.color = 'var(--amber)'; }
   else { el.textContent = '✗ ' + (r.result || r.error); el.style.color = 'var(--red)'; }
   loadAccounts();
 }
 $('#send-btn').onclick = () => { lastTx = uuid(); doTransfer(lastTx); };
 $('#retry-btn').onclick = () => { if (lastTx) doTransfer(lastTx); else $('#send-result').textContent = 'send something first'; };
+$('#move-btn').onclick = async () => {
+  const mine = accounts.find(a => a.id === me);
+  if (!mine) return;
+  const to = 1 - mine.shard;
+  const r = await api('/api/relocate', { method: 'POST', body: JSON.stringify({ customer: me, to }) });
+  const el = $('#send-result');
+  if (r.result === 'ok') {
+    el.textContent = `✈ relocated to ${r.region} — the whole balance travelled as ONE saga, then the directory pointer flipped`;
+    el.style.color = 'var(--green)';
+  } else { el.textContent = '✗ ' + (r.error || r.result); el.style.color = 'var(--amber)'; }
+  loadAccounts();
+};
 $('#topup-btn').onclick = async () => {
   const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: 1, to: me, amount: '100.00' }) });
   const el = $('#send-result');
@@ -257,8 +271,8 @@ const EXPLAIN = {
     stats: s => [] },
   api: { title: 'API + Router — which machine owns this customer?', body: [
     'Raw JDK HttpServer, one VIRTUAL thread per request (Java 21): blocking code that scales, because a parked thread costs almost nothing.',
-    'Its new job since the bank sharded: ROUTING. One deterministic rule — customer id mod 2. igor (10) lives on shard 0, coco (11) on shard 1. Same shard → the plain ACID transfer, unchanged. Different shards → the saga departs. System accounts (world, in_transit) exist on EVERY shard, so top-ups never cross anything.'],
-    stats: s => [['routing rule', 'customer id mod 2'], ['shards', s.shards.length]] },
+    'Its new job since the bank sharded: ROUTING. Stage 5 routed by arithmetic (id mod 2 — load). Stage 6 routes by the DIRECTORY (residency — law): a customer’s region is a FACT on file, not a formula, because no hash function can know where the law says data must live. Same region → the plain ACID transfer. Different regions → the saga departs. During a relocation the directory answers “moving” and the router refuses with RETRY — a write-pause of milliseconds.'],
+    stats: s => [['routing', 'directory lookup (residency)'], ['regions', s.shards.map(x => x.region).join(' · ')]] },
   intransit: { title: 'in_transit — the clearing account', body: [
     'The double-entry way to say “the money is in the pipe”. Departure, on igor’s shard: igor −30, in_transit +30 — books balance instantly. Arrival, on coco’s shard: in_transit −30, coco +30 — balance again. Every shard’s ledger sums to zero at every moment; no state of the system is ever unexplained.',
     'The one fleet-wide number: the SUM of in_transit across all shards = money in flight right now, zero when the pipes are drained. Banks have settled across borders exactly this way for centuries (nostro/vostro accounts).'],
@@ -266,11 +280,11 @@ const EXPLAIN = {
       ['shard 0 in_transit', '€' + s.shards[0].inTransit],
       ['shard 1 in_transit', '€' + s.shards[1].inTransit],
       ['drained invariant', parseFloat(s.inFlight) === 0 ? 'HOLDS' : s.inFlight + ' in the pipe']] },
-  shard0: { title: 'Shard 0 — a complete little bank (igor lives here)', body: [
+  shard0: { title: 'Region eu — a complete little bank', body: [
     'Its own Postgres server (:5434), its own connection pool (stage 4, one per shard), its own accounts, double-entry ledger and outbox. Everything about ITS customers is local: the six-step ACID transfer — idempotency gate, ordered FOR UPDATE locks, funds check, two entries summing to zero, cached balances, outbox event — runs here unchanged.',
     'Sharding is how WRITES scale. Replicas are clones: more readers of one truth. Shards are territories: the truth itself is split, by customer, so the only decision that can fail — does the payer have the money — is always a local row lock away.'],
     stats: s => shardStats(s.shards[0]) },
-  shard1: { title: 'Shard 1 — a complete little bank (coco lives here)', body: [
+  shard1: { title: 'Region uk — a complete little bank', body: [
     'Same schema, same code, different machine (:5435). No JOIN, no foreign key, no transaction can reach shard 0 from here — that impossibility is what makes sharding honest, and it is why cross-shard payments must be sagas.',
     'A payment from igor lands here as an ARRIVAL: gated by the same txId on THIS shard’s own transactions table. However many times Kafka delivers the event, coco is credited exactly once.'],
     stats: s => shardStats(s.shards[1]) },
@@ -372,6 +386,18 @@ const QUIZ = [
   { q: 'The sum of in_transit balances across ALL shards equals…',
     o: ['Always zero', 'The money currently in flight — zero when the pipes are drained', 'The bank’s profit', 'Random noise'], a: 1,
     e: 'Departures add, arrivals subtract. Each shard balances alone at every instant; the fleet-wide in_transit sum is the one cross-shard reconciliation control, and the X-ray shows it live.' },
+  { q: 'Stage 5 routed by id mod 2. Stage 6 routes by a DIRECTORY. Why the change?',
+    o: ['Lookups are faster than modulo', 'Regions exist for LAW: residency is a fact about the customer, and a hash cannot compute a fact', 'Postgres added a feature', 'Kafka requires it'], a: 1,
+    e: 'Load can be spread by arithmetic; legal residency must be RECORDED. The router asks a tiny directory service (cached — a customer’s home changes approximately never), and UK data stays on UK machines.' },
+  { q: 'How does minibank MOVE a customer to another region?',
+    o: ['Dump and restore the database', 'pg_dump over SSH', 'The balance travels as ONE standard cross-shard saga, then the directory pointer flips; history stays archived', 'It cannot be done'], a: 2,
+    e: 'A balance is money and money moves by transfer — the machinery already existed. New empty account, write-pause (milliseconds), depart → arrive, flip the pointer. This is also the honest answer to “how do you reshard?”.' },
+  { q: 'During the relocation write-pause, a transfer request arrives. The bank…',
+    o: ['Loses it', 'Blocks for minutes', 'Refuses with “relocating — retry”, and the pause is measured in milliseconds', 'Routes it to a random region'], a: 2,
+    e: 'The directory answers “moving”; the router turns that into a retriable refusal. Reads keep working. Compare: the 2PC alternative would hold locks across machines instead.' },
+  { q: 'The relocation calls arrive() directly, AND Kafka later delivers the same departed event. Why is that safe?',
+    o: ['Kafka deduplicates', 'Luck', 'The arrival gate (txId on the destination’s own transactions table) was already claimed — the echo is a no-op', 'The applier is disabled'], a: 2,
+    e: 'Idempotency is not bolted on for retries — it is what makes bold moves stay simple. The duplicate settles into a closed gate. There is a test that does exactly this, twice.' },
 ];
 let qi = 0, score = 0, answered = false;
 function renderQuiz() {

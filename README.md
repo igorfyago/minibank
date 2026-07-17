@@ -49,6 +49,10 @@ Every design decision is recorded and argued — the point of this repo is under
 - **D16** in_transit is a CLEARING account on every shard — the double-entry way to say "in the pipe". Each shard's books sum to zero at every instant; the fleet-wide SUM of in_transit balances = money in flight right now, zero when drained. That one number is the cross-shard reconciliation control (banks call the pattern nostro/vostro).
 - **D17** Missing destination → the saga COMPENSATES: a refund on the source shard, gated by a deterministic UUID derived from the original txId (idempotent even if the bounce is processed twice). Money can be briefly in flight; it can never be lost, doubled, or in limbo.
 - **D18** System accounts (world, in_transit; ids < 10) exist on EVERY shard, so top-ups never cross shards; each shard runs its own outbox relay and its own connection pool. The applier is one more idempotent Kafka consumer — the stage-2 machinery, promoted from delivering notifications to moving the money.
+- **D19** Regions route by DIRECTORY, not by hash: residency is a fact about the customer (and a legal one), so the router asks a tiny directory service — its own database, cached in-process, because a customer's home region changes approximately never. Arithmetic spreads load; only a lookup can encode law.
+- **D20** Relocating a customer = money moving, so it uses the machinery money already has: create the account in the new region, set MOVING in the directory (the router refuses new transfers with a retriable 409 — a write-pause of milliseconds), transfer the WHOLE balance through the standard cross-shard saga, flip the pointer. History stays archived on the old region; reads route through the directory so only the home account is visible. This is also the honest answer to "how do you reshard?".
+- **D21** The relocation calls arrive() directly AND the departed event still rides Kafka to the applier — which finds the arrival gate already claimed and shrugs. Duplicates are not tolerated; they are designed for. (Also learned live: kill -9 a consumer and its partitions stay parked until the session timeout; clean shutdown leaves the group instantly.)
+- **D22** K8s manifests say the quiet part out loud: the app tier is the ONLY thing `replicas` scales (stateless clones behind one Service); databases are StatefulSets — territories with names and disks — and `nodeSelector: topology.kubernetes.io/region` makes data residency a scheduling constraint the cluster cannot violate. Pool math before replica math: pods × shards × pool size = server connections.
 - **D7** Concurrency correctness belongs to the database, not the JVM: ordered FOR UPDATE locking (ascending account id) makes deadlock impossible; the caller-supplied transaction id doubles as the idempotency key via the primary key.
 
 ## The curriculum
@@ -83,7 +87,7 @@ Money is strict now; echoes arrive milliseconds later.
 - [x] Stage 3 — the bank gets a face: raw JDK HttpServer (a virtual thread per request), the app, the X-ray map where every component explains itself, and the Quiz
 - [x] Stage 4 — the connection lesson: the tax measured (~14x), a pool written by hand, the whole bank flipped to it, and PgBouncer as the ops-grade version
 - [x] Stage 5 — the bank shards by customer: two real Postgres servers, a one-line router, cross-shard transfers as sagas over the outbox, the in_transit clearing account, and the compensating refund — all visible live in the X-ray
-- [ ] Stage 6
+- [x] Stage 6 — the shards become REGIONS (eu/uk): routing by directory (residency is law, not arithmetic), customer relocation as a saga + pointer flip, a shippable Docker image, and K8s manifests where data residency is a scheduling constraint
 
 ## Run
 
