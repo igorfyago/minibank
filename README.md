@@ -4,6 +4,8 @@ A neobank built from first principles, one lesson at a time. **Raw Java 21 — n
 
 > Learning project: each stage builds one real piece of a modern fintech backend and **proves one system-design concept with a runnable demo**. Inspired by how contemporary neobanks are engineered (microservices, database-per-service, event-driven consistency, and in-house tooling over frameworks). Not affiliated with any bank.
 
+![minibank: the app](docs/app.png)
+
 ## The destination
 
 A public site with two faces:
@@ -70,11 +72,14 @@ Money is strict now; echoes arrive milliseconds later.
 - [x] Stage 0 — the lost update, killed three ways
 - [x] Stage 1 — the double-entry ledger (deadlock provoked and cured, idempotent retries, reconciliation)
 - [x] Stage 2 — Kafka + the transactional outbox (events commit with the money; at-least-once + idempotent consumer = effectively once)
-- [ ] Stage 3–6
+- [x] Stage 3 — the bank gets a face: raw JDK HttpServer (a virtual thread per request), the app, the X-ray map where every component explains itself, and the Quiz
+- [ ] Stage 4–6
 
 ## Run
 
 ```bash
-docker compose up -d postgres
-cd ledger-service && mvn test   # the concurrency lessons live in the tests
+docker compose up -d                    # postgres :5433 + kafka :9092
+cd ledger-service
+mvn test                                # 14 lessons, all proven
+mvn exec:java                           # the bank: http://localhost:8080
 ```

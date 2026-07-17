@@ -48,6 +48,15 @@
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.2.5</version>
       </plugin>
+      <!-- build tooling, not a framework: lets `mvn exec:java` run the bank -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.2.0</version>
+        <configuration>
+          <mainClass>dev.minibank.ledger.Main</mainClass>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
 </project>

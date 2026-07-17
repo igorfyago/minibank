@@ -62,6 +62,11 @@ public final class Notifications {
         }
     }
 
+    /** read-only connection for the API layer. */
+    public static Connection openForRead() throws SQLException {
+        return openOwnDb();
+    }
+
     public static int count() throws SQLException {
         try (Connection c = openOwnDb(); var st = c.createStatement();
              ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM notifications")) {
