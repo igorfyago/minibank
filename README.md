@@ -35,6 +35,9 @@ Every design decision is recorded and argued — the point of this repo is under
 - **D4** (Igor) Ledger schema: double-entry with a cached balance, built as pure double-entry first, cache derived after — chosen to maximise interview-relevant depth: the sum-to-zero invariant, truth-vs-projection, and reconciliation.
 - **D5** Money only enters the bank by transfer: accounts are born empty and the external *world* account funds them (going negative — its job). Keeps the invariant pure: cache == SUM(entries), always, for everyone.
 - **D6** Business rules live in the schema: the balance check is kind-aware — customers never negative, externals unbounded.
+- **D8** Events are written into the SAME database transaction as the money (the transactional outbox); a relay ships them to Kafka afterwards. You cannot commit atomically across two systems, so we only ever commit to one.
+- **D9** Delivery is at-least-once by design (mark-after-send); every consumer is idempotent (event key = primary key + ON CONFLICT DO NOTHING). Loss is impossible, duplicates are harmless.
+- **D10** database-per-service: the notifications consumer owns its own database; the only bridge between services is the topic.
 - **D7** Concurrency correctness belongs to the database, not the JVM: ordered FOR UPDATE locking (ascending account id) makes deadlock impossible; the caller-supplied transaction id doubles as the idempotency key via the primary key.
 
 ## The curriculum
@@ -65,7 +68,8 @@ Money is strict now; echoes arrive milliseconds later.
 
 - [x] Stage 0 — the lost update, killed three ways
 - [x] Stage 1 — the double-entry ledger (deadlock provoked and cured, idempotent retries, reconciliation)
-- [ ] Stage 2–6
+- [x] Stage 2 — Kafka + the transactional outbox (events commit with the money; at-least-once + idempotent consumer = effectively once)
+- [ ] Stage 3–6
 
 ## Run
 

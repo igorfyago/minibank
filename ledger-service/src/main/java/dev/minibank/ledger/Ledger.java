@@ -84,6 +84,9 @@ public final class Ledger {
                 )""");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_account ON entries(account_id, id)");
         }
+        // the outbox is not optional decoration: a transfer writes to it,
+        // so the ledger cannot exist without it.
+        Outbox.createTable();
     }
 
     /** Accounts are born empty. Money only arrives BY TRANSFER — customer
@@ -148,7 +151,17 @@ public final class Ledger {
                 updateCachedBalance(conn, fromId, amount.negate());
                 updateCachedBalance(conn, toId, amount);
 
-                conn.commit();                               // all five steps, or none
+                // 6. THE ECHO (stage 2). The event that tells the rest of the
+                //    bank "this payment happened" is written INTO THIS SAME
+                //    TRANSACTION. Money and event commit together or not at
+                //    all — the transactional outbox. (Hand-rolled JSON is fine
+                //    here; real fleets use schemas — a later stage.)
+                Outbox.append(conn, "payments", txId.toString(),
+                        "{\"type\":\"payment.completed\",\"txId\":\"" + txId +
+                        "\",\"from\":" + fromId + ",\"to\":" + toId +
+                        ",\"amount\":\"" + amount.toPlainString() + "\"}");
+
+                conn.commit();                               // all six steps, or none
                 return new Ok();
             } catch (Exception e) {
                 conn.rollback();
