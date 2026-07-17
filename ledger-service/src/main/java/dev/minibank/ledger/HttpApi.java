@@ -202,13 +202,16 @@ public final class HttpApi {
                     boolean in = amount.signum() > 0;
 
                     String label, tag;
-                    boolean cross = false;
+                    boolean cross = false, pending = false;
                     switch (kind) {
                         case "depart" -> {
                             cross = true;
                             String to = outboxField(c, tx, "to");
                             if (to != null && Long.parseLong(to) == id) { label = "Relocation"; tag = "relocation"; }
                             else { label = ownerName(to); tag = "sent"; }
+                            // Revolut-style honesty: a departed payment is
+                            // PENDING until its arrival (or refund) commits.
+                            pending = isStillInFlight(c, home, tx, to);
                         }
                         case "arrive" -> {
                             cross = true;
@@ -236,11 +239,38 @@ public final class HttpApi {
                      .append("\",\"label\":\"").append(Json.esc(label))
                      .append("\",\"tag\":\"").append(tag)
                      .append("\",\"in\":").append(in)
-                     .append(",\"cross\":").append(cross).append('}');
+                     .append(",\"cross\":").append(cross)
+                     .append(",\"pending\":").append(pending).append('}');
                 }
             }
         }
         return Response.json(200, b.append(']').toString());
+    }
+
+    /** pending = departed, and neither the arrival (destination shard) nor a
+     *  compensating refund (this shard) has committed yet. */
+    private static boolean isStillInFlight(Connection homeConn, Shard home, UUID tx, String toStr) {
+        try {
+            UUID refundId = UUID.nameUUIDFromBytes(("refund:" + tx).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            try (var ps = homeConn.prepareStatement("SELECT 1 FROM transactions WHERE id = ? AND kind = 'refund'")) {
+                ps.setObject(1, refundId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) return false;    // bounced and refunded: settled
+                }
+            }
+            if (toStr == null) return false;
+            Shard dest = Shards.forCustomer(Long.parseLong(toStr));
+            if (dest == home) return false;
+            try (Connection dc = dest.open();
+                 var ps = dc.prepareStatement("SELECT 1 FROM transactions WHERE id = ? AND kind = 'arrive'")) {
+                ps.setObject(1, tx);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return !rs.next();
+                }
+            }
+        } catch (Exception e) {
+            return false;   // cannot check right now — don't alarm the user
+        }
     }
 
     /** a field of the departed event in THIS shard's outbox (the depart leg) */

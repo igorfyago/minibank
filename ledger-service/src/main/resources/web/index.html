@@ -32,6 +32,16 @@
   .amount-pos { color:var(--green); } .amount-neg { color:var(--red); }
 
   /* app tab — the phone */
+  .acct-card { background:radial-gradient(130% 150% at 0% 0%, rgba(188,140,255,.13), transparent 45%),
+               radial-gradient(100% 130% at 100% 0%, rgba(88,166,255,.08), transparent 40%), var(--panel); }
+  .action-ic { background:linear-gradient(135deg, var(--violet), #7a5cff) !important; transition:transform .15s, filter .15s; }
+  .action:hover .action-ic { transform:scale(1.08); }
+  .tx-pend { opacity:.62; }
+  .tx-pend .tx-amt { color:var(--dim); }
+  @keyframes pendpulse { 50% { opacity:.35; } }
+  .pend-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--amber);
+    margin-right:5px; animation:pendpulse 1.2s infinite; }
+
   .phone { max-width: 540px; margin: 0 auto; }
   .who { display:flex; gap:8px; margin-bottom:16px; }
   .who button { flex:none; }
@@ -99,6 +109,21 @@
     border-radius:50%; background:var(--accent); box-shadow:0 0 6px var(--accent); }
   .trace-step .lat { color:var(--amber); font-variant-numeric:tabular-nums; flex:none; }
   .trace-step .muted { flex:1; }
+
+  /* the player + ecosystem rail */
+  #play-bar { height:6px; border-radius:999px; background:var(--line); overflow:hidden; margin-top:10px; }
+  #play-fill { height:100%; width:0; background:linear-gradient(90deg, var(--accent), var(--violet)); border-radius:999px; }
+  #play-caption { font-size:12px; color:var(--dim); margin:6px 0 8px; min-height:16px; }
+  .trace-step.active { background:rgba(88,166,255,.12); }
+  .trace-step.active::before { background:var(--violet); box-shadow:0 0 8px var(--violet); }
+  .eco-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  .eco { border:1px solid var(--line); border-radius:12px; padding:10px 12px; cursor:pointer; transition:background .15s; }
+  .eco:hover { background:rgba(255,255,255,.035); }
+  .eco-head { font-weight:650; font-size:12.5px; margin-bottom:6px; }
+  .eco-body { font-size:11.5px; color:var(--dim); line-height:1.6; }
+  .eco-body b { color:var(--text); font-variant-numeric:tabular-nums; }
+  .spark { width:100%; height:16px; margin-top:7px; }
+  .eco-sub { font-size:10px; color:var(--dim); opacity:.7; margin-top:2px; }
 
   /* inspector + interview map */
   .insp-title { color:var(--dim); font-size:11.5px; font-weight:600; text-transform:uppercase;
@@ -243,6 +268,30 @@
           </svg>
         </div>
 
+        <div class="card" style="margin-top:14px">
+          <h2>The ecosystem, live — every technology, right now</h2>
+          <div class="eco-grid">
+            <div class="eco" id="eco-pg">
+              <div class="eco-head">🐘 PostgreSQL ×4</div>
+              <div class="eco-body" id="eco-pg-body">…</div>
+              <svg class="spark" id="spark-pg" viewBox="0 0 60 16" preserveAspectRatio="none"></svg>
+              <div class="eco-sub">commits, last minute</div>
+            </div>
+            <div class="eco" id="eco-kafka">
+              <div class="eco-head">📨 Kafka</div>
+              <div class="eco-body" id="eco-kafka-body">…</div>
+              <svg class="spark" id="spark-kafka" viewBox="0 0 60 16" preserveAspectRatio="none"></svg>
+              <div class="eco-sub">events published, last minute</div>
+            </div>
+            <div class="eco" id="eco-k8s">
+              <div class="eco-head">☸ Kubernetes</div>
+              <div class="eco-body">app <b>×3</b> replicas (the ONLY thing that scales)<br>
+                pg-eu → <b>eu-west-1</b> · pg-uk → <b>eu-west-2</b><br>residency = a scheduling constraint</div>
+              <div class="eco-sub">manifests in k8s/ — the cluster shape of this exact system</div>
+            </div>
+          </div>
+        </div>
+
         <div class="card" style="margin-top:14px" id="inspect-card" hidden>
           <h2><span id="inspect-title">Inside</span>
             <button class="ghost" style="float:right;padding:2px 10px" id="inspect-clear">✕</button></h2>
@@ -251,8 +300,13 @@
 
         <div class="card" style="margin-top:14px" id="trace-card" hidden>
           <h2>Trace <span class="muted" id="trace-tx"></span>
-            <button class="ghost" style="float:right;padding:2px 10px" id="trace-clear">✕</button></h2>
+            <button class="ghost" style="float:right;padding:2px 10px" id="trace-clear">✕</button>
+            <button class="ghost" style="float:right;padding:2px 10px;margin-right:8px" id="replay-btn">▶ replay 3s</button></h2>
           <div id="trace-head" class="muted" style="font-size:12.5px;margin-bottom:6px"></div>
+          <div id="play-wrap" hidden>
+            <div id="play-bar"><div id="play-fill"></div></div>
+            <div id="play-caption"></div>
+          </div>
           <div id="trace-steps"></div>
         </div>
 
@@ -321,7 +375,7 @@ document.querySelectorAll('.tab-btn').forEach(b => b.onclick = () => {
 if (['#xray', '#quiz'].includes(location.hash)) document.querySelector('[data-tab="' + location.hash.slice(1) + '"]').click();
 
 /* ---------------- app tab ---------------- */
-let me = null, accounts = [], lastTx = null;
+let me = null, accounts = [], lastTx = null, prevStmtSig = '';
 const fmt = v => '€' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 async function loadAccounts() {
@@ -344,13 +398,17 @@ function say(msg, color) { const el = $('#send-result'); el.textContent = msg; e
 async function doTransfer(txId) {
   const body = JSON.stringify({ txId, from: me, to: Number($('#send-to').value), amount: $('#send-amount').value });
   const r = await api('/api/transfer', { method: 'POST', body });
-  if (r.result === 'ok') say(r.crossShard ? '✓ sent across regions — in flight, Kafka settles it' : '✓ sent', 'var(--green)');
+  if (r.result === 'ok') {
+    say(r.crossShard ? '✓ sent across regions — in flight, Kafka settles it' : '✓ sent', 'var(--green)');
+    followTx(txId);   // the museum: jump to the map and watch it actually happen
+  }
   else if (r.result === 'already_processed') say('↩ already processed — same txId, money moved once', 'var(--amber)');
   else if (r.result === 'relocating') say('⏸ ' + r.error, 'var(--amber)');
   else say('✗ ' + (r.result || r.error), 'var(--red)');
   loadAccounts(); loadStatement();
 }
 $('#send-btn').onclick = () => { lastTx = uuid(); doTransfer(lastTx); };
+$('#send-amount').addEventListener('keydown', e => { if (e.key === 'Enter') $('#send-btn').click(); });
 $('#act-send').onclick = () => { $('#send-panel').classList.toggle('hidden'); $('#send-amount').focus(); };
 $('#act-retry').onclick = () => { if (lastTx) doTransfer(lastTx); else say('send something first — Retry replays the SAME txId to prove idempotency', 'var(--dim)'); };
 $('#act-add').onclick = async () => {
@@ -379,6 +437,9 @@ async function loadStatement() {
   const hue = s => { let h = 0; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
   const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
   const SUB = { added: 'Money added', sent: 'Sent', received: 'Received', relocation: 'Between your regions', refund: 'Payment bounced' };
+  const ssig = items.map(x => x.tx + x.tag + x.pending + x.after).join('|');
+  if (ssig === prevStmtSig) return;
+  prevStmtSig = ssig;
   let html = '', lastDay = '';
   for (const x of items) {
     const d = dayOf(x.at);
@@ -390,14 +451,24 @@ async function loadStatement() {
     const av = ['added', 'relocation', 'refund'].includes(x.tag)
       ? `<div class="tx-av tx-av-sys">${ic}</div>`
       : `<div class="tx-av" style="background:hsl(${hue(name)},40%,30%)">${ic}</div>`;
-    html += `<div class="tx-row" onclick="this.nextElementSibling.classList.toggle('hidden')">
+    const sub = x.pending
+      ? `<span class="pend-dot"></span><span style="color:var(--amber)">Pending</span> · ${time} · settling across regions`
+      : `${SUB[x.tag] || ''} · ${time}${x.cross ? ' · cross-region' : ''}`;
+    const strat = x.tag === 'relocation'
+      ? 'strategy: RELOCATION — the whole balance as one standard saga, then the directory pointer flips; write-pause of milliseconds, every step idempotent'
+      : x.tag === 'refund'
+      ? 'strategy: COMPENSATION — the saga could not complete (no such destination), so a gated refund undid the departure; deterministic refund id makes even the undo idempotent'
+      : x.cross
+      ? 'strategy: SAGA — pessimistic FOR UPDATE on the payer (source region only) · in_transit clearing account · Kafka at-least-once · idempotent arrival gate. No optimistic retries anywhere: hot money gets locks'
+      : 'strategy: ONE ACID COMMIT — pessimistic SELECT … FOR UPDATE on both rows, ascending id order (deadlock-proof) · caller-owned txId idempotency gate. Optimistic version+retry deliberately not used: balances are hot rows';
+    html += `<div class="tx-row${x.pending ? ' tx-pend' : ''}" onclick="this.nextElementSibling.classList.toggle('hidden')">
       ${av}
       <div class="tx-main"><div class="tx-name">${name}</div>
-        <div class="tx-sub">${SUB[x.tag] || ''} · ${time}${x.cross ? ' · cross-region' : ''}</div></div>
+        <div class="tx-sub">${sub}</div></div>
       <div class="tx-right"><div class="tx-amt ${x.in ? 'in' : ''}">${x.in ? '+' : '−'}${fmt(abs)}</div>
         <div class="tx-after">${fmt(x.after)}</div></div>
     </div>
-    <div class="tx-detail hidden">tx ${x.tx} — one leg of a double-entry transaction; the grey number is your balance right after it, recomputed from the ledger itself</div>`;
+    <div class="tx-detail hidden">tx ${x.tx}<br>${strat}<br>the grey number is your balance right after this transaction, recomputed from the ledger itself · <a href="#xray" style="color:var(--accent)" onclick="traceTx('${x.tx}', true);document.querySelector('[data-tab=&quot;xray&quot;]').click()">watch it on the map →</a></div>`;
   }
   $('#txlist').innerHTML = html || '<span class="muted">no transactions yet — add money or send some</span>';
 }
@@ -537,6 +608,12 @@ const GUIDE = {
     plain: c => [`Each region has its own pool of ${c.size} real connections; ${c.busy} busy right now. Nothing talks to Postgres without borrowing.`],
     how: () => [`Borrowers get a proxy whose close() RETURNS the connection (with rollback + autocommit reset — state never leaks). An empty pool makes the next borrower WAIT: bounded queueing = backpressure.`],
     win: () => [`A database drowns in connections before it drowns in data — each Postgres connection is a forked process. Measured here: connection-per-query was 14x slower than pooling.`] },
+  deploy: { t: 'Kubernetes — how this ships',
+    plain: () => [`One Docker image (no fat-jar magic: compiled classes plus three driver jars), and Kubernetes manifests in k8s/ where the ONLY thing that scales is the stateless app tier — replicas: 3, thirty if you like; correctness never lived in the JVM.`,
+      `Each region’s database is a StatefulSet pinned to its geography: nodeSelector topology.kubernetes.io/region makes data-residency law a scheduling constraint the cluster cannot violate. (Today’s prod runs these same containers via compose on one box — the manifests are the cluster shape.)`],
+    how: () => [`Deployment for the app (clones, interchangeable), StatefulSets for databases (territories — a name and a disk that survive the pod). Readiness probes gate traffic; config arrives by environment variable so the same image runs on a laptop, in compose, or on a cluster.`,
+      `Pool math BEFORE replica math: pods × regions × pool size = real server connections. Scale pods carelessly and you drown Postgres — that is what PgBouncer in front is for.`],
+    win: () => [`“Kubernetes scales pods, never the database. Clones versus territories. And residency enforced by the scheduler — nodeSelector on the region label — turns a compliance requirement into an infrastructure invariant.”`] },
   trace: { t: 'A transaction’s journey',
     plain: c => [`${who(c.tr.payer)} → ${who(c.tr.payee || 'the pipe')}${c.tr.amount ? ', ' + eur(c.tr.amount) : ''}: ${c.tr.steps.length} recorded steps, ${c.total}ms end to end. Click a step for its story.`],
     how: () => [`No tracing agent was installed. Every step is a timestamp the system already writes: transaction commits on each region, the relay's published_at, the notification's insert. The trace is assembled by querying the tables.`],
@@ -757,7 +834,7 @@ async function xrayTick() {
         : `💸 ${who(name(from))} → ${who(name(to))} · ${eur(amt)}`;
       const fate = [arrived.has(e.tx) ? 'applier ✓ settled' : (ty === 'transfer.departed' ? 'applier … in flight' : ''),
                     notified.has(e.tx) ? 'notified ✓' : ''].filter(Boolean).join(' · ');
-      return `<div class="klog-item${isNew ? ' new' : ''}${openIds.has(id) ? ' open' : ''}" data-id="${id}" onclick="this.classList.toggle('open');traceTx('${e.tx}')">
+      return `<div class="klog-item${isNew ? ' new' : ''}${openIds.has(id) ? ' open' : ''}" data-id="${id}" onclick="this.classList.toggle('open');traceTx('${e.tx}', true)">
           <div class="tick-ic">📤</div>
           <div class="tick-main">${headline}<div class="tick-sub">${new Date(e.ts).toLocaleTimeString()} · from ${e.region}'s outbox · ${fate || 'delivered'}</div></div>
           <span class="chip">key ${e.tx.slice(0, 8)}…</span>
@@ -772,10 +849,11 @@ async function xrayTick() {
   if (esig !== prevEntSig) {
     prevEntSig = esig;
     $('#entries-table tbody').innerHTML = entries.map(x =>
-      `<tr style="cursor:pointer" onclick="gShow('entry',{});traceTx('${x.tx}')"><td>${x.owner}</td><td class="${x.amount.startsWith('-') ? 'amount-neg' : 'amount-pos'}">${x.amount}</td>
+      `<tr style="cursor:pointer" onclick="gShow('entry',{});traceTx('${x.tx}', true)"><td>${x.owner}</td><td class="${x.amount.startsWith('-') ? 'amount-neg' : 'amount-pos'}">${x.amount}</td>
        <td class="muted">s${x.shard}</td><td class="muted">${x.tx.slice(0, 8)}…</td></tr>`).join('');
   }
 
+  ecoTick(s);
   if (inspectNode) refreshInspect();
 
   if (gSubject === 'welcome' && evs[0]) {
@@ -785,11 +863,9 @@ async function xrayTick() {
   }
   } catch (e) { /* transient fetch failure — the next tick retries */ }
 }
-window.tickClick = evJson => { const e = JSON.parse(evJson); gShow('ev:' + e.type, { ev: e }); traceTx(e.tx); };
+window.tickClick = evJson => { const e = JSON.parse(evJson); gShow('ev:' + e.type, { ev: e }); traceTx(e.tx, true); };
 
-async function traceTx(tx) {
-  const tr = await api('/api/xray/trace?tx=' + tx);
-  if (!tr.steps || !tr.steps.length) return;
+function renderTrace(tr, tx) {
   activeTrace = tr;
   const t0 = new Date(tr.steps[0].ts).getTime();
   const total = new Date(tr.steps[tr.steps.length - 1].ts).getTime() - t0;
@@ -803,8 +879,6 @@ async function traceTx(tx) {
       <b style="flex:none">${st.region}</b><span class="muted">${st.detail}</span>
       <span class="lat">${i === 0 ? new Date(st.ts).toLocaleTimeString() : '+' + dt + 'ms'}</span></div>`;
   }).join('');
-  gShow('trace', { tr, total });
-  // light the path this tx actually took
   const regions = new Set(tr.steps.map(s2 => s2.region));
   document.querySelectorAll('.node').forEach(n => n.classList.remove('onpath'));
   ['api', regions.has('eu') && 'shard0', regions.has('uk') && 'shard1',
@@ -812,8 +886,158 @@ async function traceTx(tx) {
    tr.steps.some(s2 => s2.step === 'arrive' || s2.step === 'refund') && 'applier',
    regions.has('notifications') && 'notif'].filter(Boolean)
     .forEach(nm => document.querySelector(`.node[data-node="${nm}"]`)?.classList.add('onpath'));
+  return total;
 }
-$('#trace-clear').onclick = () => { activeTrace = null; $('#trace-card').hidden = true;
+
+async function traceTx(tx, auto = false) {
+  const tr = await api('/api/xray/trace?tx=' + tx);
+  if (!tr.steps || !tr.steps.length) return;
+  const total = renderTrace(tr, tx);
+  gShow('trace', { tr, total });
+  if (auto && tr.steps.length > 1) playTrace(tr); else if (!auto) { stopPlay(); $('#play-wrap').hidden = true; }
+}
+
+/* ---- the player: a 3-second museum replay of a payment's real journey ---- */
+const STEP_EDGES = {
+  transfer: st => ['api_shard' + (st.region === 'eu' ? 0 : 1)],
+  depart: st => ['api_shard' + (st.region === 'eu' ? 0 : 1)],
+  published: st => ['shard' + (st.region === 'eu' ? 0 : 1) + '_kafka'],
+  arrive: st => ['kafka_applier', 'applier_shard' + (st.region === 'eu' ? 0 : 1)],
+  refund: st => ['applier_shard' + (st.region === 'eu' ? 0 : 1)],
+  notify: () => ['kafka_notif'],
+};
+const STEP_NODE = {
+  transfer: st => st.region === 'eu' ? 'shard0' : 'shard1',
+  depart: st => st.region === 'eu' ? 'shard0' : 'shard1',
+  published: () => 'kafka',
+  arrive: st => st.region === 'eu' ? 'shard0' : 'shard1',
+  refund: st => st.region === 'eu' ? 'shard0' : 'shard1',
+  notify: () => 'notif',
+};
+let playTimers = [], following = null, playedSteps = 0;
+function stopPlay() { playTimers.forEach(clearTimeout); playTimers = []; following = null; }
+
+function playSegment(st, i, n) {
+  document.querySelectorAll('.trace-step').forEach((el, j) => el.classList.toggle('active', j === i));
+  (STEP_EDGES[st.step] || (() => []))(st).forEach((e2, j) =>
+    pulse(e2, st.step === 'depart' ? 'var(--amber)' : st.step === 'notify' ? 'var(--green)' : 'var(--accent)', j * 260));
+  const nd = (STEP_NODE[st.step] || (() => null))(st);
+  if (nd) glow(nd);
+  $('#play-caption').textContent = `chapter ${i + 1}/${n} — ${st.detail} · ${st.region}`;
+}
+
+function playTrace(tr) {
+  stopPlay();
+  const steps = tr.steps; if (!steps || steps.length < 2) return;
+  const t0 = new Date(steps[0].ts).getTime();
+  const realTotal = Math.max(new Date(steps[steps.length - 1].ts).getTime() - t0, 1);
+  // scale the real gaps into a ~3s show; every chapter gets ≥450ms of fame
+  const durs = steps.map((s2, i) => i === 0 ? 450 :
+    Math.max(450, (new Date(s2.ts) - new Date(steps[i - 1].ts)) / realTotal * 3000));
+  const total = durs.reduce((a, b2) => a + b2, 0);
+  $('#play-wrap').hidden = false;
+  const fill = $('#play-fill');
+  fill.style.transition = 'none'; fill.style.width = '0%';
+  void fill.getBoundingClientRect();
+  let acc = 0;
+  steps.forEach((s2, i) => {
+    const at = acc, w = ((acc + durs[i]) / total * 100);
+    playTimers.push(setTimeout(() => {
+      playSegment(s2, i, steps.length);
+      fill.style.transition = `width ${durs[i]}ms linear`;
+      fill.style.width = w + '%';
+    }, at));
+    acc += durs[i];
+  });
+  playTimers.push(setTimeout(() => {
+    document.querySelectorAll('.trace-step').forEach(el => el.classList.remove('active'));
+    $('#play-caption').textContent = `✓ that was the real journey — ${realTotal}ms in real time, replayed slow enough to see`;
+  }, acc + 250));
+}
+
+/* ---- live follow: after YOU send money, watch it actually happen ---- */
+async function followTx(tx) {
+  stopPlay(); following = tx; playedSteps = 0;
+  document.querySelector('[data-tab="xray"]').click();
+  $('#trace-card').hidden = false;
+  $('#play-wrap').hidden = false;
+  $('#trace-tx').textContent = tx.slice(0, 13) + '…';
+  $('#trace-head').textContent = 'your payment, live';
+  $('#trace-steps').innerHTML = '';
+  const fill = $('#play-fill');
+  fill.style.transition = 'none'; fill.style.width = '4%';
+  $('#play-caption').textContent = 'watching it happen…';
+  setTimeout(() => $('#trace-card').scrollIntoView({ behavior: 'smooth', block: 'center' }), 150);
+  followPoll(tx, 0);
+}
+async function followPoll(tx, tries) {
+  if (following !== tx) return;
+  let tr = null;
+  try { tr = await api('/api/xray/trace?tx=' + tx); } catch (e) { /* retry */ }
+  if (following !== tx) return;
+  if (tr && tr.steps && tr.steps.length) {
+    renderTrace(tr, tx);
+    const expect = tr.steps.some(s2 => s2.step === 'depart') ? 4 : 3;
+    for (let i = playedSteps; i < tr.steps.length; i++) playSegment(tr.steps[i], i, Math.max(tr.steps.length, expect));
+    playedSteps = tr.steps.length;
+    const fill = $('#play-fill');
+    fill.style.transition = 'width .6s ease';
+    fill.style.width = Math.min(96, playedSteps / expect * 100) + '%';
+    const hasNotify = tr.steps.some(s2 => s2.step === 'notify');
+    const settled = tr.steps.some(s2 => s2.step === 'arrive' || s2.step === 'refund') || !tr.steps.some(s2 => s2.step === 'depart');
+    if (hasNotify && settled) {
+      const t0 = new Date(tr.steps[0].ts), t1 = new Date(tr.steps[tr.steps.length - 1].ts);
+      fill.style.width = '100%';
+      $('#play-caption').textContent = `✓ settled — ${t1 - t0}ms end to end, every part you just saw really ran`;
+      document.querySelectorAll('.trace-step').forEach(el => el.classList.remove('active'));
+      following = null;
+      gShow('trace', { tr, total: t1 - t0 });
+      return;
+    }
+  }
+  if (tries > 60) {
+    $('#play-caption').textContent = 'still in flight — the pipe holds it safely (consumers may be rebalancing); it will settle';
+    following = null;
+    return;
+  }
+  playTimers.push(setTimeout(() => followPoll(tx, tries + 1), 700));
+}
+$('#replay-btn').onclick = () => { if (activeTrace) playTrace(activeTrace); };
+
+/* ---- the ecosystem rail: each technology, live, with a pulse line ---- */
+const ecoS = { pg: [], kafka: [] };
+let prevTotals = null;
+function ecoTick(s) {
+  const tx = s.shards[0].transactions + s.shards[1].transactions;
+  const pub = s.outboxPublished;
+  if (prevTotals) {
+    ecoS.pg.push(Math.max(0, tx - prevTotals.tx));
+    ecoS.kafka.push(Math.max(0, pub - prevTotals.pub));
+    Object.values(ecoS).forEach(a => { if (a.length > 30) a.shift(); });
+  }
+  prevTotals = { tx, pub };
+  $('#eco-pg-body').innerHTML =
+    `eu <b>${s.shards[0].transactions}</b> tx · pool <b>${s.shards[0].poolBusy}/${s.shards[0].poolSize}</b><br>` +
+    `uk <b>${s.shards[1].transactions}</b> tx · pool <b>${s.shards[1].poolBusy}/${s.shards[1].poolSize}</b><br>` +
+    `+ directory + notifications DBs`;
+  $('#eco-kafka-body').innerHTML =
+    `published <b>${pub}</b> · pending <b>${s.outboxPending}</b><br>` +
+    `in flight <b>€${s.inFlight}</b> · notified <b>${s.notifications}</b><br>` +
+    `groups: applier · notifications`;
+  spark($('#spark-pg'), ecoS.pg);
+  spark($('#spark-kafka'), ecoS.kafka);
+}
+function spark(el, data) {
+  if (!data.length) { el.innerHTML = ''; return; }
+  const max = Math.max(...data, 1), n = data.length;
+  const pts = data.map((v, i) => `${(i / Math.max(n - 1, 1)) * 60},${15 - (v / max) * 13}`).join(' ');
+  el.innerHTML = `<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5" opacity=".9"/>`;
+}
+$('#eco-pg').onclick = () => { gShow('shard0'); inspect('shard0'); };
+$('#eco-kafka').onclick = () => { gShow('kafka'); inspect('kafka'); };
+$('#eco-k8s').onclick = () => gShow('deploy');
+
+$('#trace-clear').onclick = () => { stopPlay(); activeTrace = null; $('#trace-card').hidden = true; $('#play-wrap').hidden = true;
   document.querySelectorAll('.node').forEach(n => n.classList.remove('onpath')); gShow('welcome'); };
 
 /* ---------------- quiz tab ---------------- */
