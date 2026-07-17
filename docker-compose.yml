@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: minibank
+      POSTGRES_USER: minibank
+      POSTGRES_DB: minibank
+    ports:
+      - "5433:5432"   # 5433 on the host: 5432 is taken by another project
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
