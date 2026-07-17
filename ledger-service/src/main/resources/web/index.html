@@ -80,8 +80,34 @@
   .mini { background:none; border:1px solid var(--line); color:var(--text); padding:3px 10px;
           border-radius:7px; font:600 11px system-ui; cursor:pointer; }
   .mini:hover { border-color:var(--violet); color:var(--violet); }
-  .seg { display:inline-flex; gap:4px; }
-  .seg .on { background:var(--violet); border-color:var(--violet); color:#fff; }
+  .send-sheet { margin-top:14px; background:rgba(255,255,255,.03); border:1px solid var(--line);
+    border-radius:16px; padding:14px; animation:slidein .2s ease; }
+  .seg2 { display:flex; background:var(--bg); border:1px solid var(--line); border-radius:999px;
+    padding:3px; margin-bottom:13px; }
+  .seg2 button { flex:1; border:none; background:none; color:var(--dim); font:650 12.5px system-ui;
+    padding:8px 0; border-radius:999px; cursor:pointer; transition:all .18s; }
+  .seg2 button.on { background:linear-gradient(135deg, var(--accent), var(--violet)); color:#fff; }
+  .fld { margin-bottom:13px; }
+  .fld label { display:block; font:700 10.5px system-ui; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--dim); margin-bottom:6px; }
+  .fld select { width:100%; height:42px; }
+  .iban-wrap { display:flex; align-items:center; gap:9px; background:var(--bg); border:1px solid var(--line);
+    border-radius:10px; padding:0 12px; transition:border-color .15s; }
+  .iban-wrap span { font-size:15px; }
+  .iban-wrap input { flex:1; border:none; background:none; color:var(--text);
+    font:13px Consolas, monospace; height:42px; letter-spacing:.4px; min-width:0; }
+  .amt-row { display:flex; align-items:center; gap:8px; background:var(--bg); border:1px solid var(--line);
+    border-radius:10px; padding:2px 14px; transition:border-color .15s; }
+  .amt-eur { font:700 20px system-ui; color:var(--dim); }
+  .amt-row input { flex:1; border:none; background:none; color:var(--text); font:750 26px system-ui;
+    height:50px; min-width:0; font-variant-numeric:tabular-nums; }
+  .iban-wrap input:focus, .amt-row input:focus { outline:none; }
+  .iban-wrap:focus-within, .amt-row:focus-within { border-color:var(--violet); }
+  .send-big { width:100%; height:46px; border:none; border-radius:12px;
+    background:linear-gradient(135deg, var(--accent), var(--violet)); color:#fff;
+    font:700 14.5px system-ui; cursor:pointer; transition:filter .15s, transform .1s; }
+  .send-big:hover { filter:brightness(1.12); }
+  .send-big:active { transform:scale(.985); }
   .ext-card { border:1px solid var(--line); border-radius:14px; padding:11px 13px; margin-top:12px; background:rgba(255,255,255,.02); }
   .ext-top { display:flex; justify-content:space-between; font-weight:650; font-size:13.5px; }
   .ext-sub { color:var(--dim); font-size:11.5px; margin-top:2px; }
@@ -400,13 +426,23 @@
           <button class="action" id="act-retry" title="replays the SAME transaction id"><span class="action-ic">↻</span>Retry tx</button>
           <button class="action" id="act-move" title="the balance travels as one saga, then the directory pointer flips"><span class="action-ic">✈</span>Relocate</button>
         </div>
-        <div class="send-row hidden" id="send-panel">
-          <span class="seg"><button class="ghost on" id="seg-user">minibank</button><button class="ghost" id="seg-out">other bank</button></span>
-          <select id="send-to"></select>
-          <input id="send-iban" class="hidden" type="text" value="ES91 2100 0418 4502 0005 1332"
-                 style="flex:1; min-width:210px; font-family:Consolas,monospace; font-size:12.5px" maxlength="34">
-          <input id="send-amount" type="text" size="8" value="30.00">
-          <button class="primary" id="send-btn">Send</button>
+        <div class="send-sheet hidden" id="send-panel">
+          <div class="seg2">
+            <button id="seg-user" class="on">minibank</button>
+            <button id="seg-out">🏦 other bank</button>
+          </div>
+          <div class="fld">
+            <label id="send-to-label">To — minibank user</label>
+            <select id="send-to"></select>
+            <div class="iban-wrap hidden" id="iban-wrap"><span>🏦</span>
+              <input id="send-iban" type="text" value="ES91 2100 0418 4502 0005 1332" maxlength="34" spellcheck="false"></div>
+          </div>
+          <div class="fld">
+            <label>Amount</label>
+            <div class="amt-row"><span class="amt-eur">€</span>
+              <input id="send-amount" type="text" inputmode="decimal" value="30.00"></div>
+          </div>
+          <button class="send-big" id="send-btn">Send €30.00</button>
         </div>
         <div id="send-result"></div>
         <div id="extlist"></div>
@@ -726,8 +762,15 @@ function segPaint() {
   $('#seg-user').classList.toggle('on', sendMode === 'user');
   $('#seg-out').classList.toggle('on', sendMode === 'out');
   $('#send-to').classList.toggle('hidden', sendMode !== 'user');
-  $('#send-iban').classList.toggle('hidden', sendMode !== 'out');
+  $('#iban-wrap').classList.toggle('hidden', sendMode !== 'out');
+  sendBtnPaint();
 }
+function sendBtnPaint() {
+  const a = Number($('#send-amount').value) || 0;
+  $('#send-btn').textContent = 'Send ' + fmt(a) + (sendMode === 'out' ? ' · SEPA' : '');
+  $('#send-to-label').textContent = sendMode === 'out' ? 'To — another bank (IBAN)' : 'To — minibank user';
+}
+$('#send-amount').addEventListener('input', sendBtnPaint);
 $('#seg-user').onclick = () => { sendMode = 'user'; segPaint(); };
 $('#seg-out').onclick = () => { sendMode = 'out'; segPaint(); };
 
@@ -1987,6 +2030,7 @@ $('#q-next').onclick = () => {
 /* ---------------- boot ---------------- */
 loadAccounts(); loadStatement(); loadPortfolio(); renderQuiz(); gShow('welcome');
 if (['#xray', '#quiz', '#console'].includes(location.hash)) document.querySelector('[data-tab="' + location.hash.slice(1) + '"]').click();
+if (location.hash === '#send') { $('#send-panel').classList.remove('hidden'); segPaint(); }
 setInterval(() => { loadAccounts(); loadStatement(); loadPortfolio(); renderExt(); if (!$('#tab-xray').classList.contains('hidden')) xrayTick(); if (!$('#tab-console').classList.contains('hidden')) kafkaTick(); }, 2000);
 </script>
 </body>
