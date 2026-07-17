@@ -4,17 +4,24 @@ A neobank built from first principles, one lesson at a time. **Raw Java 21 — n
 
 > Learning project: each stage builds one real piece of a modern fintech backend and **proves one system-design concept with a runnable demo**. Inspired by how contemporary neobanks are engineered (microservices, database-per-service, event-driven consistency, and in-house tooling over frameworks). Not affiliated with any bank.
 
+**LIVE: [bank.b4rruf3t.com](https://bank.b4rruf3t.com)** — or jump straight to the self-driving demo: **[bank.b4rruf3t.com/#show](https://bank.b4rruf3t.com/#show)** (60 seconds, it sends real money and narrates itself).
+
 ![minibank: the app](docs/app.png)
 
-**LIVE: [bank.b4rruf3t.com](https://bank.b4rruf3t.com)** — the app, the X-ray, the quiz. igor lives in eu, coco in uk; every payment between them crosses regions for real.
+## What's inside
 
-## The destination
+| Tab | What it is |
+|---|---|
+| **App** | A working neobank: customers in two REGIONS (eu/uk on separate Postgres servers), instant in-region payments, cross-region payments that settle over Kafka (honestly `Pending` until the arrival commits), savings, a credit card with a real authorize/capture/release lifecycle, Bitcoin & Apple stock on a **multi-currency ledger at live prices**, personal loans, external IBAN transfers, self-serve signup with a residency choice, PWA install — and **Rita**, an LLM support agent with the same powers as the buttons, gated by an Allow/Deny card on every action. |
+| **X-ray** | The exact architecture, drawn live: every real process and database as a labeled node, particle animations replaying real events, distributed **tracing assembled from the timestamps the system already writes**, a per-component row inspector, live invariant audits, and a Guide that explains anything clicked at three depths (Plainly / Mechanism / Interview answer). |
+| **Console** | The pipeline as a page: **SQL Studio** (the four real databases, IDE-style — exact queries, syntax-highlighted, timed, zero injection surface) flowing into the **Kafka Console** (the broker itself: true offsets, the exact bytes, and live consumer-group LAG from the admin API). |
+| **Quiz** | 24 questions the site asks about its own architecture. Pass the bank's quiz and you understand the bank. |
 
-A public site with two faces:
+| The living X-ray | The Console pipeline |
+|---|---|
+| ![X-ray](docs/xray.png) | ![Console](docs/console.png) |
 
-1. **The app** — a working neobank: sign in, see balances, send money, watch notifications arrive. Correct under concurrency, because every mechanism underneath was proven in a test first.
-2. **The X-ray tab** — a visual explorer of the database itself: accounts, ledger entries, the outbox, Kafka consumer positions, per-shard row counts. Every lesson in this repo becomes something you can *see happen*.
-3. **The Quiz tab** — the site quizzes you on its own architecture: every stage's core questions, answerable in the browser. If you can pass the bank's quiz, you understand the bank.
+![hero](docs/hero.png)
 
 ## Doctrine: no frameworks
 
