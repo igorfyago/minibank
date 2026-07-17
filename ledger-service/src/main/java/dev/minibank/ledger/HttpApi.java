@@ -42,6 +42,9 @@ public final class HttpApi {
         server.createContext("/api/signup", ex -> handle(ex, HttpApi::signup));
         server.createContext("/api/support", ex -> handle(ex, HttpApi::support));
         server.createContext("/api/prices/history", ex -> handle(ex, HttpApi::priceHistory));
+        server.createContext("/api/explorer/catalog", ex -> handle(ex, HttpApi::explorerCatalog));
+        server.createContext("/api/explorer/run", ex -> handle(ex, HttpApi::explorerRun));
+        server.createContext("/api/kafka/console", ex -> handle(ex, HttpApi::kafkaConsole));
         server.createContext("/api/notifications", ex -> handle(ex, HttpApi::notifications));
         server.createContext("/api/xray/summary", ex -> handle(ex, HttpApi::xraySummary));
         server.createContext("/api/xray/events", ex -> handle(ex, HttpApi::xrayEvents));
@@ -651,17 +654,19 @@ public final class HttpApi {
     }
 
     private static Response xrayEntries(HttpExchange ex) throws Exception {
-        record Row(String tx, String owner, String amount, java.time.Instant at, int shard) {}
+        record Row(String tx, String owner, String amount, java.time.Instant at, int shard, String kind) {}
         java.util.List<Row> rows = new java.util.ArrayList<>();
         for (Shard s : Shards.all()) {
             try (Connection c = s.open(); var st = c.createStatement();
                  ResultSet rs = st.executeQuery("""
-                         SELECT e.tx_id, a.owner, e.amount, e.created_at
-                         FROM entries e JOIN accounts a ON a.id = e.account_id
+                         SELECT e.tx_id, a.owner, e.amount, e.created_at, t.kind
+                         FROM entries e
+                         JOIN accounts a ON a.id = e.account_id
+                         JOIN transactions t ON t.id = e.tx_id
                          ORDER BY e.id DESC LIMIT 30""")) {
                 while (rs.next()) {
                     rows.add(new Row(rs.getString(1), rs.getString(2),
-                            plain(rs.getBigDecimal(3)), rs.getTimestamp(4).toInstant(), s.index));
+                            plain(rs.getBigDecimal(3)), rs.getTimestamp(4).toInstant(), s.index, rs.getString(5)));
                 }
             }
         }
@@ -675,7 +680,8 @@ public final class HttpApi {
              .append("\",\"owner\":\"").append(Json.esc(r.owner()))
              .append("\",\"amount\":\"").append(r.amount())
              .append("\",\"at\":\"").append(r.at())
-             .append("\",\"shard\":").append(r.shard()).append('}');
+             .append("\",\"shard\":").append(r.shard())
+             .append(",\"kind\":\"").append(r.kind()).append("\"}");
         }
         return Response.json(200, b.append(']').toString());
     }
@@ -927,6 +933,32 @@ public final class HttpApi {
         if (!"btc".equals(asset) && !"aapl".equals(asset))
             return Response.json(400, "{\"error\":\"asset must be btc or aapl\"}");
         return Response.json(200, "{\"asset\":\"" + asset + "\",\"points\":" + PriceFeed.historyJson(asset) + "}");
+    }
+
+    // ------------------------------------------------------------------ console
+
+    private static Response explorerCatalog(HttpExchange ex) throws Exception {
+        return Response.json(200, Explorer.catalogJson());
+    }
+
+    private static Response explorerRun(HttpExchange ex) throws Exception {
+        String q = ex.getRequestURI().getQuery();
+        String db = null, qid = null;
+        if (q != null) for (String s : q.split("&")) {
+            if (s.startsWith("db=")) db = s.substring(3);
+            if (s.startsWith("q=")) qid = s.substring(2);
+        }
+        if (db == null || qid == null) return Response.json(400, "{\"error\":\"need db, q\"}");
+        try {
+            return Response.json(200, Explorer.runJson(db, qid));
+        } catch (IllegalArgumentException e) {
+            return Response.json(400, "{\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
+        }
+    }
+
+    private static Response kafkaConsole(HttpExchange ex) throws Exception {
+        String kafka = System.getenv().getOrDefault("MINIBANK_KAFKA", "localhost:9092");
+        return Response.json(200, KafkaConsole.consoleJson(kafka));
     }
 
     /** the card network's three verbs: authorize (hold), capture, release */

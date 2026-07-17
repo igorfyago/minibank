@@ -23,7 +23,7 @@
              border-radius:999px; font:600 13px system-ui; cursor:pointer; }
   .tab-btn.on { background:var(--accent); border-color:var(--accent); color:#fff; }
   main { max-width:1100px; margin:0 auto; padding:22px; }
-  main:has(#tab-xray:not(.hidden)) { max-width:1520px; }
+  main:has(#tab-xray:not(.hidden)), main:has(#tab-console:not(.hidden)) { max-width:1520px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px; }
   .card h2 { font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; margin-bottom:10px; }
   .muted { color:var(--dim); font-size:12px; }
@@ -189,6 +189,56 @@
     font:700 11px system-ui; display:flex; align-items:center; justify-content:center; }
   .q-text { flex:1; }
 
+  /* the console: SQL studio + kafka */
+  .con-grid { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); gap:14px; align-items:start; }
+  @media (max-width:1180px) { .con-grid { grid-template-columns:1fr; } }
+  .studio { display:flex; gap:12px; min-height:430px; }
+  .db-rail { width:200px; flex:none; border-right:1px solid var(--line); padding-right:10px; overflow-y:auto; }
+  .db-name { font-size:11px; font-weight:700; color:var(--dim); text-transform:uppercase; letter-spacing:.05em;
+    margin:12px 0 4px; } .db-name:first-child { margin-top:0; }
+  .db-q { display:block; width:100%; text-align:left; background:none; border:none; color:var(--text);
+    font:12px system-ui; padding:5px 8px; border-radius:7px; cursor:pointer; }
+  .db-q:hover { background:rgba(255,255,255,.05); }
+  .db-q.on { background:rgba(122,92,255,.18); color:#d5c8ff; }
+  .studio-main { flex:1; min-width:0; display:flex; flex-direction:column; }
+  .ed-head { display:flex; align-items:center; gap:10px; margin-bottom:8px; font-size:12.5px; }
+  .ed-head b { flex:1; font-weight:650; }
+  .ed { background:#0a0e15; border:1px solid var(--line); border-radius:10px; padding:11px 0; margin:0 0 10px;
+    font:12.5px/1.65 'Cascadia Code', Consolas, monospace; overflow-x:auto; white-space:pre; }
+  .ed .ln { display:inline-block; width:34px; text-align:right; padding-right:12px; color:#39414f; user-select:none; }
+  .ed .k { color:#ff7b72; font-weight:600; } .ed .s { color:#a5d6ff; } .ed .n { color:#79c0ff; }
+  .ed .c { color:#7ee787; }
+  .grid-wrap { overflow:auto; max-height:280px; border:1px solid var(--line); border-radius:10px; }
+  .rgrid { width:100%; border-collapse:collapse; font:11.5px 'Cascadia Code', Consolas, monospace; }
+  .rgrid th { position:sticky; top:0; background:#141a24; color:var(--dim); text-align:left; padding:6px 10px;
+    font-weight:600; border-bottom:1px solid var(--line); white-space:nowrap; }
+  .rgrid td { padding:4.5px 10px; border-bottom:1px solid rgba(255,255,255,.04); white-space:nowrap; }
+  .rgrid tr:nth-child(even) td { background:rgba(255,255,255,.015); }
+  .rgrid td.neg { color:var(--red); } .rgrid td.pos { color:var(--green); }
+  .kf-groups { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+  .kf-g { border:1px solid var(--line); border-radius:10px; padding:8px 12px; font-size:12px; }
+  .kf-g b { font-family:Consolas, monospace; }
+  .kf-lag0 { color:var(--green); } .kf-lagN { color:var(--amber); }
+  .kf-r { font:11.5px 'Cascadia Code', Consolas, monospace; padding:5px 8px; border-radius:8px; cursor:pointer;
+    display:flex; gap:10px; align-items:baseline; }
+  .kf-r:hover { background:rgba(255,255,255,.04); }
+  .kf-off { color:#39414f; min-width:70px; } .kf-key { color:var(--accent); min-width:150px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .kf-val { color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+  .kf-json { background:#0a0e15; border:1px solid var(--line); border-radius:10px; margin:2px 0 8px;
+    padding:10px 12px; font:11.5px/1.6 Consolas, monospace; color:#a5d6ff; white-space:pre; overflow-x:auto; }
+
+  /* the ledger, grouped by transaction */
+  .txg { border:1px solid var(--line); border-radius:12px; padding:10px 13px; margin-bottom:9px; }
+  .txg-head { display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:650; }
+  .txg-head .muted { font-weight:400; flex:1; }
+  .txg-zero { font-size:10.5px; color:var(--green); border:1px solid rgba(63,185,80,.4); border-radius:999px;
+    padding:1px 8px; }
+  .txg-legs { margin-top:7px; }
+  .txg-leg { display:flex; justify-content:space-between; font:11.5px Consolas, monospace; padding:2px 2px;
+    color:var(--dim); }
+  .txg-leg b { color:var(--text); font-weight:500; }
+
   /* the guide */
   .guide { position:sticky; top:16px; align-self:start; max-height:calc(100vh - 32px); overflow:auto; }
   .guide-head { display:flex; align-items:center; margin-bottom:8px; }
@@ -306,6 +356,7 @@
   <nav>
     <button class="tab-btn on" data-tab="app">App</button>
     <button class="tab-btn" data-tab="xray">X-ray</button>
+    <button class="tab-btn" data-tab="console">Console</button>
     <button class="tab-btn" data-tab="quiz">Quiz</button>
     <button class="tab-btn" id="nav-show" title="a 60-second guided, self-driving demo">▶ Show</button>
     <a class="tab-btn" href="https://github.com/igorfyago/minibank" target="_blank" style="text-decoration:none">GitHub</a>
@@ -498,10 +549,34 @@
     </div>
 
     <div class="card" style="margin-top:14px">
-      <h2>Recent ledger entries</h2>
-      <table id="entries-table"><thead><tr><th>who</th><th>amount</th><th>shard</th><th>tx</th></tr></thead><tbody></tbody></table>
+      <h2>The ledger, grouped by transaction — every group sums to zero</h2>
+      <div id="txgroups"></div>
     </div>
   </section>
+  <!-- ======================= CONSOLE ======================= -->
+  <section id="tab-console" class="hidden">
+    <div class="con-grid">
+      <div class="card">
+        <h2>SQL Studio — the real databases, the exact queries</h2>
+        <div class="studio">
+          <div class="db-rail" id="db-rail"><span class="muted">loading catalog…</span></div>
+          <div class="studio-main">
+            <div class="ed-head"><b id="ed-title">—</b>
+              <button class="mini" id="ed-run">▶ Run</button>
+              <span class="muted" id="ed-stat"></span></div>
+            <pre class="ed" id="ed-sql"></pre>
+            <div class="grid-wrap"><table class="rgrid" id="ed-grid"></table></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Kafka Console — topic <span style="color:var(--accent)">payments</span>, live from the broker</h2>
+        <div class="kf-groups" id="kf-groups"></div>
+        <div id="kf-records"><span class="muted">connecting to the broker…</span></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ======================= QUIZ ======================= -->
   <section id="tab-quiz" class="hidden">
     <div class="card" id="quiz-card">
@@ -559,11 +634,12 @@ const api = (p, opt) => fetch(p, opt).then(r => r.json());
 /* ---------------- tabs ---------------- */
 document.querySelectorAll('.tab-btn[data-tab]').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tab-btn').forEach(x => x.classList.toggle('on', x === b));
-  ['app','xray','quiz'].forEach(t => $('#tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
+  ['app','xray','console','quiz'].forEach(t => $('#tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
   history.replaceState(null, '', '#' + b.dataset.tab);
   if (b.dataset.tab === 'xray') xrayTick();
+  if (b.dataset.tab === 'console') { initStudio(); kafkaTick(); }
 });
-if (['#xray', '#quiz'].includes(location.hash)) document.querySelector('[data-tab="' + location.hash.slice(1) + '"]').click();
+
 
 /* ---------------- app tab ---------------- */
 let me = null, accounts = [], lastTx = null, prevStmtSig = '';
@@ -1032,6 +1108,15 @@ function shardHow(sh) { return [`Everything about this region's customers is loc
   `books ${sh.sumZeroViolations === 0 ? 'balance ✓' : sh.sumZeroViolations + ' violations ✗'} · drift ${sh.driftedAccounts === 0 ? 'none ✓' : sh.driftedAccounts + ' ✗'} — audited on every refresh of this page.`]; }
 function shardWin() { return [`Replicas scale reads; territories scale writes. Shard by CUSTOMER so the only fallible decision is a local lock; region it by LAW with a directory. The audit is one query per region.`]; }
 
+const STATS = {
+  api: s => [['routing', 'directory lookup (residency)'], ['regions', s.shards.map(x => x.region).join(' · ')]],
+  intransit: s => [['in flight now', eur(s.inFlight)], ['eu in_transit', eur(s.shards[0].inTransit)], ['uk in_transit', eur(s.shards[1].inTransit)]],
+  shard0: s => shardStats(s.shards[0]),
+  shard1: s => shardStats(s.shards[1]),
+  kafka: s => [['published', s.outboxPublished], ['pending in outboxes', s.outboxPending]],
+  applier: s => [['in flight right now', eur(s.inFlight)]],
+  notif: s => [['notifications', s.notifications]],
+};
 function shardStats(sh) {
   return [['accounts', sh.accounts], ['entries', sh.entries], ['in_transit here', eur(sh.inTransit)],
     ['pool', `${sh.poolBusy}/${sh.poolSize} busy`],
@@ -1086,7 +1171,11 @@ async function refreshInspect() {
   if (sig === prevInspSig) return;
   prevInspSig = sig;
   $('#inspect-card').hidden = false;
-  $('#inspect-title').textContent = 'Inside ' + (GUIDE[inspectNode]?.t || inspectNode) + ' — its actual rows, live';
+  const SDB = { shard0: ['eu', 'accounts'], shard1: ['uk', 'accounts'], api: ['directory', 'customers'],
+    kafka: ['eu', 'outbox'], applier: ['uk', 'transactions'], notif: ['notifications', 'notifications'],
+    intransit: ['eu', 'in_flight'] };
+  const jump = SDB[inspectNode] ? ` <button class="mini" onclick="gotoStudio('${SDB[inspectNode][0]}','${SDB[inspectNode][1]}')">open in SQL Studio ▸</button>` : '';
+  $('#inspect-title').innerHTML = ('Inside ' + (GUIDE[inspectNode]?.t || inspectNode) + ' — its actual rows, live').replace(/</g, '&lt;') + jump;
   $('#inspect-body').innerHTML = d.tables.map(tb => `
     <div class="insp-title">${tb.title}</div>
     <table><thead><tr>${tb.cols.map(c2 => `<th>${c2}</th>`).join('')}</tr></thead>
@@ -1096,6 +1185,7 @@ function closeInspect() { inspectNode = null; prevInspSig = ''; $('#inspect-card
 $('#inspect-clear').onclick = closeInspect;
 
 /* ---- the interview map: 12 real questions -> the component that answers ---- */
+function Shard0Name(s) { return s === 0 ? 'eu' : 'uk'; }
 const NODENAME = { api: 'router', shard0: 'eu', shard1: 'uk', kafka: 'kafka', applier: 'applier',
   notif: 'notifications', intransit: 'in-flight', browser: 'browser' };
 const QUESTIONS = [
@@ -1278,9 +1368,26 @@ async function xrayTick() {
   const esig = entries.map(x => x.tx + x.shard + x.amount).join('|');
   if (esig !== prevEntSig) {
     prevEntSig = esig;
-    $('#entries-table tbody').innerHTML = entries.map(x =>
-      `<tr style="cursor:pointer" onclick="gShow('entry',{});traceTx('${x.tx}', true)"><td>${x.owner}</td><td class="${x.amount.startsWith('-') ? 'amount-neg' : 'amount-pos'}">${x.amount}</td>
-       <td class="muted">s${x.shard}</td><td class="muted">${x.tx.slice(0, 8)}…</td></tr>`).join('');
+    const KICON = { transfer: '💸', depart: '🛫', arrive: '🛬', refund: '↩️', mortgage: '🏦' };
+    const groups = [];
+    const byTx = {};
+    entries.forEach(x => {
+      const gk = x.tx + '·' + x.shard;
+      if (!byTx[gk]) { byTx[gk] = { tx: x.tx, shard: x.shard, kind: x.kind, at: x.at, legs: [] }; groups.push(byTx[gk]); }
+      byTx[gk].legs.push(x);
+    });
+    $('#txgroups').innerHTML = groups.slice(0, 8).map(g => {
+      const ic = g.kind && g.kind.startsWith('trade:') ? (g.kind.includes('btc') ? '₿' : '🍏') : (KICON[g.kind] || '·');
+      const label = g.kind && g.kind.startsWith('trade:') ? g.kind.split(':').slice(1).join(' ') : g.kind;
+      const sum = g.legs.length > 1 ? g.legs.reduce((a, l) => a + Number(l.amount), 0) : null;
+      return `<div class="txg" style="cursor:pointer" onclick="gShow('entry',{});traceTx('${g.tx}', true)">
+        <div class="txg-head"><span>${ic} ${label}</span>
+          <span class="muted">${new Date(g.at).toLocaleTimeString()} · ${Shard0Name(g.shard)} · tx ${g.tx.slice(0, 8)}…</span>
+          ${g.legs.length > 1 ? `<span class="txg-zero">Σ ${Math.abs(sum) < 1e-9 ? '= 0 ✓' : '≠ 0 ✗'}</span>` : ''}</div>
+        <div class="txg-legs">${g.legs.map(l =>
+          `<div class="txg-leg"><b>${l.owner}</b><span class="${l.amount.startsWith('-') ? 'amount-neg' : 'amount-pos'}">${l.amount.startsWith('-') ? '' : '+'}${l.amount}</span></div>`).join('')}</div>
+      </div>`;
+    }).join('');
   }
 
   ecoTick(s);
@@ -1693,6 +1800,64 @@ $('#chat-send').onclick = async () => {
   chatPaint();
 };
 
+/* ---------------- the console: SQL studio ---------------- */
+let catalog = null, studioDb = 'eu', studioQ = 'accounts';
+function hiSQL(sql) {
+  const esc = sql.replace(/</g, '&lt;');
+  const colored = esc
+    .replace(/\b(SELECT|FROM|WHERE|GROUP BY|ORDER BY|HAVING|LEFT JOIN|JOIN|LATERAL|ON|AS|LIMIT|DESC|ASC|AND|OR|NOT|NULL|IS|IN|CASE|WHEN|THEN|ELSE|END|COUNT|SUM|MAX|MIN|COALESCE|DISTINCT|substr|to_char|trim_scale)\b/g, '<span class="k">$1</span>')
+    .replace(/('[^']*')/g, '<span class="s">$1</span>');
+  return colored.split('\n').map((l, i) => `<span class="ln">${i + 1}</span>${l}`).join('\n');
+}
+async function initStudio() {
+  if (catalog) return;
+  catalog = await api('/api/explorer/catalog');
+  renderRail();
+  runStudio();
+}
+function renderRail() {
+  $('#db-rail').innerHTML = catalog.dbs.map(db => `
+    <div class="db-name">🗄 ${db.title}</div>
+    ${db.queries.map(q => `<button class="db-q ${db.id === studioDb && q.id === studioQ ? 'on' : ''}"
+        onclick="openStudio('${db.id}','${q.id}')">${q.title.split(' — ')[0]}</button>`).join('')}`).join('');
+}
+window.openStudio = (db, q) => { studioDb = db; studioQ = q; renderRail(); runStudio(); };
+window.gotoStudio = (db, q) => { document.querySelector('[data-tab="console"]').click(); openStudio(db, q); };
+async function runStudio() {
+  const d = await api(`/api/explorer/run?db=${studioDb}&q=${studioQ}`);
+  if (d.error) { $('#ed-stat').textContent = d.error; return; }
+  $('#ed-title').textContent = d.title;
+  $('#ed-sql').innerHTML = hiSQL(d.sql);
+  $('#ed-stat').textContent = `${d.ms} ms · ${d.rows.length} row${d.rows.length === 1 ? '' : 's'}`;
+  $('#ed-grid').innerHTML = `<thead><tr>${d.cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+    <tbody>${d.rows.map(r => `<tr>${r.map(v =>
+      `<td class="${/^-\d/.test(v) ? 'neg' : /^\d+\.\d+$|^\d+$/.test(v) && Number(v) > 0 ? '' : ''}${v === 'PENDING' ? 'neg' : ''}">${String(v).replace(/</g, '&lt;')}</td>`).join('')}</tr>`).join('')
+      || `<tr><td colspan="${d.cols.length}" style="color:var(--green)">∅ no rows — for the audits, that is the PASS state</td></tr>`}</tbody>`;
+}
+$('#ed-run').onclick = runStudio;
+
+/* ---------------- the console: kafka ---------------- */
+async function kafkaTick() {
+  if ($('#tab-console').classList.contains('hidden')) return;
+  let d;
+  try { d = await api('/api/kafka/console'); } catch (e) { return; }
+  if (d.error) { $('#kf-records').innerHTML = `<span class="muted">${d.error}</span>`; return; }
+  $('#kf-groups').innerHTML = d.groups.map(g => `
+    <div class="kf-g">group <b>${g.group}</b> · p${g.partition}<br>
+      committed <b>${g.committed}</b> / end <b>${g.end}</b> ·
+      <span class="${g.lag === 0 ? 'kf-lag0' : 'kf-lagN'}">lag ${g.lag}</span></div>`).join('')
+    || '<span class="muted">consumer groups forming…</span>';
+  $('#kf-records').innerHTML = d.records.map((r, i) => {
+    let pretty = r.value;
+    try { pretty = JSON.stringify(JSON.parse(r.value), null, 2); } catch (e) {}
+    return `<div class="kf-r" onclick="this.nextElementSibling.classList.toggle('hidden')">
+      <span class="kf-off">p${r.partition}·${r.offset}</span>
+      <span class="kf-key">${r.key.replace(/</g, '&lt;')}</span>
+      <span class="kf-val">${r.value.replace(/</g, '&lt;')}</span>
+    </div><pre class="kf-json hidden">${pretty.replace(/</g, '&lt;')}</pre>`;
+  }).join('') || '<span class="muted">no records on the topic yet</span>';
+}
+
 /* ---------------- quiz tab ---------------- */
 const QUIZ = [
   { q: 'Two requests read balance 100, both subtract 30, both write 70. What is this?',
@@ -1801,7 +1966,8 @@ $('#q-next').onclick = () => {
 
 /* ---------------- boot ---------------- */
 loadAccounts(); loadStatement(); loadPortfolio(); renderQuiz(); gShow('welcome');
-setInterval(() => { loadAccounts(); loadStatement(); loadPortfolio(); renderExt(); if (!$('#tab-xray').classList.contains('hidden')) xrayTick(); }, 2000);
+if (['#xray', '#quiz', '#console'].includes(location.hash)) document.querySelector('[data-tab="' + location.hash.slice(1) + '"]').click();
+setInterval(() => { loadAccounts(); loadStatement(); loadPortfolio(); renderExt(); if (!$('#tab-xray').classList.contains('hidden')) xrayTick(); if (!$('#tab-console').classList.contains('hidden')) kafkaTick(); }, 2000);
 </script>
 </body>
 </html>
