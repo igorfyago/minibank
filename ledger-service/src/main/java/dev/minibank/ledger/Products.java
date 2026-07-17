@@ -48,8 +48,14 @@ public final class Products {
             ensure(c, customerId + BTC, "bitcoin", "customer", "BTC");
             ensure(c, customerId + AAPL, "apple stock", "customer", "AAPL");
             ensure(c, customerId + CARD, "card", "credit", "EUR");
-            ensure(c, customerId + LOAN, "mortgage", "loan", "EUR");
+            ensure(c, customerId + LOAN, "loan", "loan", "EUR");
             ensure(c, customerId + HOLDS, "card hold", "customer", "EUR");
+            // rename migration: earlier builds labeled the account 'mortgage'
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE accounts SET owner = 'loan' WHERE id = ? AND owner = 'mortgage'")) {
+                ps.setLong(1, customerId + LOAN);
+                ps.executeUpdate();
+            }
         }
         for (long off : new long[]{SAVINGS, BTC, AAPL, CARD, LOAN, HOLDS}) {
             try {
@@ -64,7 +70,7 @@ public final class Products {
     private static String label(long off) {
         return off == SAVINGS ? "savings" : off == BTC ? "bitcoin"
                 : off == AAPL ? "apple stock" : off == CARD ? "card"
-                : off == HOLDS ? "card hold" : "mortgage";
+                : off == HOLDS ? "card hold" : "loan";
     }
 
     // ------------------------------------------------------------------

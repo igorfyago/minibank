@@ -41,6 +41,7 @@ public final class HttpApi {
         server.createContext("/api/card", ex -> handle(ex, HttpApi::cardOps));
         server.createContext("/api/signup", ex -> handle(ex, HttpApi::signup));
         server.createContext("/api/support", ex -> handle(ex, HttpApi::support));
+        server.createContext("/api/prices/history", ex -> handle(ex, HttpApi::priceHistory));
         server.createContext("/api/notifications", ex -> handle(ex, HttpApi::notifications));
         server.createContext("/api/xray/summary", ex -> handle(ex, HttpApi::xraySummary));
         server.createContext("/api/xray/events", ex -> handle(ex, HttpApi::xrayEvents));
@@ -231,7 +232,7 @@ public final class HttpApi {
                             else { label = ownerName(from); tag = "received"; }
                         }
                         case "refund" -> { cross = true; label = "Refund"; tag = "refund"; }
-                        case "mortgage" -> { label = "Mortgage"; tag = "loan"; }
+                        case "mortgage" -> { label = "Loan"; tag = "loan"; }
                         default -> {
                             if (kind.startsWith("trade:")) {
                                 String[] parts = kind.split(":");
@@ -916,6 +917,16 @@ public final class HttpApi {
         home.transferLocal(UUID.randomUUID(), Shard.WORLD, id, new BigDecimal("500.00"));
         Products.ensureFor(id);
         return Response.json(200, "{\"result\":\"ok\",\"id\":" + id + ",\"region\":\"" + Shards.regionName(shard) + "\"}");
+    }
+
+    /** real 30-day price series for the product charts */
+    private static Response priceHistory(HttpExchange ex) throws Exception {
+        String q = ex.getRequestURI().getQuery();
+        String asset = null;
+        if (q != null) for (String p : q.split("&")) if (p.startsWith("asset=")) asset = p.substring(6);
+        if (!"btc".equals(asset) && !"aapl".equals(asset))
+            return Response.json(400, "{\"error\":\"asset must be btc or aapl\"}");
+        return Response.json(200, "{\"asset\":\"" + asset + "\",\"points\":" + PriceFeed.historyJson(asset) + "}");
     }
 
     /** the card network's three verbs: authorize (hold), capture, release */
