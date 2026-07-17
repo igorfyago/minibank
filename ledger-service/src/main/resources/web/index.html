@@ -31,14 +31,37 @@
   td { padding:5px 8px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
   .amount-pos { color:var(--green); } .amount-neg { color:var(--red); }
 
-  /* app tab */
-  .app-grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+  /* app tab — the phone */
+  .phone { max-width: 540px; margin: 0 auto; }
   .who { display:flex; gap:8px; margin-bottom:16px; }
   .who button { flex:none; }
   .who .on { background:var(--violet); border-color:var(--violet); color:#fff; }
-  .balance-num { font-size:44px; font-weight:700; margin:6px 0 2px; }
-  .send-row { display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap; }
+  .acct-card, .tx-card { border-radius:18px; }
+  .acct-label { color:var(--dim); font-size:12px; font-weight:600; }
+  .balance-num { font-size:46px; font-weight:750; margin:4px 0 10px; letter-spacing:-.5px; }
+  .actions { display:flex; gap:22px; margin:6px 0 4px; }
+  .action { background:none; border:none; color:var(--text); display:flex; flex-direction:column; align-items:center;
+            gap:7px; font:600 11.5px system-ui; cursor:pointer; padding:0; }
+  .action-ic { width:46px; height:46px; border-radius:50%; background:var(--violet); color:#fff; font-size:19px;
+               display:flex; align-items:center; justify-content:center; transition:filter .15s; }
+  .action:hover .action-ic { filter:brightness(1.2); }
+  .send-row { display:flex; gap:10px; margin-top:14px; align-items:center; flex-wrap:wrap; }
   #send-result { margin-top:10px; font-size:13px; min-height:20px; }
+  .tx-card { margin-top:14px; }
+  .tx-day { color:var(--dim); font-size:12px; font-weight:600; margin:14px 0 4px; }
+  .tx-row { display:flex; align-items:center; gap:12px; padding:9px 4px; cursor:pointer; border-radius:12px; }
+  .tx-row:hover { background:rgba(255,255,255,.035); }
+  .tx-av { width:42px; height:42px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+           font-weight:700; font-size:16px; color:#fff; flex:none; }
+  .tx-av-sys { background:#2b3245; color:var(--accent); }
+  .tx-main { flex:1; min-width:0; }
+  .tx-name { font-weight:600; font-size:14px; }
+  .tx-sub { color:var(--dim); font-size:12px; }
+  .tx-right { text-align:right; }
+  .tx-amt { font-weight:650; font-size:14px; font-variant-numeric:tabular-nums; }
+  .tx-amt.in { color:var(--green); }
+  .tx-after { color:var(--dim); font-size:11.5px; font-variant-numeric:tabular-nums; }
+  .tx-detail { color:var(--dim); font-size:11.5px; padding:0 4px 10px 58px; }
   .feed { display:flex; flex-direction:column; gap:8px; max-height:300px; overflow:auto; }
   .feed-item { border:1px solid var(--line); border-radius:8px; padding:8px 12px; font-size:12.5px; }
   .feed-item .muted { font-size:11px; }
@@ -86,29 +109,28 @@
 
   <!-- ======================= APP ======================= -->
   <section id="tab-app">
-    <div class="who" id="who"></div>
-    <div class="app-grid">
-      <div class="card">
-        <h2>Balance</h2>
+    <div class="phone">
+      <div class="who" id="who"></div>
+      <div class="card acct-card">
+        <div class="acct-label" id="acct-label">Main · EUR</div>
         <div class="balance-num" id="balance">—</div>
-        <div class="muted" id="balance-sub">truth: a projection of the double-entry ledger</div>
-        <h2 style="margin-top:22px">Send money</h2>
-        <div class="send-row">
-          <span>to</span>
+        <div class="actions">
+          <button class="action" id="act-add"><span class="action-ic">+</span>Add money</button>
+          <button class="action" id="act-send"><span class="action-ic">↑</span>Send</button>
+          <button class="action" id="act-retry" title="replays the SAME transaction id"><span class="action-ic">↻</span>Retry tx</button>
+          <button class="action" id="act-move" title="the balance travels as one saga, then the directory pointer flips"><span class="action-ic">✈</span>Relocate</button>
+        </div>
+        <div class="send-row hidden" id="send-panel">
+          <span class="muted">to</span>
           <select id="send-to"></select>
           <input id="send-amount" type="text" size="8" value="30.00">
           <button class="primary" id="send-btn">Send</button>
-          <button class="ghost" id="retry-btn" title="replays the SAME transaction id">Retry same tx</button>
-          <button class="ghost" id="topup-btn" title="world → you: money enters the bank by transfer">Top up €100</button>
-          <button class="ghost" id="move-btn" title="the balance travels through the standard saga, then the directory pointer flips">Relocate</button>
         </div>
         <div id="send-result"></div>
-        <div class="muted">the txId is minted in your browser — the caller owns the idempotency key.
-          “Retry same tx” resends it: the bank answers <i>already processed</i> and money moves once.</div>
       </div>
-      <div class="card">
-        <h2>Notifications <span class="muted">(a different service, its own database, fed by Kafka)</span></h2>
-        <div class="feed" id="feed"></div>
+      <div class="card tx-card">
+        <h2>Transactions</h2>
+        <div id="txlist"></div>
       </div>
     </div>
   </section>
@@ -161,6 +183,8 @@
         </svg>
         <h2 style="margin-top:16px">Recent ledger entries</h2>
         <table id="entries-table"><thead><tr><th>who</th><th>amount</th><th>shard</th><th>tx</th></tr></thead><tbody></tbody></table>
+        <h2 style="margin-top:16px">The Kafka echo — notifications service, raw</h2>
+        <div class="feed" id="feed"></div>
       </div>
       <div class="card" id="explain">
         <h3>Click a component</h3>
@@ -198,6 +222,7 @@ document.querySelectorAll('.tab-btn').forEach(b => b.onclick = () => {
 
 /* ---------------- app tab ---------------- */
 let me = null, accounts = [], lastTx = null;
+const fmt = v => '€' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 async function loadAccounts() {
   accounts = await api('/api/accounts');
@@ -206,54 +231,76 @@ async function loadAccounts() {
   $('#who').innerHTML = customers.map(a =>
     `<button class="ghost ${a.id === me ? 'on' : ''}" onclick="switchUser(${a.id})">${a.owner} <span style="opacity:.55;font-size:11px">· ${a.region}</span></button>`).join('');
   const mine = accounts.find(a => a.id === me);
-  $('#balance').textContent = mine ? '€' + mine.balance : '—';
-  $('#balance-sub').textContent = mine
-    ? `${mine.owner} lives in the ${mine.region} region (shard ${mine.shard}) — this number is a projection of that region’s double-entry ledger`
-    : 'truth: a projection of the double-entry ledger';
-  $('#send-to').innerHTML = accounts.filter(a => a.id !== me)
-    .map(a => `<option value="${a.id}">${a.owner}${a.kind === 'external' ? ' (external)' : ''}</option>`).join('');
+  $('#balance').textContent = mine ? fmt(mine.balance) : '—';
+  $('#acct-label').textContent = mine ? `Main · EUR · ${mine.region} region` : 'Main · EUR';
+  $('#send-to').innerHTML = customers.filter(a => a.id !== me)
+    .map(a => `<option value="${a.id}">${a.owner} · ${a.region}</option>`).join('');
 }
-window.switchUser = id => { me = id; lastTx = null; loadAccounts(); };
+window.switchUser = id => { me = id; lastTx = null; loadAccounts(); loadStatement(); };
 
-function uuid() {
-  return crypto.randomUUID();
-}
+function uuid() { return crypto.randomUUID(); }
+function say(msg, color) { const el = $('#send-result'); el.textContent = msg; el.style.color = color; }
+
 async function doTransfer(txId) {
   const body = JSON.stringify({ txId, from: me, to: Number($('#send-to').value), amount: $('#send-amount').value });
   const r = await api('/api/transfer', { method: 'POST', body });
-  const el = $('#send-result');
-  if (r.result === 'ok') {
-    el.textContent = r.crossShard
-      ? '✓ sent ACROSS SHARDS — money is in flight, Kafka settles it (tx ' + txId.slice(0, 8) + '…)'
-      : '✓ sent (tx ' + txId.slice(0, 8) + '…)';
-    el.style.color = 'var(--green)';
-  }
-  else if (r.result === 'already_processed') { el.textContent = '↩ already processed — same txId, money moved once'; el.style.color = 'var(--amber)'; }
-  else if (r.result === 'relocating') { el.textContent = '⏸ ' + r.error + ' (the write-pause of a relocation — retry in a moment)'; el.style.color = 'var(--amber)'; }
-  else { el.textContent = '✗ ' + (r.result || r.error); el.style.color = 'var(--red)'; }
-  loadAccounts();
+  if (r.result === 'ok') say(r.crossShard ? '✓ sent across regions — in flight, Kafka settles it' : '✓ sent', 'var(--green)');
+  else if (r.result === 'already_processed') say('↩ already processed — same txId, money moved once', 'var(--amber)');
+  else if (r.result === 'relocating') say('⏸ ' + r.error, 'var(--amber)');
+  else say('✗ ' + (r.result || r.error), 'var(--red)');
+  loadAccounts(); loadStatement();
 }
 $('#send-btn').onclick = () => { lastTx = uuid(); doTransfer(lastTx); };
-$('#retry-btn').onclick = () => { if (lastTx) doTransfer(lastTx); else $('#send-result').textContent = 'send something first'; };
-$('#move-btn').onclick = async () => {
+$('#act-send').onclick = () => { $('#send-panel').classList.toggle('hidden'); $('#send-amount').focus(); };
+$('#act-retry').onclick = () => { if (lastTx) doTransfer(lastTx); else say('send something first — Retry replays the SAME txId to prove idempotency', 'var(--dim)'); };
+$('#act-add').onclick = async () => {
+  const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: 1, to: me, amount: '100.00' }) });
+  say(r.result === 'ok' ? '✓ added €100.00 from the world — your region, plain ACID' : '✗ ' + (r.result || r.error),
+      r.result === 'ok' ? 'var(--green)' : 'var(--red)');
+  loadAccounts(); loadStatement();
+};
+$('#act-move').onclick = async () => {
   const mine = accounts.find(a => a.id === me);
   if (!mine) return;
-  const to = 1 - mine.shard;
-  const r = await api('/api/relocate', { method: 'POST', body: JSON.stringify({ customer: me, to }) });
-  const el = $('#send-result');
-  if (r.result === 'ok') {
-    el.textContent = `✈ relocated to ${r.region} — the whole balance travelled as ONE saga, then the directory pointer flipped`;
-    el.style.color = 'var(--green)';
-  } else { el.textContent = '✗ ' + (r.error || r.result); el.style.color = 'var(--amber)'; }
-  loadAccounts();
+  const r = await api('/api/relocate', { method: 'POST', body: JSON.stringify({ customer: me, to: 1 - mine.shard }) });
+  if (r.result === 'ok') say(`✈ relocated to ${r.region} — the balance travelled as ONE saga, then the pointer flipped`, 'var(--green)');
+  else say('✗ ' + (r.error || r.result), 'var(--amber)');
+  loadAccounts(); loadStatement();
 };
-$('#topup-btn').onclick = async () => {
-  const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: 1, to: me, amount: '100.00' }) });
-  const el = $('#send-result');
-  el.textContent = r.result === 'ok' ? '✓ topped up €100.00 — from the world account on YOUR shard (local, plain ACID)' : '✗ ' + (r.result || r.error);
-  el.style.color = r.result === 'ok' ? 'var(--green)' : 'var(--red)';
-  loadAccounts();
-};
+
+/* the statement — the double-entry ledger, told the way a bank app tells it */
+async function loadStatement() {
+  if (me === null) return;
+  const items = await api('/api/statement?customer=' + me);
+  const today = new Date().toDateString(), yest = new Date(Date.now() - 864e5).toDateString();
+  const dayOf = ts => { const d = new Date(ts);
+    return d.toDateString() === today ? 'Today' : d.toDateString() === yest ? 'Yesterday'
+      : d.toLocaleDateString(undefined, { day: 'numeric', month: 'long' }); };
+  const hue = s => { let h = 0; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
+  const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
+  const SUB = { added: 'Money added', sent: 'Sent', received: 'Received', relocation: 'Between your regions', refund: 'Payment bounced' };
+  let html = '', lastDay = '';
+  for (const x of items) {
+    const d = dayOf(x.at);
+    if (d !== lastDay) { html += `<div class="tx-day">${d}</div>`; lastDay = d; }
+    const name = x.tag === 'added' ? 'Money added' : x.tag === 'relocation' ? 'Relocation' : x.tag === 'refund' ? 'Refund' : cap(x.label);
+    const time = new Date(x.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const abs = x.amount.replace('-', '');
+    const ic = x.tag === 'added' ? '↓' : x.tag === 'relocation' ? '✈' : x.tag === 'refund' ? '↩' : name[0];
+    const av = ['added', 'relocation', 'refund'].includes(x.tag)
+      ? `<div class="tx-av tx-av-sys">${ic}</div>`
+      : `<div class="tx-av" style="background:hsl(${hue(name)},40%,30%)">${ic}</div>`;
+    html += `<div class="tx-row" onclick="this.nextElementSibling.classList.toggle('hidden')">
+      ${av}
+      <div class="tx-main"><div class="tx-name">${name}</div>
+        <div class="tx-sub">${SUB[x.tag] || ''} · ${time}${x.cross ? ' · cross-region' : ''}</div></div>
+      <div class="tx-right"><div class="tx-amt ${x.in ? 'in' : ''}">${x.in ? '+' : '−'}${fmt(abs)}</div>
+        <div class="tx-after">${fmt(x.after)}</div></div>
+    </div>
+    <div class="tx-detail hidden">tx ${x.tx} — one leg of a double-entry transaction; the grey number is your balance right after it, recomputed from the ledger itself</div>`;
+  }
+  $('#txlist').innerHTML = html || '<span class="muted">no transactions yet — add money or send some</span>';
+}
 
 async function loadFeed() {
   const items = await api('/api/notifications');
@@ -431,8 +478,8 @@ $('#q-next').onclick = () => {
 };
 
 /* ---------------- boot ---------------- */
-loadAccounts(); loadFeed(); renderQuiz();
-setInterval(() => { loadAccounts(); loadFeed(); if (!$('#tab-xray').classList.contains('hidden')) renderXray(document.querySelector('.node.sel')?.dataset.node || 'api'); }, 2500);
+loadAccounts(); loadStatement(); loadFeed(); renderQuiz();
+setInterval(() => { loadAccounts(); loadStatement(); loadFeed(); if (!$('#tab-xray').classList.contains('hidden')) renderXray(document.querySelector('.node.sel')?.dataset.node || 'api'); }, 2500);
 </script>
 </body>
 </html>

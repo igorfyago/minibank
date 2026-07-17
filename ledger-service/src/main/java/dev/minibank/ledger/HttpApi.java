@@ -34,6 +34,7 @@ public final class HttpApi {
         server.createContext("/api/accounts", ex -> handle(ex, HttpApi::accounts));
         server.createContext("/api/transfer", ex -> handle(ex, HttpApi::transfer));
         server.createContext("/api/relocate", ex -> handle(ex, HttpApi::relocate));
+        server.createContext("/api/statement", ex -> handle(ex, HttpApi::statement));
         server.createContext("/api/notifications", ex -> handle(ex, HttpApi::notifications));
         server.createContext("/api/xray/summary", ex -> handle(ex, HttpApi::xraySummary));
         server.createContext("/api/xray/entries", ex -> handle(ex, HttpApi::xrayEntries));
@@ -153,6 +154,121 @@ public final class HttpApi {
             }
         }
         return Response.json(200, b.append(']').toString());
+    }
+
+    /** The Revolut-style statement: the customer's raw ledger entries turned
+     *  into a human story. Each row = one entry on THEIR account, joined to
+     *  the tx's OTHER entry for the counterparty, plus a running balance
+     *  (a window SUM over the very entries the balance is a cache of).
+     *  Saga legs name in_transit locally — the human counterparty comes from
+     *  the departed event's payload (on the destination side that means one
+     *  lookup on the other region: a read-model shortcut; a real fleet
+     *  projects statements from the Kafka events instead). */
+    private static Response statement(HttpExchange ex) throws Exception {
+        String q = ex.getRequestURI().getQuery();
+        String cust = null;
+        if (q != null) for (String p : q.split("&")) if (p.startsWith("customer=")) cust = p.substring(9);
+        if (cust == null) return Response.json(400, "{\"error\":\"need ?customer=id\"}");
+        long id = Long.parseLong(cust);
+        Shard home = Shards.forCustomer(id);
+
+        StringBuilder b = new StringBuilder("[");
+        try (Connection c = home.open();
+             var ps = c.prepareStatement("""
+                     SELECT e.tx_id, e.amount, e.created_at, t.kind,
+                            oa.owner AS other_owner, oa.kind AS other_kind,
+                            SUM(e.amount) OVER (ORDER BY e.id) AS balance_after
+                     FROM entries e
+                     JOIN transactions t ON t.id = e.tx_id
+                     LEFT JOIN entries o  ON o.tx_id = e.tx_id AND o.id <> e.id
+                     LEFT JOIN accounts oa ON oa.id = o.account_id
+                     WHERE e.account_id = ?
+                     ORDER BY e.id DESC
+                     LIMIT 40""")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                boolean first = true;
+                while (rs.next()) {
+                    UUID tx = rs.getObject(1, UUID.class);
+                    var amount = rs.getBigDecimal(2);
+                    var at = rs.getTimestamp(3).toInstant();
+                    String kind = rs.getString(4);
+                    String otherOwner = rs.getString(5);
+                    String otherKind = rs.getString(6);
+                    var after = rs.getBigDecimal(7);
+                    boolean in = amount.signum() > 0;
+
+                    String label, tag;
+                    boolean cross = false;
+                    switch (kind) {
+                        case "depart" -> {
+                            cross = true;
+                            String to = outboxField(c, tx, "to");
+                            if (to != null && Long.parseLong(to) == id) { label = "Relocation"; tag = "relocation"; }
+                            else { label = ownerName(to); tag = "sent"; }
+                        }
+                        case "arrive" -> {
+                            cross = true;
+                            String from = departedFieldElsewhere(home, tx, "from");
+                            if (from != null && Long.parseLong(from) == id) { label = "Relocation"; tag = "relocation"; }
+                            else { label = ownerName(from); tag = "received"; }
+                        }
+                        case "refund" -> { cross = true; label = "Refund"; tag = "refund"; }
+                        default -> {
+                            if ("external".equals(otherKind)) {
+                                label = in ? "Money added" : (otherOwner == null ? "Payment" : otherOwner);
+                                tag = in ? "added" : "sent";
+                            } else {
+                                label = otherOwner == null ? "Transfer" : otherOwner;
+                                tag = in ? "received" : "sent";
+                            }
+                        }
+                    }
+                    if (!first) b.append(',');
+                    first = false;
+                    b.append("{\"tx\":\"").append(tx)
+                     .append("\",\"at\":\"").append(at)
+                     .append("\",\"amount\":\"").append(amount.toPlainString())
+                     .append("\",\"after\":\"").append(after.toPlainString())
+                     .append("\",\"label\":\"").append(Json.esc(label))
+                     .append("\",\"tag\":\"").append(tag)
+                     .append("\",\"in\":").append(in)
+                     .append(",\"cross\":").append(cross).append('}');
+                }
+            }
+        }
+        return Response.json(200, b.append(']').toString());
+    }
+
+    /** a field of the departed event in THIS shard's outbox (the depart leg) */
+    private static String outboxField(Connection c, UUID tx, String field) throws Exception {
+        try (var ps = c.prepareStatement("SELECT payload FROM outbox WHERE key = ?")) {
+            ps.setString(1, "departed:" + tx);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Json.num(rs.getString(1), field) : null;
+            }
+        }
+    }
+
+    /** the arrival leg has no local event — ask the other regions' outboxes */
+    private static String departedFieldElsewhere(Shard home, UUID tx, String field) throws Exception {
+        for (Shard s : Shards.all()) {
+            if (s == home) continue;
+            try (Connection c = s.open()) {
+                String v = outboxField(c, tx, field);
+                if (v != null) return v;
+            }
+        }
+        return null;
+    }
+
+    private static String ownerName(String idStr) {
+        if (idStr == null) return "Transfer";
+        try {
+            return Directory.owner(Long.parseLong(idStr));
+        } catch (Exception e) {
+            return "user " + idStr;
+        }
     }
 
     // ------------------------------------------------------------------ x-ray
