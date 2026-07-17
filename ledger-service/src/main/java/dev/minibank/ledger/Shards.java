@@ -116,16 +116,19 @@ public final class Shards {
     // ------------------------------------------------------------------
     public static void createAndSeed() throws SQLException {
         for (Shard s : all()) s.createSchema();
-        seedCustomer(10, "igor");
-        seedCustomer(11, "coco");
+        seedCustomer(10, "igor", "500.00");
+        seedCustomer(11, "coco", "500.00");
+        // oscar shares igor's region: igor->oscar shows the LOCAL path,
+        // igor->coco the cross-region saga — both stories, one demo cast.
+        seedCustomer(12, "oscar", "1000.00");
     }
 
-    private static void seedCustomer(long id, String owner) throws SQLException {
+    private static void seedCustomer(long id, String owner, String amount) throws SQLException {
         Shard home = forCustomer(id);
         if (home.hasAccount(id)) return;
         home.createCustomer(id, owner);
         // funded from the LOCAL world account — same shard, plain ACID
-        home.transferLocal(UUID.randomUUID(), Shard.WORLD, id, new BigDecimal("500.00"));
-        System.out.println("seeded: " + owner + " on " + home.name + " with 500.00");
+        home.transferLocal(UUID.randomUUID(), Shard.WORLD, id, new BigDecimal(amount));
+        System.out.println("seeded: " + owner + " on " + home.name + " with " + amount);
     }
 }

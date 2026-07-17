@@ -36,6 +36,7 @@ public final class Main {
         Shards.nameRegions("eu", "uk");
         Directory.register(10, "igor", 0);
         Directory.register(11, "coco", 1);
+        Directory.register(12, "oscar", 0);   // eu, same region as igor
         Shards.setResolver(Directory::shardOf);
 
         Shards.createAndSeed();
