@@ -89,6 +89,15 @@ Money is strict now; echoes arrive milliseconds later.
 - [x] Stage 5 — the bank shards by customer: two real Postgres servers, a one-line router, cross-shard transfers as sagas over the outbox, the in_transit clearing account, and the compensating refund — all visible live in the X-ray
 - [x] Stage 6 — the shards become REGIONS (eu/uk): routing by directory (residency is law, not arithmetic), customer relocation as a saga + pointer flip, a shippable Docker image, and K8s manifests where data residency is a scheduling constraint
 
+## Ship
+
+```bash
+docker build -t minibank:latest ledger-service/   # multi-stage: Maven builds, a JRE runs
+kubectl apply -f k8s/                             # app x3 + regions (residency-pinned) + kafka + ingress
+```
+
+The same image runs anywhere — every address it needs (shards, directory, Kafka) arrives by environment variable. Config is location, not code.
+
 ## Run
 
 ```bash
