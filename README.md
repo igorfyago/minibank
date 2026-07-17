@@ -4,6 +4,13 @@ A neobank built from first principles, one lesson at a time. **Raw Java 21 — n
 
 > Learning project: each stage builds one real piece of a modern fintech backend and **proves one system-design concept with a runnable demo**. Inspired by how contemporary neobanks are engineered (microservices, database-per-service, event-driven consistency, and in-house tooling over frameworks). Not affiliated with any bank.
 
+## The destination
+
+A public site with two faces:
+
+1. **The app** — a working neobank: sign in, see balances, send money, watch notifications arrive. Correct under concurrency, because every mechanism underneath was proven in a test first.
+2. **The X-ray tab** — a visual explorer of the database itself: accounts, ledger entries, the outbox, Kafka consumer positions, per-shard row counts. Every lesson in this repo becomes something you can *see happen*.
+
 ## Doctrine: no frameworks
 
 Everything a framework would hand us invisibly, we build visibly, when the lesson calls for it:
