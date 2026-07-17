@@ -40,6 +40,7 @@ public final class Main {
         Shards.setResolver(Directory::shardOf);
 
         Shards.createAndSeed();
+        for (long id : new long[]{10, 11, 12}) Products.ensureFor(id);   // the product shelf
         Notifications.createOwnDatabase();
 
         for (Shard s : Shards.all()) {

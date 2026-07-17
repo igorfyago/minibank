@@ -74,12 +74,19 @@ public final class Ledger {
                     version BIGINT NOT NULL DEFAULT 0
                 )""");
             st.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'customer'");
+            // PRODUCTS stage: a currency per account. Every currency is its
+            // own closed double-entry ledger; an FX/asset trade is one
+            // transaction whose entries sum to zero PER CURRENCY.
+            st.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'EUR'");
+            st.execute("ALTER TABLE accounts ALTER COLUMN balance TYPE NUMERIC(20,8)");
             // The business rule lives IN the schema: customers can never go
             // negative; external accounts may (money enters the bank through
-            // them). Stage 0's blanket "balance >= 0" must become kind-aware.
+            // them); a CREDIT account may go negative to its limit; a LOAN
+            // account is a large negative that slowly heals. Kind-aware.
             st.execute("ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_balance_check");
             st.execute("ALTER TABLE accounts ADD CONSTRAINT accounts_balance_check " +
-                       "CHECK (kind = 'external' OR balance >= 0)");
+                       "CHECK (kind = 'external' OR (kind = 'credit' AND balance >= -1000) " +
+                       "OR (kind = 'loan' AND balance >= -100000) OR balance >= 0)");
             st.execute("""
                 CREATE TABLE IF NOT EXISTS transactions (
                     id         UUID PRIMARY KEY,
@@ -95,6 +102,7 @@ public final class Ledger {
                     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 )""");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_account ON entries(account_id, id)");
+            st.execute("ALTER TABLE entries ALTER COLUMN amount TYPE NUMERIC(20,8)");
         }
         // the outbox is not optional decoration: a transfer writes to it,
         // so the ledger cannot exist without it.
@@ -112,11 +120,16 @@ public final class Ledger {
     }
 
     public static void createAccountOn(Connection c, long id, String owner, String kind) throws SQLException {
+        createAccountOn(c, id, owner, kind, "EUR");
+    }
+
+    public static void createAccountOn(Connection c, long id, String owner, String kind, String currency) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO accounts(id, owner, balance, version, kind) VALUES (?,?,0,0,?)")) {
+                "INSERT INTO accounts(id, owner, balance, version, kind, currency) VALUES (?,?,0,0,?,?)")) {
             ps.setLong(1, id);
             ps.setString(2, owner);
             ps.setString(3, kind);
+            ps.setString(4, currency);
             ps.executeUpdate();
         }
     }
@@ -187,6 +200,10 @@ public final class Ledger {
                 return new Ok();
             } catch (Exception e) {
                 conn.rollback();
+                // a CHECK-constraint veto (23514) is the schema enforcing a
+                // credit limit or loan floor — a business answer, not a bug
+                if (e instanceof SQLException se && "23514".equals(se.getSQLState()))
+                    return new InsufficientFunds();
                 throw e;
             }
         }
@@ -280,9 +297,13 @@ public final class Ledger {
 
     public static List<UUID> sumZeroViolationsOn(Connection c) throws SQLException {
         List<UUID> bad = new ArrayList<>();
+        // per CURRENCY: an asset trade mixes ledgers in one transaction, and
+        // each currency's legs must balance on their own. EUR-only data
+        // degenerates to the old single-ledger audit.
         try (var st = c.createStatement();
-             ResultSet rs = st.executeQuery(
-                     "SELECT tx_id FROM entries GROUP BY tx_id HAVING SUM(amount) <> 0")) {
+             ResultSet rs = st.executeQuery("""
+                     SELECT e.tx_id FROM entries e JOIN accounts a ON a.id = e.account_id
+                     GROUP BY e.tx_id, a.currency HAVING SUM(e.amount) <> 0""")) {
             while (rs.next()) bad.add(rs.getObject(1, UUID.class));
         }
         return bad;

@@ -59,6 +59,15 @@
                radial-gradient(100% 130% at 100% 0%, rgba(88,166,255,.08), transparent 40%), var(--panel); }
   .action-ic { background:linear-gradient(135deg, var(--violet), #7a5cff) !important; transition:transform .15s, filter .15s; }
   .action:hover .action-ic { transform:scale(1.08); }
+  .prod-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .prod { border:1px solid var(--line); border-radius:14px; padding:11px 13px; }
+  .prod-name { color:var(--dim); font-size:11.5px; font-weight:650; }
+  .prod-val { font-size:16px; font-weight:700; margin:3px 0 1px; font-variant-numeric:tabular-nums; }
+  .prod-sub { color:var(--dim); font-size:11px; min-height:14px; }
+  .prod-btns { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+  .mini { background:none; border:1px solid var(--line); color:var(--text); padding:3px 10px;
+          border-radius:7px; font:600 11px system-ui; cursor:pointer; }
+  .mini:hover { border-color:var(--violet); color:var(--violet); }
   .tx-pend { opacity:.62; }
   .tx-pend .tx-amt { color:var(--dim); }
   @keyframes pendpulse { 50% { opacity:.35; } }
@@ -240,6 +249,10 @@
           <button class="primary" id="send-btn">Send</button>
         </div>
         <div id="send-result"></div>
+      </div>
+      <div class="card tx-card">
+        <h2>Products</h2>
+        <div class="prod-grid" id="prods"><span class="muted">loading…</span></div>
       </div>
       <div class="card tx-card">
         <h2>Transactions</h2>
@@ -438,7 +451,7 @@ async function loadAccounts() {
   $('#send-to').innerHTML = customers.filter(a => a.id !== me)
     .map(a => `<option value="${a.id}">${a.owner} · ${a.region}</option>`).join('');
 }
-window.switchUser = id => { me = id; lastTx = null; loadAccounts(); loadStatement(); };
+window.switchUser = id => { me = id; lastTx = null; prevStmtSig = ''; prevPortSig = ''; loadAccounts(); loadStatement(); loadPortfolio(); };
 
 function uuid() { return crypto.randomUUID(); }
 function say(msg, color) { const el = $('#send-result'); el.textContent = msg; el.style.color = color; }
@@ -474,6 +487,98 @@ $('#act-move').onclick = async () => {
   loadAccounts(); loadStatement();
 };
 
+/* the product shelf — every product is accounts + transfers, valued live */
+let prevPortSig = '';
+const fmtBtc = v => '₿' + Number(v).toFixed(8).replace(/\.?0+$/, '').replace(/^([0-9]+)$/, '$1.0');
+async function loadPortfolio() {
+  if (me === null) return;
+  const pf = await api('/api/portfolio?customer=' + me);
+  const sig = JSON.stringify(pf);
+  if (sig === prevPortSig) return;
+  prevPortSig = sig;
+  const total = Number(pf.main) + Number(pf.savings) + Number(pf.card) + Number(pf.btcEur) + Number(pf.aaplEur) + Number(pf.loan);
+  const loan = Number(pf.loan), card = Number(pf.card);
+  $('#prods').innerHTML = `
+    <div class="prod"><div class="prod-name">💠 Total wealth</div>
+      <div class="prod-val">${fmt(total)}</div>
+      <div class="prod-sub">main + savings + assets + card + loan</div>
+      <div class="prod-btns"><span class="prod-sub">prices: ${pf.priceSource}</span></div></div>
+    <div class="prod"><div class="prod-name">💰 Savings</div>
+      <div class="prod-val">${fmt(pf.savings)}</div>
+      <div class="prod-sub">a second account — nothing more, nothing less</div>
+      <div class="prod-btns"><button class="mini" onclick="prodMove(1)">+ €50</button>
+        <button class="mini" onclick="prodMove(-1)">− €50</button></div></div>
+    <div class="prod"><div class="prod-name">💳 Credit card</div>
+      <div class="prod-val">${fmt(pf.card)}</div>
+      <div class="prod-sub">limit €1,000 — enforced by a CHECK constraint</div>
+      <div class="prod-btns"><button class="mini" onclick="cardPay()">café −€12</button>
+        ${card < 0 ? '<button class="mini" onclick="cardRepay()">repay</button>' : ''}</div></div>
+    <div class="prod"><div class="prod-name">₿ Bitcoin</div>
+      <div class="prod-val">${fmtBtc(pf.btc)} <span class="prod-sub">≈ ${fmt(pf.btcEur)}</span></div>
+      <div class="prod-sub">@ ${fmt(pf.btcPrice)} · live CoinGecko</div>
+      <div class="prod-btns"><button class="mini" onclick="tradeBtn('btc','buy','50.00')">buy €50</button>
+        ${Number(pf.btcEur) > 0.5 ? `<button class="mini" onclick="tradeBtn('btc','sell','${pf.btcEur}')">sell all</button>` : ''}</div></div>
+    <div class="prod"><div class="prod-name">🍏 Apple stock</div>
+      <div class="prod-val">${Number(pf.aapl).toFixed(4)} sh <span class="prod-sub">≈ ${fmt(pf.aaplEur)}</span></div>
+      <div class="prod-sub">@ ${fmt(pf.aaplPrice)} · Yahoo × live EURUSD</div>
+      <div class="prod-btns"><button class="mini" onclick="tradeBtn('aapl','buy','50.00')">buy €50</button>
+        ${Number(pf.aaplEur) > 0.5 ? `<button class="mini" onclick="tradeBtn('aapl','sell','${pf.aaplEur}')">sell all</button>` : ''}</div></div>
+    <div class="prod"><div class="prod-name">🏠 Mortgage</div>
+      <div class="prod-val">${loan === 0 ? '—' : fmt(pf.loan)}</div>
+      <div class="prod-sub">${loan === 0 ? 'borrow up to €20,000 — instant decision' : 'the debt heals by plain transfers'}</div>
+      <div class="prod-btns">${loan === 0
+        ? '<button class="mini" onclick="mortgageApply()">apply €10,000</button>'
+        : '<button class="mini" onclick="mortgageRepay()">repay €500</button>'}</div></div>`;
+}
+function refreshAll() { loadAccounts(); prevStmtSig = ''; loadStatement(); prevPortSig = ''; loadPortfolio(); }
+window.prodMove = async dir => {
+  const from = dir > 0 ? me : me + 100, to = dir > 0 ? me + 100 : me;
+  const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from, to, amount: '50.00' }) });
+  say(r.result === 'ok' ? (dir > 0 ? '✓ €50 to savings — a transfer between your own accounts, same shard, plain ACID' : '✓ €50 back to main')
+      : '✗ ' + (r.result || r.error), r.result === 'ok' ? 'var(--green)' : 'var(--red)');
+  refreshAll();
+};
+window.cardPay = async () => {
+  const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me + 400, to: 7, amount: '12.00' }) });
+  say(r.result === 'ok' ? '✓ card payment at the café — your card account just went NEGATIVE, legally (kind: credit)'
+      : r.result === 'insufficient_funds' ? '✗ card limit — the CHECK constraint said no' : '✗ ' + (r.result || r.error),
+      r.result === 'ok' ? 'var(--green)' : 'var(--amber)');
+  refreshAll();
+};
+window.cardRepay = async () => {
+  const pf = await api('/api/portfolio?customer=' + me);
+  const owe = Math.min(-Number(pf.card), Number(pf.main));
+  if (owe <= 0) return;
+  const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me, to: me + 400, amount: owe.toFixed(2) }) });
+  say(r.result === 'ok' ? `✓ repaid ${fmt(owe)} — the card heals toward zero` : '✗ ' + (r.result || r.error),
+      r.result === 'ok' ? 'var(--green)' : 'var(--red)');
+  refreshAll();
+};
+window.tradeBtn = async (asset, side, eur) => {
+  const r = await api('/api/trade', { method: 'POST', body: JSON.stringify({ txId: uuid(), customer: me, asset, side, eur }) });
+  const nm = asset === 'btc' ? 'Bitcoin' : 'Apple';
+  say(r.result === 'ok'
+      ? `✓ ${side === 'buy' ? 'bought' : 'sold'} ${fmt(eur)} of ${nm} @ ${fmt(r.price)} (${r.source}) — ONE transaction, four entries, two currencies, both ledgers still sum to zero`
+      : r.result === 'insufficient_funds' ? '✗ not enough ' + (side === 'buy' ? 'euros' : nm) : '✗ ' + (r.result || r.error),
+      r.result === 'ok' ? 'var(--green)' : 'var(--amber)');
+  refreshAll();
+};
+window.mortgageApply = async () => {
+  say('🏠 reviewing your application…', 'var(--amber)');
+  setTimeout(async () => {
+    const r = await api('/api/mortgage', { method: 'POST', body: JSON.stringify({ txId: uuid(), customer: me, amount: '10000.00' }) });
+    say(r.result === 'ok' ? '✓ approved — €10,000 disbursed: your cash went UP, your loan went DOWN, your net position did not move a cent'
+        : '✗ ' + (r.result || r.error), r.result === 'ok' ? 'var(--green)' : 'var(--red)');
+    refreshAll();
+  }, 2200);
+};
+window.mortgageRepay = async () => {
+  const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me, to: me + 500, amount: '500.00' }) });
+  say(r.result === 'ok' ? '✓ €500 repaid — a mortgage payment is just a transfer' : '✗ ' + (r.result || r.error),
+      r.result === 'ok' ? 'var(--green)' : 'var(--red)');
+  refreshAll();
+};
+
 /* the statement — the double-entry ledger, told the way a bank app tells it */
 async function loadStatement() {
   if (me === null) return;
@@ -484,7 +589,7 @@ async function loadStatement() {
       : d.toLocaleDateString(undefined, { day: 'numeric', month: 'long' }); };
   const hue = s => { let h = 0; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
   const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
-  const SUB = { added: 'Money added', sent: 'Sent', received: 'Received', relocation: 'Between your regions', refund: 'Payment bounced' };
+  const SUB = { added: 'Money added', sent: 'Sent', received: 'Received', relocation: 'Between your regions', refund: 'Payment bounced', buy: 'Bought', sell: 'Sold', loan: 'Mortgage drawdown' };
   const ssig = items.map(x => x.tx + x.tag + x.pending + x.after).join('|');
   if (ssig === prevStmtSig) return;
   prevStmtSig = ssig;
@@ -495,8 +600,8 @@ async function loadStatement() {
     const name = x.tag === 'added' ? 'Money added' : x.tag === 'relocation' ? 'Relocation' : x.tag === 'refund' ? 'Refund' : cap(x.label);
     const time = new Date(x.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const abs = x.amount.replace('-', '');
-    const ic = x.tag === 'added' ? '↓' : x.tag === 'relocation' ? '✈' : x.tag === 'refund' ? '↩' : name[0];
-    const av = ['added', 'relocation', 'refund'].includes(x.tag)
+    const ic = x.tag === 'added' ? '↓' : x.tag === 'relocation' ? '✈' : x.tag === 'refund' ? '↩' : ['buy','sell'].includes(x.tag) ? (name === 'Bitcoin' ? '₿' : '🍏') : x.tag === 'loan' ? '🏠' : name[0];
+    const av = ['added', 'relocation', 'refund', 'buy', 'sell', 'loan'].includes(x.tag)
       ? `<div class="tx-av tx-av-sys">${ic}</div>`
       : `<div class="tx-av" style="background:hsl(${hue(name)},40%,30%)">${ic}</div>`;
     const sub = x.pending
@@ -506,6 +611,10 @@ async function loadStatement() {
       ? 'strategy: RELOCATION — the whole balance as one standard saga, then the directory pointer flips; write-pause of milliseconds, every step idempotent'
       : x.tag === 'refund'
       ? 'strategy: COMPENSATION — the saga could not complete (no such destination), so a gated refund undid the departure; deterministic refund id makes even the undo idempotent'
+      : ['buy', 'sell'].includes(x.tag)
+      ? 'strategy: ONE ACID COMMIT, TWO CURRENCIES — four entries: your EUR ↔ broker, broker ↔ your asset. Each currency’s ledger sums to zero on its own; the price is locked at execution and the ratio of the legs IS the price paid'
+      : x.tag === 'loan'
+      ? 'strategy: DISBURSEMENT — loan −X and main +X in one commit: your net position is unchanged; the debt is real, on the books, and heals by plain transfers'
       : x.cross
       ? 'strategy: SAGA — pessimistic FOR UPDATE on the payer (source region only) · in_transit clearing account · Kafka at-least-once · idempotent arrival gate. No optimistic retries anywhere: hot money gets locks'
       : 'strategy: ONE ACID COMMIT — pessimistic SELECT … FOR UPDATE on both rows, ascending id order (deadlock-proof) · caller-owned txId idempotency gate. Optimistic version+retry deliberately not used: balances are hot rows';
@@ -1257,8 +1366,8 @@ $('#q-next').onclick = () => {
 };
 
 /* ---------------- boot ---------------- */
-loadAccounts(); loadStatement(); renderQuiz(); gShow('welcome');
-setInterval(() => { loadAccounts(); loadStatement(); if (!$('#tab-xray').classList.contains('hidden')) xrayTick(); }, 2000);
+loadAccounts(); loadStatement(); loadPortfolio(); renderQuiz(); gShow('welcome');
+setInterval(() => { loadAccounts(); loadStatement(); loadPortfolio(); if (!$('#tab-xray').classList.contains('hidden')) xrayTick(); }, 2000);
 </script>
 </body>
 </html>

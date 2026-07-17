@@ -46,9 +46,15 @@ import java.util.concurrent.TimeUnit;
 public final class Shard {
 
     /** System accounts exist on EVERY shard (ids below 10 are reserved):
-     *  the world (money enters the bank) and the clearing account. */
+     *  the world (money enters the bank), the clearing account, the broker
+     *  (the other side of every asset trade, one leg per currency) and the
+     *  café (a merchant for card payments). */
     public static final long WORLD = 1;
     public static final long IN_TRANSIT = 3;
+    public static final long BROKER_EUR = 4;
+    public static final long BROKER_BTC = 5;
+    public static final long BROKER_AAPL = 6;
+    public static final long CAFE = 7;
 
     public final int index;
     public final String name;
@@ -72,17 +78,22 @@ public final class Shard {
     public void createSchema() throws SQLException {
         try (Connection c = open()) {
             Ledger.createSchemaOn(c);
-            ensureSystemAccount(c, WORLD, "world");
-            ensureSystemAccount(c, IN_TRANSIT, "in_transit");
+            ensureSystemAccount(c, WORLD, "world", "EUR");
+            ensureSystemAccount(c, IN_TRANSIT, "in_transit", "EUR");
+            ensureSystemAccount(c, BROKER_EUR, "broker", "EUR");
+            ensureSystemAccount(c, BROKER_BTC, "broker", "BTC");
+            ensureSystemAccount(c, BROKER_AAPL, "broker", "AAPL");
+            ensureSystemAccount(c, CAFE, "cafe", "EUR");
         }
     }
 
-    private static void ensureSystemAccount(Connection c, long id, String owner) throws SQLException {
+    private static void ensureSystemAccount(Connection c, long id, String owner, String currency) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO accounts(id, owner, balance, version, kind) VALUES (?,?,0,0,?) ON CONFLICT (id) DO NOTHING")) {
+                "INSERT INTO accounts(id, owner, balance, version, kind, currency) VALUES (?,?,0,0,?,?) ON CONFLICT (id) DO NOTHING")) {
             ps.setLong(1, id);
             ps.setString(2, owner);
             ps.setString(3, Ledger.KIND_EXTERNAL);
+            ps.setString(4, currency);
             ps.executeUpdate();
         }
     }

@@ -35,6 +35,9 @@ public final class HttpApi {
         server.createContext("/api/transfer", ex -> handle(ex, HttpApi::transfer));
         server.createContext("/api/relocate", ex -> handle(ex, HttpApi::relocate));
         server.createContext("/api/statement", ex -> handle(ex, HttpApi::statement));
+        server.createContext("/api/portfolio", ex -> handle(ex, HttpApi::portfolio));
+        server.createContext("/api/trade", ex -> handle(ex, HttpApi::trade));
+        server.createContext("/api/mortgage", ex -> handle(ex, HttpApi::mortgageApply));
         server.createContext("/api/notifications", ex -> handle(ex, HttpApi::notifications));
         server.createContext("/api/xray/summary", ex -> handle(ex, HttpApi::xraySummary));
         server.createContext("/api/xray/events", ex -> handle(ex, HttpApi::xrayEvents));
@@ -60,7 +63,9 @@ public final class HttpApi {
         for (Shard s : Shards.all()) {
             try (Connection c = s.open(); var st = c.createStatement();
                  ResultSet rs = st.executeQuery(
-                         "SELECT id, owner, kind, balance FROM accounts WHERE kind = 'customer' ORDER BY id")) {
+                         // id < 100: product accounts (savings/card/assets/loan
+                         // at fixed offsets) are the customer's, not customers
+                         "SELECT id, owner, kind, balance FROM accounts WHERE kind = 'customer' AND id < 100 ORDER BY id")) {
                 while (rs.next()) {
                     long id = rs.getLong(1);
                     boolean home;
@@ -75,7 +80,7 @@ public final class HttpApi {
                     b.append("{\"id\":").append(id)
                      .append(",\"owner\":\"").append(Json.esc(rs.getString(2)))
                      .append("\",\"kind\":\"").append(rs.getString(3))
-                     .append("\",\"balance\":\"").append(rs.getBigDecimal(4).toPlainString())
+                     .append("\",\"balance\":\"").append(plain(rs.getBigDecimal(4)))
                      .append("\",\"shard\":").append(s.index)
                      .append(",\"region\":\"").append(Shards.regionName(s.index)).append("\"}");
                 }
@@ -179,12 +184,15 @@ public final class HttpApi {
         try (Connection c = home.open();
              var ps = c.prepareStatement("""
                      SELECT e.tx_id, e.amount, e.created_at, t.kind,
-                            oa.owner AS other_owner, oa.kind AS other_kind,
+                            o.owner AS other_owner, o.kind AS other_kind,
                             SUM(e.amount) OVER (ORDER BY e.id) AS balance_after
                      FROM entries e
                      JOIN transactions t ON t.id = e.tx_id
-                     LEFT JOIN entries o  ON o.tx_id = e.tx_id AND o.id <> e.id
-                     LEFT JOIN accounts oa ON oa.id = o.account_id
+                     LEFT JOIN LATERAL (
+                         SELECT oa.owner, oa.kind FROM entries o2
+                         JOIN accounts oa ON oa.id = o2.account_id
+                         WHERE o2.tx_id = e.tx_id AND o2.id <> e.id
+                         ORDER BY o2.id LIMIT 1) o ON true
                      WHERE e.account_id = ?
                      ORDER BY e.id DESC
                      LIMIT 40""")) {
@@ -220,8 +228,13 @@ public final class HttpApi {
                             else { label = ownerName(from); tag = "received"; }
                         }
                         case "refund" -> { cross = true; label = "Refund"; tag = "refund"; }
+                        case "mortgage" -> { label = "Mortgage"; tag = "loan"; }
                         default -> {
-                            if ("external".equals(otherKind)) {
+                            if (kind.startsWith("trade:")) {
+                                String[] parts = kind.split(":");
+                                label = "btc".equals(parts[1]) ? "Bitcoin" : "Apple stock";
+                                tag = parts[2];   // buy | sell
+                            } else if ("external".equals(otherKind)) {
                                 label = in ? "Money added" : (otherOwner == null ? "Payment" : otherOwner);
                                 tag = in ? "added" : "sent";
                             } else {
@@ -234,8 +247,8 @@ public final class HttpApi {
                     first = false;
                     b.append("{\"tx\":\"").append(tx)
                      .append("\",\"at\":\"").append(at)
-                     .append("\",\"amount\":\"").append(amount.toPlainString())
-                     .append("\",\"after\":\"").append(after.toPlainString())
+                     .append("\",\"amount\":\"").append(plain(amount))
+                     .append("\",\"after\":\"").append(plain(after))
                      .append("\",\"label\":\"").append(Json.esc(label))
                      .append("\",\"tag\":\"").append(tag)
                      .append("\",\"in\":").append(in)
@@ -322,7 +335,7 @@ public final class HttpApi {
                 published = one(st.executeQuery("SELECT COUNT(*) FROM outbox WHERE published_at IS NOT NULL"));
                 violations = Ledger.sumZeroViolationsOn(c).size();
                 drifted = Ledger.driftedAccountsOn(c).size();
-                inTransit = Ledger.cachedBalanceOn(c, Shard.IN_TRANSIT).toPlainString();
+                inTransit = Ledger.cachedBalanceOn(c, Shard.IN_TRANSIT).setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
             }
             tAccounts += accounts; tTransactions += transactions; tEntries += entries;
             tPending += pending; tPublished += published;
@@ -347,7 +360,7 @@ public final class HttpApi {
                 ",\"entries\":" + tEntries + ",\"outboxPending\":" + tPending +
                 ",\"outboxPublished\":" + tPublished + ",\"notifications\":" + Notifications.count() +
                 ",\"sumZeroViolations\":" + tViolations + ",\"driftedAccounts\":" + tDrifted +
-                ",\"inFlight\":\"" + Shards.inFlight().toPlainString() +
+                ",\"inFlight\":\"" + Shards.inFlight().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString() +
                 "\",\"shards\":" + shardsJson + "}");
     }
 
@@ -379,7 +392,7 @@ public final class HttpApi {
                         String type = "transfer".equals(kind) ? "transfer_local" : kind;
                         evs.add(new Ev(rs.getTimestamp(3).toInstant(), type, s.index, region,
                                 rs.getString(1), rs.getString(4), rs.getString(5),
-                                rs.getBigDecimal(6) == null ? null : rs.getBigDecimal(6).toPlainString(), null));
+                                rs.getBigDecimal(6) == null ? null : plain(rs.getBigDecimal(6)), null));
                     }
                 }
                 // relay publishes (the Kafka moment)
@@ -442,11 +455,11 @@ public final class HttpApi {
                 Shard s = Shards.s("shard1".equals(node) ? 1 : 0);
                 try (Connection c = s.open()) {
                     tables.add(tableJson(c, "accounts — every account on this machine",
-                            "SELECT id, owner, kind, balance FROM accounts ORDER BY id",
-                            "id", "owner", "kind", "balance"));
+                            "SELECT id, owner, kind, currency, trim_scale(balance) AS balance FROM accounts ORDER BY id",
+                            "id", "owner", "kind", "ccy", "balance"));
                     tables.add(tableJson(c, "entries — the double-entry truth (latest 8)",
                             """
-                            SELECT substr(e.tx_id::text,1,8) AS tx, a.owner, e.amount, to_char(e.created_at,'HH24:MI:SS') AS at
+                            SELECT substr(e.tx_id::text,1,8) AS tx, a.owner, trim_scale(e.amount) AS amount, to_char(e.created_at,'HH24:MI:SS') AS at
                             FROM entries e JOIN accounts a ON a.id = e.account_id ORDER BY e.id DESC LIMIT 8""",
                             "tx", "account", "amount", "at"));
                     tables.add(tableJson(c, "outbox — events born inside money commits (latest 5)",
@@ -469,7 +482,7 @@ public final class HttpApi {
                     try (Connection c = s.open()) {
                         tables.add(tableJson(c, "entries through " + Shards.regionName(s.index) + "'s clearing account (latest 5)",
                                 """
-                                SELECT substr(e.tx_id::text,1,8) AS tx, e.amount, to_char(e.created_at,'HH24:MI:SS') AS at
+                                SELECT substr(e.tx_id::text,1,8) AS tx, trim_scale(e.amount) AS amount, to_char(e.created_at,'HH24:MI:SS') AS at
                                 FROM entries e WHERE e.account_id = 3 ORDER BY e.id DESC LIMIT 5""",
                                 "tx", "amount", "at"));
                     }
@@ -579,7 +592,7 @@ public final class HttpApi {
                             if (payer == null || "depart".equals(kind) || "transfer".equals(kind)) {
                                 payer = rs.getString(4);
                                 if (rs.getString(5) != null && !"in_transit".equals(rs.getString(5))) payee = rs.getString(5);
-                                if (rs.getBigDecimal(6) != null) amount = rs.getBigDecimal(6).toPlainString();
+                                if (rs.getBigDecimal(6) != null) amount = plain(rs.getBigDecimal(6));
                             }
                             if ("arrive".equals(kind) && rs.getString(5) != null) payee = rs.getString(5);
                         }
@@ -644,7 +657,7 @@ public final class HttpApi {
                          ORDER BY e.id DESC LIMIT 30""")) {
                 while (rs.next()) {
                     rows.add(new Row(rs.getString(1), rs.getString(2),
-                            rs.getBigDecimal(3).toPlainString(), rs.getTimestamp(4).toInstant(), s.index));
+                            plain(rs.getBigDecimal(3)), rs.getTimestamp(4).toInstant(), s.index));
                 }
             }
         }
@@ -723,6 +736,96 @@ public final class HttpApi {
         ex.sendResponseHeaders(r.status(), r.body().length);
         ex.getResponseBody().write(r.body());
         ex.close();
+    }
+
+    /** The customer's product shelf, valued at live prices. */
+    private static Response portfolio(HttpExchange ex) throws Exception {
+        String q = ex.getRequestURI().getQuery();
+        String cust = null;
+        if (q != null) for (String p : q.split("&")) if (p.startsWith("customer=")) cust = p.substring(9);
+        if (cust == null) return Response.json(400, "{\"error\":\"need ?customer=id\"}");
+        long id = Long.parseLong(cust);
+        Shard home = Shards.forCustomer(id);
+        java.util.Map<Long, BigDecimal> bal = new java.util.HashMap<>();
+        try (Connection c = home.open();
+             var ps = c.prepareStatement("SELECT id, balance FROM accounts WHERE id = ? OR (id > ? AND id <= ?)")) {
+            ps.setLong(1, id);
+            ps.setLong(2, id);
+            ps.setLong(3, id + 500);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) bal.put(rs.getLong(1), rs.getBigDecimal(2));
+            }
+        }
+        PriceFeed.Px btc = PriceFeed.get("btc"), aapl = PriceFeed.get("aapl");
+        BigDecimal btcU = bal.getOrDefault(id + Products.BTC, BigDecimal.ZERO);
+        BigDecimal aaplU = bal.getOrDefault(id + Products.AAPL, BigDecimal.ZERO);
+        return Response.json(200,
+                "{\"main\":\"" + plain(bal.getOrDefault(id, BigDecimal.ZERO)) +
+                "\",\"savings\":\"" + plain(bal.getOrDefault(id + Products.SAVINGS, BigDecimal.ZERO)) +
+                "\",\"card\":\"" + plain(bal.getOrDefault(id + Products.CARD, BigDecimal.ZERO)) +
+                "\",\"cardLimit\":\"1000\"" +
+                ",\"btc\":\"" + plain(btcU) +
+                "\",\"btcEur\":\"" + btcU.multiply(btc.price()).setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() +
+                "\",\"aapl\":\"" + plain(aaplU) +
+                "\",\"aaplEur\":\"" + aaplU.multiply(aapl.price()).setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() +
+                "\",\"loan\":\"" + plain(bal.getOrDefault(id + Products.LOAN, BigDecimal.ZERO)) +
+                "\",\"btcPrice\":\"" + plain(btc.price()) +
+                "\",\"aaplPrice\":\"" + plain(aapl.price()) +
+                "\",\"priceSource\":\"" + btc.source() + "\"}");
+    }
+
+    /** buy or sell an asset at the live price — one 4-entry, 2-currency tx */
+    private static Response trade(HttpExchange ex) throws Exception {
+        if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
+        String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String txId = Json.str(body, "txId"), customer = Json.num(body, "customer");
+        String asset = Json.str(body, "asset"), side = Json.str(body, "side"), eur = Json.str(body, "eur");
+        if (txId == null || customer == null || asset == null || side == null || eur == null)
+            return Response.json(400, "{\"error\":\"need txId, customer, asset, side, eur\"}");
+        if (!"btc".equals(asset) && !"aapl".equals(asset))
+            return Response.json(400, "{\"error\":\"asset must be btc or aapl\"}");
+        try {
+            PriceFeed.Px px = PriceFeed.get(asset);
+            var result = Products.trade(UUID.fromString(txId), Long.parseLong(customer),
+                    asset, "buy".equals(side), new BigDecimal(eur), px.price());
+            String kind = switch (result) {
+                case Ledger.Ok ok -> "ok";
+                case Ledger.AlreadyProcessed a -> "already_processed";
+                case Ledger.InsufficientFunds i -> "insufficient_funds";
+                case Ledger.NoSuchAccount n -> "no_such_account";
+            };
+            return Response.json(200, "{\"result\":\"" + kind + "\",\"price\":\"" + plain(px.price()) +
+                    "\",\"source\":\"" + px.source() + "\"}");
+        } catch (IllegalArgumentException e) {
+            return Response.json(400, "{\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
+        }
+    }
+
+    /** the mortgage desk: instant double-entry disbursement, capped */
+    private static Response mortgageApply(HttpExchange ex) throws Exception {
+        if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
+        String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String txId = Json.str(body, "txId"), customer = Json.num(body, "customer"), amount = Json.str(body, "amount");
+        if (txId == null || customer == null || amount == null)
+            return Response.json(400, "{\"error\":\"need txId, customer, amount\"}");
+        try {
+            var result = Products.mortgage(UUID.fromString(txId), Long.parseLong(customer), new BigDecimal(amount));
+            String kind = switch (result) {
+                case Ledger.Ok ok -> "ok";
+                case Ledger.AlreadyProcessed a -> "already_processed";
+                case Ledger.InsufficientFunds i -> "insufficient_funds";
+                case Ledger.NoSuchAccount n -> "no_such_account";
+            };
+            return Response.json(200, "{\"result\":\"" + kind + "\"}");
+        } catch (IllegalArgumentException e) {
+            return Response.json(400, "{\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
+        }
+    }
+
+    /** NUMERIC(20,8) prints trailing zeros; humans don't want them */
+    private static String plain(java.math.BigDecimal v) {
+        java.math.BigDecimal s = v.stripTrailingZeros();
+        return (s.scale() < 0 ? s.setScale(0) : s).toPlainString();
     }
 
     private static long one(ResultSet rs) throws Exception {
