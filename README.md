@@ -6,6 +6,8 @@ A neobank built from first principles, one lesson at a time. **Raw Java 21 — n
 
 ![minibank: the app](docs/app.png)
 
+**LIVE: [bank.b4rruf3t.com](https://bank.b4rruf3t.com)** — the app, the X-ray, the quiz. igor lives in eu, coco in uk; every payment between them crosses regions for real.
+
 ## The destination
 
 A public site with two faces:
