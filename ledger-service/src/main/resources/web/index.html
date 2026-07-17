@@ -62,17 +62,14 @@
   .tx-amt.in { color:var(--green); }
   .tx-after { color:var(--dim); font-size:11.5px; font-variant-numeric:tabular-nums; }
   .tx-detail { color:var(--dim); font-size:11.5px; padding:0 4px 10px 58px; }
-  .feed { display:flex; flex-direction:column; gap:8px; max-height:300px; overflow:auto; }
-  .feed-item { border:1px solid var(--line); border-radius:8px; padding:8px 12px; font-size:12.5px; }
-  .feed-item .muted { font-size:11px; }
 
   /* x-ray map — alive */
   .edge { stroke-dasharray:4 7; animation:dashflow 1.5s linear infinite; }
   @keyframes dashflow { to { stroke-dashoffset:-22; } }
-  .node.hot rect, .node.hot ellipse { stroke:var(--accent); stroke-width:3;
+  .node.onpath rect, .node.onpath ellipse, .node.onpath path { stroke:var(--violet); stroke-width:2.5; }
+  .node.hot rect, .node.hot ellipse, .node.hot path { stroke:var(--accent); stroke-width:3;
     filter:drop-shadow(0 0 7px var(--accent)); transition:filter .2s; }
   .node.hot-amber rect { stroke:var(--amber); stroke-width:3; filter:drop-shadow(0 0 7px var(--amber)); }
-  .node.onpath rect, .node.onpath ellipse { stroke:var(--violet); stroke-width:2.5; }
   .pulse-dot { filter:drop-shadow(0 0 5px currentColor); }
   .inflight-pop { animation:pop .45s ease; }
   @keyframes pop { 30% { transform:scale(1.35); } }
@@ -82,7 +79,8 @@
 
   /* ticker + kafka log + trace */
   .tick-item, .klog-item { display:flex; align-items:center; gap:10px; padding:7px 6px; border-radius:10px;
-    cursor:pointer; font-size:12.5px; animation:slidein .25s ease; }
+    cursor:pointer; font-size:12.5px; }
+  .tick-item.new, .klog-item.new { animation:slidein .25s ease; }
   .tick-item:hover, .klog-item:hover { background:rgba(255,255,255,.04); }
   @keyframes slidein { from { opacity:0; transform:translateY(-7px); } }
   .tick-ic { width:28px; height:28px; border-radius:50%; background:#2b3245; display:flex; align-items:center;
@@ -102,6 +100,17 @@
   .trace-step .lat { color:var(--amber); font-variant-numeric:tabular-nums; flex:none; }
   .trace-step .muted { flex:1; }
 
+  /* inspector + interview map */
+  .insp-title { color:var(--dim); font-size:11.5px; font-weight:600; text-transform:uppercase;
+    letter-spacing:.04em; margin:12px 0 6px; }
+  .q-item { display:flex; align-items:center; gap:10px; padding:8px 6px; border-radius:10px;
+    cursor:pointer; font-size:12.5px; }
+  .q-item:hover { background:rgba(255,255,255,.04); }
+  .q-item.on { background:rgba(88,166,255,.1); }
+  .q-badge { flex:none; min-width:30px; height:22px; border-radius:6px; background:var(--violet); color:#fff;
+    font:700 11px system-ui; display:flex; align-items:center; justify-content:center; }
+  .q-text { flex:1; }
+
   /* the guide */
   .guide { position:sticky; top:16px; align-self:start; max-height:calc(100vh - 32px); overflow:auto; }
   .guide-head { display:flex; align-items:center; margin-bottom:8px; }
@@ -120,8 +129,8 @@
   .xray-grid { display:grid; grid-template-columns: 1fr 340px; gap:16px; }
   svg text { font-family:system-ui; }
   .node { cursor:pointer; }
-  .node rect, .node ellipse { fill:#1c2330; stroke:var(--line); stroke-width:1.5; }
-  .node.sel rect, .node.sel ellipse { stroke:var(--accent); stroke-width:2.5; }
+  .node rect, .node ellipse, .node path { fill:#1c2330; stroke:var(--line); stroke-width:1.5; }
+  .node.sel rect, .node.sel ellipse, .node.sel path { stroke:var(--accent); stroke-width:2.5; }
   .node text { fill:var(--text); font-size:12px; font-weight:600; }
   .node .sub { fill:var(--dim); font-weight:400; font-size:10px; }
   .edge { stroke:var(--dim); stroke-width:1.5; marker-end:url(#arr); opacity:.7; }
@@ -132,7 +141,6 @@
   .light { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
   .ok { background:var(--green); box-shadow:0 0 8px var(--green); }
   .bad { background:var(--red); box-shadow:0 0 8px var(--red); }
-  .wait { background:var(--amber); box-shadow:0 0 8px var(--amber); }
 
   /* quiz */
   #quiz-card { max-width:720px; margin:0 auto; }
@@ -213,21 +221,21 @@
               <rect width="120" height="46" rx="23"/><text x="60" y="21" text-anchor="middle">in flight</text>
               <text x="60" y="37" text-anchor="middle" class="sub" id="inflight-num">€0.00</text></g>
             <g class="node" data-node="shard0" transform="translate(355,105)">
-              <ellipse cx="67" cy="12" rx="67" ry="12"/><rect y="12" width="134" height="46"/>
-              <ellipse cx="67" cy="58" rx="67" ry="12"/>
-              <text x="67" y="34" text-anchor="middle">eu — shard 0</text>
-              <text x="67" y="50" text-anchor="middle" class="sub" id="shard0-sub">:5434 · pool · outbox</text></g>
+              <path d="M0,12 a67,12 0 0 1 134,0 v46 a67,12 0 0 1 -134,0 z"/>
+              <ellipse cx="67" cy="12" rx="67" ry="12"/>
+              <text x="67" y="40" text-anchor="middle">eu — shard 0</text>
+              <text x="67" y="55" text-anchor="middle" class="sub" id="shard0-sub">:5434 · pool · outbox</text></g>
             <g class="node" data-node="shard1" transform="translate(355,225)">
-              <ellipse cx="67" cy="12" rx="67" ry="12"/><rect y="12" width="134" height="46"/>
-              <ellipse cx="67" cy="58" rx="67" ry="12"/>
-              <text x="67" y="34" text-anchor="middle">uk — shard 1</text>
-              <text x="67" y="50" text-anchor="middle" class="sub" id="shard1-sub">:5435 · pool · outbox</text></g>
+              <path d="M0,12 a67,12 0 0 1 134,0 v46 a67,12 0 0 1 -134,0 z"/>
+              <ellipse cx="67" cy="12" rx="67" ry="12"/>
+              <text x="67" y="40" text-anchor="middle">uk — shard 1</text>
+              <text x="67" y="55" text-anchor="middle" class="sub" id="shard1-sub">:5435 · pool · outbox</text></g>
             <g class="node" data-node="kafka" transform="translate(555,160)">
               <rect width="115" height="50" rx="9"/><text x="57" y="24" text-anchor="middle">Kafka</text>
               <text x="57" y="39" text-anchor="middle" class="sub">payments topic</text></g>
             <g class="node" data-node="applier" transform="translate(555,255)">
               <rect width="140" height="50" rx="9"/><text x="70" y="24" text-anchor="middle">Applier</text>
-              <text x="70" y="39" text-anchor="middle" class="sub">completes the saga</text></g>
+              <text x="70" y="39" text-anchor="middle" class="sub">lands cross-region money</text></g>
             <g class="node" data-node="notif" transform="translate(545,350)">
               <rect width="150" height="50" rx="9"/><text x="75" y="24" text-anchor="middle">Notifications</text>
               <text x="75" y="39" text-anchor="middle" class="sub">own database</text></g>
@@ -235,11 +243,22 @@
           </svg>
         </div>
 
+        <div class="card" style="margin-top:14px" id="inspect-card" hidden>
+          <h2><span id="inspect-title">Inside</span>
+            <button class="ghost" style="float:right;padding:2px 10px" id="inspect-clear">✕</button></h2>
+          <div id="inspect-body"></div>
+        </div>
+
         <div class="card" style="margin-top:14px" id="trace-card" hidden>
           <h2>Trace <span class="muted" id="trace-tx"></span>
             <button class="ghost" style="float:right;padding:2px 10px" id="trace-clear">✕</button></h2>
           <div id="trace-head" class="muted" style="font-size:12.5px;margin-bottom:6px"></div>
           <div id="trace-steps"></div>
+        </div>
+
+        <div class="card" style="margin-top:14px">
+          <h2>The interview map — 12 questions, and where this bank answers them</h2>
+          <div id="qmap"></div>
         </div>
 
         <div class="card" style="margin-top:14px">
@@ -297,6 +316,7 @@ document.querySelectorAll('.tab-btn').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tab-btn').forEach(x => x.classList.toggle('on', x === b));
   ['app','xray','quiz'].forEach(t => $('#tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
   history.replaceState(null, '', '#' + b.dataset.tab);
+  if (b.dataset.tab === 'xray') xrayTick();
 });
 if (['#xray', '#quiz'].includes(location.hash)) document.querySelector('[data-tab="' + location.hash.slice(1) + '"]').click();
 
@@ -435,7 +455,7 @@ const evLine = e => {
     case 'transfer_local': return `${who(e.payer)} paid ${who(e.payee)}${a} — one ACID commit in ${e.region}`;
     case 'depart': return `${who(e.payer)}'s${a} left ${e.region} into the pipe`;
     case 'published': return `the ${e.region} relay handed an event to Kafka`;
-    case 'arrive': return `${who(e.payee) !== 'Someone' ? who(e.payee) + ' received' : 'money arrived'}${a} in ${e.region}`;
+    case 'arrive': return `${e.payee ? who(e.payee) + ' received' : 'money arrived'}${a} in ${e.region}`;
     case 'refund': return `a payment bounced — refund landed in ${e.region}`;
     case 'notify': return `the notifications service stored the echo`;
     default: return e.type;
@@ -468,8 +488,9 @@ const GUIDE = {
       `${s.outboxPublished} events published so far, ${s.outboxPending} waiting in outboxes.`],
     how: () => [`Each region's relay publishes its own outbox: send with acks=all, and only after the broker confirms does the outbox row get marked published. Crash before the mark → resend → at-least-once. Consumers dedupe by key; the money's arrival dedupes by txId gate.`],
     win: () => [`"Why not publish inside the money transaction?" — you cannot commit atomically across Postgres AND Kafka. So the event is committed WITH the money (outbox) and shipped after. Loss impossible, duplicates designed-for.`] },
-  applier: { t: 'The applier — the saga’s second half',
-    plain: s => [`A Kafka consumer that finishes cross-region payments: it reads departed events and credits the recipient on their home region. In flight right now: ${eur(s.inFlight)}.`],
+  applier: { t: 'The applier — chapter two of every cross-region payment',
+    plain: s => [`A Kafka consumer that finishes cross-region payments: it reads "departed" events and credits the recipient on their home region. In flight right now: ${eur(s.inFlight)}.`,
+      `The industry calls this whole shape a SAGA — plain meaning: one big move done as a chain of small LOCAL transactions, each committed and written down, with a compensating step if a later chapter can't happen. A long story told in chapters — “saga” is Old Norse for “tale” (from segja, “to say”), and databases borrowed the name in the 1987 Sagas paper for exactly this shape.`],
     how: () => [`Idempotent by construction: the arrival claims the same txId on the DESTINATION region's own transactions table. Five deliveries, one credit. Unknown destination? It compensates — a refund on the source region, gated by a deterministic refund id.`],
     win: () => [`"Why a saga and not two-phase commit?" — 2PC blocks both databases while a coordinator decides, and the coordinator is a new single point of failure. Sagas keep every transaction local and pay with a visible, honest in-between state.`] },
   notif: { t: 'Notifications — a different service',
@@ -490,7 +511,7 @@ const GUIDE = {
     win: () => [`Mark-after-send is the whole crash-safety argument. Reverse the order and a crash silently loses a payment event.`] },
   'ev:arrive': { t: 'An arrival',
     plain: c => [`${evLine(c.ev)}. The saga completed — the pipe drained by this amount.`],
-    how: () => [`The applier claimed the txId on the destination's own transactions table (its local idempotency gate), then moved money in_transit → recipient in one local ACID commit. No funds check: credits cannot fail.`],
+    how: () => [`The applier claimed the txId on the destination's own transactions table (its local idempotency gate), then moved money in_transit → recipient in one local ACID commit. No funds check — the one way a credit can still fail (a missing destination) is compensated with a gated refund, not rolled back.`],
     win: () => [`Kafka may deliver this event five times — the gate makes deliveries 2-5 no-ops. Idempotency is what lets at-least-once carry money.`] },
   'ev:refund': { t: 'A bounce, compensated',
     plain: c => [`${evLine(c.ev)}. The destination didn't exist, so the saga put the money back where it came from.`],
@@ -545,6 +566,13 @@ let lastSummary = null;
 function gShow(subject, ctx = {}) {
   gSubject = subject; gCtx = ctx;
   const g = GUIDE[subject]; if (!g) return;
+  if (!lastSummary && STATS[subject]) {
+    $('#guide-title').textContent = g.t;
+    $('#guide-body').innerHTML = '<p class="muted">fetching live numbers…</p>';
+    $('#guide-stats').innerHTML = '';
+    xrayTick().then(() => { if (gSubject === subject) gShow(subject, ctx); });
+    return;
+  }
   $('#guide-title').textContent = g.t;
   const args = subject.startsWith('ev:') || subject === 'trace' || subject.startsWith('inv_') || subject === 'pool' || subject === 'entry'
     ? ctx : (lastSummary || ctx);
@@ -553,7 +581,7 @@ function gShow(subject, ctx = {}) {
   $('#guide-stats').innerHTML = (st && lastSummary) ? st(lastSummary).map(([k, v]) => {
     const isInv = k.includes('invariant') || k.includes('drift');
     const light = isInv ? `<span class="light ${String(v).includes('HOLD') || String(v) === 'NONE' ? 'ok' : 'bad'}"></span>` : '';
-    const click = isInv ? ` onclick="event.stopPropagation();gShow('${k.includes('drift') ? 'inv_drift' : 'inv_sumzero'}',{n:${String(v).includes('HOLD') || String(v) === 'NONE' ? 0 : 1}})"` : '';
+    const click = isInv ? ` onclick="event.stopPropagation();gShow('${k.includes('drift') ? 'inv_drift' : 'inv_sumzero'}',{n:${parseInt(v) || 0}})"` : '';
     return `<div class="stat"${click}><span>${light}${k}</span><b>${v}</b></div>`;
   }).join('') : '';
   document.querySelectorAll('.node').forEach(n => n.classList.toggle('sel', n.dataset.node === subject));
@@ -563,66 +591,199 @@ document.querySelectorAll('.guide-tabs button').forEach(b => b.onclick = () => {
   document.querySelectorAll('.guide-tabs button').forEach(x => x.classList.toggle('on', x === b));
   gShow(gSubject, gCtx);
 });
-document.querySelectorAll('.node').forEach(n => n.onclick = () => gShow(n.dataset.node));
+document.querySelectorAll('.node').forEach(n => n.onclick = () => { gShow(n.dataset.node); inspect(n.dataset.node); });
+
+/* ---- the inspector: click a component, see ITS real rows ---- */
+let inspectNode = null, prevInspSig = '';
+async function inspect(node) {
+  if (node === 'browser') { closeInspect(); return; }
+  inspectNode = node; prevInspSig = '';
+  await refreshInspect();
+}
+async function refreshInspect() {
+  if (!inspectNode) return;
+  const d = await api('/api/xray/inspect?node=' + inspectNode);
+  if (!d.tables || !d.tables.length) { closeInspect(); return; }
+  const sig = JSON.stringify(d);
+  if (sig === prevInspSig) return;
+  prevInspSig = sig;
+  $('#inspect-card').hidden = false;
+  $('#inspect-title').textContent = 'Inside ' + (GUIDE[inspectNode]?.t || inspectNode) + ' — its actual rows, live';
+  $('#inspect-body').innerHTML = d.tables.map(tb => `
+    <div class="insp-title">${tb.title}</div>
+    <table><thead><tr>${tb.cols.map(c2 => `<th>${c2}</th>`).join('')}</tr></thead>
+    <tbody>${tb.rows.map(r => `<tr>${r.map(v => `<td class="${String(v).startsWith('-') ? 'amount-neg' : ''}">${v}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${tb.cols.length}" class="muted">empty</td></tr>`}</tbody></table>`).join('');
+}
+function closeInspect() { inspectNode = null; prevInspSig = ''; $('#inspect-card').hidden = true; }
+$('#inspect-clear').onclick = closeInspect;
+
+/* ---- the interview map: 12 real questions -> the component that answers ---- */
+const NODENAME = { api: 'router', shard0: 'eu', shard1: 'uk', kafka: 'kafka', applier: 'applier',
+  notif: 'notifications', intransit: 'in-flight', browser: 'browser' };
+const QUESTIONS = [
+  { short: 'the lost update', q: 'Two requests update the same balance at once — what goes wrong?',
+    nodes: ['shard0'], edges: ['api_shard0'],
+    plain: 'Both read €100, both subtract 30, both write €70 — thirty euros vanished with no error anywhere. The fix is never in Java: the DATABASE locks the row.',
+    how: 'SELECT … FOR UPDATE takes a row lock, so the second request WAITS, then sees €70 and computes correctly. Java-side synchronized cannot do this job — it protects one JVM, and production runs many JVMs against one database.',
+    win: '“Money = lock it or ledger it. Default answer: pessimistic — SELECT FOR UPDATE, locks taken in a fixed order. Optimistic version-and-retry is for low-contention data, never hot balances.”' },
+  { short: 'deadlock', q: 'Two transfers lock the same two accounts — deadlock. How do you prevent it?',
+    nodes: ['shard0'], edges: [],
+    plain: 'A locks igor then coco; B locks coco then igor. Each holds what the other needs — Postgres kills one with error 40P01.',
+    how: 'The cure is ORDER: every transfer locks account rows in ascending id, regardless of who pays whom. One global order → no cycle of waiting can form → deadlock impossible by construction. The test suite provokes a real 40P01 first, then cures it.',
+    win: '“I don’t handle deadlocks, I make them unconstructible: all lock acquisition in one global order. And I’ve seen a real 40P01 — I provoked one in a test on purpose.”' },
+  { short: 'safe retries', q: 'The network dies after the transfer commits but before the client hears. Now what?',
+    nodes: ['browser', 'api', 'shard0'], edges: ['browser_api', 'api_shard0'],
+    plain: 'The client MUST retry — so retries must be free. The CALLER mints the transaction id; sending the same id twice moves money once.',
+    how: 'The txId is the PRIMARY KEY of the transactions table, claimed with INSERT … ON CONFLICT DO NOTHING as step one. A retry’s insert conflicts → “already processed” → nothing else runs. The Retry tx button on the App tab demos it live.',
+    win: '“Idempotency keys are CALLER-owned — if the server invented them, a lost response would make the client retry into a double spend. One primary key makes every retry safe.”' },
+  { short: 'double-entry', q: 'Why double-entry? How do you audit a whole bank?',
+    nodes: ['shard0', 'shard1'], edges: [],
+    plain: 'Money never appears or vanishes — it MOVES: −30 on igor, +30 on coco, in one transaction, always summing to zero. The “balance” is only a cached summary of those entries.',
+    how: 'Two invariants run live on this page: every transaction’s entries sum to zero (GROUP BY tx_id HAVING SUM ≠ 0 must return nothing), and every balance equals SUM of its entries (the drift check). Money enters via external accounts that MAY go negative — that is how value flows in.',
+    win: '“Auditing the whole bank is one query. Balance is a projection of the ledger, reconciled continuously — state the truth once, derive everything else.”' },
+  { short: 'the outbox', q: 'How do other services learn a payment happened? Why not just publish to Kafka?',
+    nodes: ['shard0', 'kafka'], edges: ['shard0_kafka'],
+    plain: 'You cannot atomically commit to Postgres AND Kafka. Crash between the two and the payment exists with no echo — or worse, an echo for money that never moved.',
+    how: 'So never write to two systems: the event is INSERTed into an outbox table inside the SAME transaction as the money. A relay ships it afterwards and marks it published only AFTER the broker acks. Crash anywhere → resent, never lost.',
+    win: '“The dual-write problem, solved by the transactional outbox: money and event share one commit, delivery is at-least-once, consumers dedupe. Loss impossible, duplicates designed-for.”' },
+  { short: 'exactly-once', q: 'Kafka delivers the same event five times. Does money move five times?',
+    nodes: ['kafka', 'applier', 'notif'], edges: ['kafka_applier', 'kafka_notif'],
+    plain: 'No — every consumer records what it has already seen and shrugs at repeats. Five deliveries, one effect.',
+    how: 'Notifications: the event key is the table’s PRIMARY KEY + ON CONFLICT DO NOTHING. The applier: the txId gates on the destination region’s own transactions table. At-least-once delivery + idempotent consumers = effectively once.',
+    win: '“True exactly-once DELIVERY doesn’t exist across systems — exactly-once EFFECT does, and it costs one conflict clause per consumer.”' },
+  { short: '10K requests', q: 'How does Java handle 10,000 concurrent requests here?',
+    nodes: ['api'], edges: ['browser_api'],
+    plain: 'Every request gets its own VIRTUAL thread (Java 21). A parked thread costs almost nothing, so simple blocking code scales to huge concurrency.',
+    how: 'No callback pyramids, no reactive framework: handlers block on JDBC and Kafka in plain style, but tens of thousands of virtual threads can wait simultaneously. The relays, the applier and the consumers all run on virtual threads too.',
+    win: '“The modern Java answer to C10K: virtual threads — blocking style, async economics. Correctness lives in the database; Java’s job is throughput.”' },
+  { short: 'connections', q: 'What happens to Postgres under thousands of connections?',
+    nodes: ['shard0', 'shard1'], edges: [],
+    plain: 'It drowns — each connection is a whole forked server process. Measured in this repo: 200 queries cost 2,355ms opening a connection each time vs 170ms pooled. 14x.',
+    how: 'A pool opens N real connections once and lends them out; borrowers get a proxy whose close() RETURNS it, state reset. Empty pool → the next borrower WAITS: bounded queueing is backpressure. Fleet-scale: PgBouncer in transaction mode (JDBC needs prepareThreshold=0).',
+    win: '“A database drowns in connections before it drowns in data. Pool small, queue at the pool, PgBouncer in front at scale — and do the pool math before raising replicas: pods × shards × pool size = server connections.”' },
+  { short: 'scaling writes', q: 'Reads are slow → replicas. Writes are slow → ? (replicas vs shards)',
+    nodes: ['api', 'shard0', 'shard1'], edges: ['api_shard0', 'api_shard1'],
+    plain: 'Replicas are CLONES: more readers of one truth — they scale reads only. Writes scale by TERRITORIES: split the customers themselves across independent databases. That is sharding, and this page runs two real ones.',
+    how: 'Shard by CUSTOMER id, so a customer’s whole world is on one machine and the only decision that can fail — does the payer have the money — is a local row lock. Credits can’t fail on funds; the one failure left, a missing destination, bounces into a compensating refund. No distributed locking exists anywhere.',
+    win: '“Progression: one strong Postgres → read replicas → shard by customer LAST, because sharding is operationally expensive. Clones versus territories.”' },
+  { short: 'the saga', q: 'igor and coco live on different machines. How does a transfer work with no distributed transaction?',
+    nodes: ['api', 'shard0', 'intransit', 'kafka', 'applier', 'shard1'],
+    edges: ['api_shard0', 'shard0_kafka', 'kafka_applier', 'applier_shard1'],
+    plain: 'It becomes a SAGA — plainly: a journey told in chapters. Ch.1: money leaves igor into a clearing account (one local ACID commit, event included). Ch.2: Kafka carries it. Ch.3: money lands on coco’s machine (another local ACID commit, gated by the txId). Each chapter is written down.',
+    how: 'The in_transit clearing account makes the in-between honest: each region’s books sum to zero at every instant, and the fleet-wide in_transit sum = money in flight (zero when drained). Destination missing? The saga COMPENSATES: a gated refund on the source. Never lost, never doubled — briefly in flight.',
+    win: '“Cross-shard = saga, not two-phase commit: 2PC blocks both databases while a coordinator decides, and the coordinator is a new single point of failure. A saga is local transactions chained by the outbox, with compensations — and my trace card shows every chapter with timestamps.”' },
+  { short: 'data residency', q: 'UK customer data must stay on UK machines. How?',
+    nodes: ['api'], edges: ['api_shard0', 'api_shard1'],
+    plain: 'That is law, not load — and you cannot compute law with a hash. So the router asks a DIRECTORY where each customer lives. Click the router node: the inspector shows the actual routing table.',
+    how: 'The directory is a tiny service with its own database (customer → region + a moving flag), cached in-process because home regions change approximately never. In Kubernetes the law becomes a scheduling constraint: nodeSelector topology.kubernetes.io/region pins each region’s database to its soil.',
+    win: '“Load shards route by arithmetic; regions route by LAW, which must be a lookup. Same machinery underneath — regions are shards with a passport.”' },
+  { short: 'resharding', q: '“Fine, you sharded — now how do you ever MOVE a customer?”',
+    nodes: ['api', 'shard0', 'intransit', 'shard1'],
+    edges: ['api_shard0', 'shard0_kafka', 'kafka_applier', 'applier_shard1'],
+    plain: 'A balance is money, and money already knows how to move: by transfer. Relocation = drain the whole balance through the standard cross-region flow, then flip one pointer in the directory. Hit Relocate on the App tab and watch this map do it.',
+    how: 'Steps: create the empty account in the new region; set MOVING (the router refuses new transfers with a retriable 409 — a write-pause of milliseconds, reads unaffected); transfer the balance; flip the pointer. Every step is idempotent, so a crash mid-way just retries.',
+    win: '“Resharding without downtime: per-customer moves, milliseconds of write-pause each, no global locks — the payoff of sharding by customer. Even the duplicate Kafka delivery of the move lands on a closed idempotency gate.”' },
+];
+QUESTIONS.forEach((qq, i) => GUIDE['q:' + i] = { t: 'Q' + (i + 1) + ' — ' + qq.short,
+  plain: () => [qq.plain], how: () => [qq.how], win: () => [qq.win] });
+$('#qmap').innerHTML = QUESTIONS.map((qq, i) => `
+  <div class="q-item" data-i="${i}"><span class="q-badge">Q${i + 1}</span>
+    <span class="q-text">${qq.q}</span><span class="chip">${qq.nodes.map(n => NODENAME[n]).join(' · ')}</span></div>`).join('');
+document.querySelectorAll('.q-item').forEach(el => el.onclick = () => {
+  const i = Number(el.dataset.i), qq = QUESTIONS[i];
+  document.querySelectorAll('.q-item').forEach(x => x.classList.toggle('on', x === el));
+  document.querySelectorAll('.node').forEach(n => n.classList.toggle('onpath', qq.nodes.includes(n.dataset.node)));
+  qq.edges.forEach((e, j) => pulse(e, 'var(--violet)', j * 320));
+  gShow('q:' + i, {});
+  $('#guide').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+});
 
 /* ---- the live stream ---- */
-const seen = new Set();
+const seen = new Set(), tickIds = new Set(), klogIds = new Set();
 let firstPoll = true, activeTrace = null, latestEvents = [];
+let prevTickSig = '', prevKlogSig = '', prevEntSig = '';
 const ICON = { transfer_local: '💸', depart: '🛫', published: '📤', arrive: '🛬', refund: '↩️', notify: '🔔' };
 
 async function xrayTick() {
+  try {
   const [s, evs] = await Promise.all([api('/api/xray/summary'), api('/api/xray/events')]);
   lastSummary = s; latestEvents = evs;
 
   const fly = $('#inflight-num'), flying = parseFloat(s.inFlight) !== 0;
-  if (fly.textContent !== '€' + s.inFlight) { fly.parentNode.classList.remove('inflight-pop'); void fly.parentNode.getBoundingClientRect(); fly.parentNode.classList.add('inflight-pop'); }
-  fly.textContent = '€' + s.inFlight;
+  if (fly.textContent !== '€' + s.inFlight) {
+    fly.parentNode.classList.remove('inflight-pop'); void fly.parentNode.getBoundingClientRect();
+    fly.parentNode.classList.add('inflight-pop');
+    fly.textContent = '€' + s.inFlight;
+  }
   fly.style.fill = flying ? 'var(--amber)' : '';
-  $('#shard0-sub').textContent = `:5434 · pool ${s.shards[0].poolBusy}/${s.shards[0].poolSize} · outbox ${s.shards[0].outboxPending}`;
-  $('#shard1-sub').textContent = `:5435 · pool ${s.shards[1].poolBusy}/${s.shards[1].poolSize} · outbox ${s.shards[1].outboxPending}`;
+  const s0 = `:5434 · pool ${s.shards[0].poolBusy}/${s.shards[0].poolSize} · outbox ${s.shards[0].outboxPending}`;
+  const s1 = `:5435 · pool ${s.shards[1].poolBusy}/${s.shards[1].poolSize} · outbox ${s.shards[1].outboxPending}`;
+  if ($('#shard0-sub').textContent !== s0) $('#shard0-sub').textContent = s0;
+  if ($('#shard1-sub').textContent !== s1) $('#shard1-sub').textContent = s1;
 
   const fresh = evs.filter(e => !seen.has(e.type + e.tx + e.ts));
   evs.forEach(e => seen.add(e.type + e.tx + e.ts));
   if (!firstPoll) fresh.slice(0, 6).reverse().forEach((e, i) => animateEvent(e, i * 350));
-  firstPoll = false;
 
-  $('#ticker').innerHTML = evs.slice(0, 9).map(e => `
-    <div class="tick-item" onclick='tickClick(${JSON.stringify(JSON.stringify(e))})'>
-      <div class="tick-ic">${ICON[e.type] || '·'}</div>
-      <div class="tick-main">${evLine(e)}<div class="tick-sub">${new Date(e.ts).toLocaleTimeString()} · tx ${e.tx.slice(0, 8)}…</div></div>
-      <span class="chip ${e.region}">${e.region}</span>
-    </div>`).join('') || '<span class="muted">quiet — send some money on the App tab</span>';
+  const top = evs.slice(0, 9);
+  const sig = top.map(e => e.type + e.tx + e.ts).join('|');
+  if (sig !== prevTickSig) {
+    prevTickSig = sig;
+    $('#ticker').innerHTML = top.map(e => {
+      const id = e.type + e.tx + e.ts, isNew = !tickIds.has(id) && !firstPoll;
+      return `<div class="tick-item${isNew ? ' new' : ''}" onclick='tickClick(${JSON.stringify(JSON.stringify(e))})'>
+        <div class="tick-ic">${ICON[e.type] || '·'}</div>
+        <div class="tick-main">${evLine(e)}<div class="tick-sub">${new Date(e.ts).toLocaleTimeString()} · tx ${e.tx.slice(0, 8)}…</div></div>
+        <span class="chip ${e.region}">${e.region}</span></div>`;
+    }).join('') || '<span class="muted">quiet — send some money on the App tab</span>';
+    top.forEach(e => tickIds.add(e.type + e.tx + e.ts));
+  }
 
   const pubs = evs.filter(e => e.type === 'published').slice(0, 8);
   const notified = new Set(evs.filter(e => e.type === 'notify').map(e => e.tx));
   const arrived = new Set(evs.filter(e => e.type === 'arrive').map(e => e.tx));
-  $('#kafkalog').innerHTML = pubs.map(e => {
-    const pl = e.payload || '', ty = (pl.match(/"type":"([^"]+)"/) || [])[1] || 'event';
-    const from = (pl.match(/"from":(\d+)/) || [])[1], to = (pl.match(/"to":(\d+)/) || [])[1];
-    const amt = (pl.match(/"amount":"([^"]+)"/) || [])[1];
-    const name = id => (accounts.find(a => a.id === Number(id)) || {}).owner || (id === '1' ? 'world' : 'user ' + id);
-    const headline = ty === 'transfer.departed' ? `🛫 ${who(name(from))} → ${who(name(to))} · ${eur(amt)} · cross-region`
-      : ty === 'transfer.bounced' ? `↩️ bounce → refund ${who(name(from))} · ${eur(amt)}`
-      : `💸 ${who(name(from))} → ${who(name(to))} · ${eur(amt)}`;
-    const fate = [arrived.has(e.tx) ? 'applier ✓ settled' : (ty === 'transfer.departed' ? 'applier … in flight' : ''),
-                  notified.has(e.tx) ? 'notified ✓' : ''].filter(Boolean).join(' · ');
-    return `<div class="klog-item" onclick="this.classList.toggle('open');traceTx('${e.tx}')">
-        <div class="tick-ic">📤</div>
-        <div class="tick-main">${headline}<div class="tick-sub">${new Date(e.ts).toLocaleTimeString()} · from ${e.region}'s outbox · ${fate || 'delivered'}</div></div>
-        <span class="chip">key ${e.tx.slice(0, 8)}…</span>
-      </div><div class="klog-raw">${pl.replace(/</g, '&lt;')}</div>`;
-  }).join('') || '<span class="muted">no events published yet</span>';
+  const ksig = pubs.map(e => e.tx + e.ts + (arrived.has(e.tx) ? 'a' : '') + (notified.has(e.tx) ? 'n' : '')).join('|');
+  if (ksig !== prevKlogSig) {
+    prevKlogSig = ksig;
+    const openIds = new Set([...document.querySelectorAll('.klog-item.open')].map(el => el.dataset.id));
+    $('#kafkalog').innerHTML = pubs.map(e => {
+      const id = 'k' + e.tx + e.ts, isNew = !klogIds.has(id) && !firstPoll;
+      const pl = e.payload || '', ty = (pl.match(/"type":"([^"]+)"/) || [])[1] || 'event';
+      const from = (pl.match(/"from":(\d+)/) || [])[1], to = (pl.match(/"to":(\d+)/) || [])[1];
+      const amt = (pl.match(/"amount":"([^"]+)"/) || [])[1];
+      const name = id2 => (accounts.find(a => a.id === Number(id2)) || {}).owner || (id2 === '1' ? 'world' : 'user ' + id2);
+      const headline = ty === 'transfer.departed' ? `🛫 ${who(name(from))} → ${who(name(to))} · ${eur(amt)} · cross-region`
+        : ty === 'transfer.bounced' ? `↩️ bounce → refund ${who(name(from))} · ${eur(amt)}`
+        : `💸 ${who(name(from))} → ${who(name(to))} · ${eur(amt)}`;
+      const fate = [arrived.has(e.tx) ? 'applier ✓ settled' : (ty === 'transfer.departed' ? 'applier … in flight' : ''),
+                    notified.has(e.tx) ? 'notified ✓' : ''].filter(Boolean).join(' · ');
+      return `<div class="klog-item${isNew ? ' new' : ''}${openIds.has(id) ? ' open' : ''}" data-id="${id}" onclick="this.classList.toggle('open');traceTx('${e.tx}')">
+          <div class="tick-ic">📤</div>
+          <div class="tick-main">${headline}<div class="tick-sub">${new Date(e.ts).toLocaleTimeString()} · from ${e.region}'s outbox · ${fate || 'delivered'}</div></div>
+          <span class="chip">key ${e.tx.slice(0, 8)}…</span>
+        </div><div class="klog-raw">${pl.replace(/</g, '&lt;')}</div>`;
+    }).join('') || '<span class="muted">no events published yet</span>';
+    pubs.forEach(e => klogIds.add('k' + e.tx + e.ts));
+  }
+  firstPoll = false;
 
   const entries = await api('/api/xray/entries');
-  $('#entries-table tbody').innerHTML = entries.map(x =>
-    `<tr style="cursor:pointer" onclick="gShow('entry',{});traceTx('${x.tx}')"><td>${x.owner}</td><td class="${x.amount.startsWith('-') ? 'amount-neg' : 'amount-pos'}">${x.amount}</td>
-     <td class="muted">s${x.shard}</td><td class="muted">${x.tx.slice(0, 8)}…</td></tr>`).join('');
+  const esig = entries.map(x => x.tx + x.shard + x.amount).join('|');
+  if (esig !== prevEntSig) {
+    prevEntSig = esig;
+    $('#entries-table tbody').innerHTML = entries.map(x =>
+      `<tr style="cursor:pointer" onclick="gShow('entry',{});traceTx('${x.tx}')"><td>${x.owner}</td><td class="${x.amount.startsWith('-') ? 'amount-neg' : 'amount-pos'}">${x.amount}</td>
+       <td class="muted">s${x.shard}</td><td class="muted">${x.tx.slice(0, 8)}…</td></tr>`).join('');
+  }
+
+  if (inspectNode) refreshInspect();
 
   if (gSubject === 'welcome' && evs[0]) {
     $('#guide-hint').textContent = `Latest: ${evLine(evs[0])} — click it in Live activity to trace its whole journey.`;
   } else if (!$('#guide-hint').textContent) {
     $('#guide-hint').textContent = 'Tip: the three tabs above change how deep I go.';
   }
+  } catch (e) { /* transient fetch failure — the next tick retries */ }
 }
 window.tickClick = evJson => { const e = JSON.parse(evJson); gShow('ev:' + e.type, { ev: e }); traceTx(e.tx); };
 
@@ -695,10 +856,10 @@ const QUIZ = [
     e: 'Clones scale by adding more; databases are territories — reads scale by copying (replicas), writes only by redrawing the map (shards).' },
   { q: 'Why does minibank shard by CUSTOMER id?',
     o: ['Alphabetical order is prettier', 'The only decision that can fail — does the payer have funds — stays local to one shard', 'Postgres requires it', 'Kafka needs it'], a: 1,
-    e: 'A customer’s whole world lives on one machine, so every debit is checked under a plain local row lock. Credits cannot fail. No distributed locking anywhere. (Region sharding is the same idea, and also satisfies data-residency law.)' },
+    e: 'A customer’s whole world lives on one machine, so every debit is checked under a plain local row lock. Credits can’t fail on funds — a missing destination bounces into a compensating refund. No distributed locking anywhere. (Region sharding is the same idea, and also satisfies data-residency law.)' },
   { q: 'igor (shard 0) pays coco (shard 1). What actually happens?',
     o: ['One transaction spans both databases', 'A SAGA: depart (ACID on shard 0) → Kafka → arrive (ACID on shard 1), glued by the outbox', 'The router moves coco to shard 0', 'The payment is rejected'], a: 1,
-    e: 'No BEGIN spans two machines. Money leaves igor into the in_transit clearing account and commits WITH the departed event; the applier lands it on shard 1, gated by the same txId.' },
+    e: 'A saga = one big move done as a chain of small LOCAL transactions, chained by events, undone by compensations. No BEGIN spans two machines: money leaves igor into the in_transit clearing account and commits WITH the departed event; the applier lands it on shard 1, gated by the same txId.' },
   { q: 'Why not two-phase commit between the shards?',
     o: ['It is too new', '2PC blocks both shards while a coordinator decides — and the coordinator is a new single point of failure', 'Postgres cannot speak it', 'It loses money'], a: 1,
     e: 'XA/2PC holds locks across a network round-trip and fails badly when the coordinator does. The saga keeps every transaction local and fast, and pays with a visible, honest in-between state.' },
@@ -752,7 +913,6 @@ $('#q-next').onclick = () => {
 /* ---------------- boot ---------------- */
 loadAccounts(); loadStatement(); renderQuiz(); gShow('welcome');
 setInterval(() => { loadAccounts(); loadStatement(); if (!$('#tab-xray').classList.contains('hidden')) xrayTick(); }, 2000);
-document.querySelector('[data-tab="xray"]').addEventListener('click', () => setTimeout(xrayTick, 50));
 </script>
 </body>
 </html>

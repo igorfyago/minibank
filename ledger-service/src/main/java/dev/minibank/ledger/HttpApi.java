@@ -38,6 +38,7 @@ public final class HttpApi {
         server.createContext("/api/notifications", ex -> handle(ex, HttpApi::notifications));
         server.createContext("/api/xray/summary", ex -> handle(ex, HttpApi::xraySummary));
         server.createContext("/api/xray/events", ex -> handle(ex, HttpApi::xrayEvents));
+        server.createContext("/api/xray/inspect", ex -> handle(ex, HttpApi::xrayInspect));
         server.createContext("/api/xray/trace", ex -> handle(ex, HttpApi::xrayTrace));
         server.createContext("/api/xray/entries", ex -> handle(ex, HttpApi::xrayEntries));
         server.createContext("/api/xray/outbox", ex -> handle(ex, HttpApi::xrayOutbox));
@@ -392,6 +393,115 @@ public final class HttpApi {
             b.append('}');
         }
         return Response.json(200, b.append(']').toString());
+    }
+
+    /** Click a component on the map, see ITS actual database rows — the
+     *  inspector serves each node's own truth: a shard's accounts/entries/
+     *  outbox, the directory's routing table, the notifications table, the
+     *  clearing accounts, the applier's commits. Nothing summarized:
+     *  these are the rows. */
+    private static Response xrayInspect(HttpExchange ex) throws Exception {
+        String q = ex.getRequestURI().getQuery();
+        String node = null;
+        if (q != null) for (String p : q.split("&")) if (p.startsWith("node=")) node = p.substring(5);
+        if (node == null) return Response.json(400, "{\"error\":\"need ?node=\"}");
+
+        java.util.List<String> tables = new java.util.ArrayList<>();
+        switch (node) {
+            case "shard0", "shard1" -> {
+                Shard s = Shards.s("shard1".equals(node) ? 1 : 0);
+                try (Connection c = s.open()) {
+                    tables.add(tableJson(c, "accounts — every account on this machine",
+                            "SELECT id, owner, kind, balance FROM accounts ORDER BY id",
+                            "id", "owner", "kind", "balance"));
+                    tables.add(tableJson(c, "entries — the double-entry truth (latest 8)",
+                            """
+                            SELECT substr(e.tx_id::text,1,8) AS tx, a.owner, e.amount, to_char(e.created_at,'HH24:MI:SS') AS at
+                            FROM entries e JOIN accounts a ON a.id = e.account_id ORDER BY e.id DESC LIMIT 8""",
+                            "tx", "account", "amount", "at"));
+                    tables.add(tableJson(c, "outbox — events born inside money commits (latest 5)",
+                            """
+                            SELECT substr(key,1,17) AS key, CASE WHEN published_at IS NULL THEN 'pending' ELSE 'published' END AS state,
+                                   to_char(created_at,'HH24:MI:SS') AS at
+                            FROM outbox ORDER BY id DESC LIMIT 5""",
+                            "key", "state", "at"));
+                }
+            }
+            case "api" -> {
+                try (Connection c = Directory.openForRead()) {
+                    tables.add(tableJson(c, "the routing directory — which region owns each customer",
+                            "SELECT customer_id, owner, CASE WHEN shard = 0 THEN 'eu' ELSE 'uk' END AS region, moving FROM customers ORDER BY customer_id",
+                            "customer", "owner", "region", "moving"));
+                }
+            }
+            case "intransit" -> {
+                for (Shard s : Shards.all()) {
+                    try (Connection c = s.open()) {
+                        tables.add(tableJson(c, "entries through " + Shards.regionName(s.index) + "'s clearing account (latest 5)",
+                                """
+                                SELECT substr(e.tx_id::text,1,8) AS tx, e.amount, to_char(e.created_at,'HH24:MI:SS') AS at
+                                FROM entries e WHERE e.account_id = 3 ORDER BY e.id DESC LIMIT 5""",
+                                "tx", "amount", "at"));
+                    }
+                }
+            }
+            case "kafka" -> {
+                for (Shard s : Shards.all()) {
+                    try (Connection c = s.open()) {
+                        tables.add(tableJson(c, "published from " + Shards.regionName(s.index) + "'s outbox (latest 5)",
+                                """
+                                SELECT substr(key,1,17) AS key, to_char(published_at,'HH24:MI:SS') AS published
+                                FROM outbox WHERE published_at IS NOT NULL ORDER BY published_at DESC LIMIT 5""",
+                                "key", "published"));
+                    }
+                }
+            }
+            case "applier" -> {
+                for (Shard s : Shards.all()) {
+                    try (Connection c = s.open()) {
+                        tables.add(tableJson(c, "saga steps committed on " + Shards.regionName(s.index) + " (latest 6)",
+                                """
+                                SELECT substr(id::text,1,8) AS tx, kind, to_char(created_at,'HH24:MI:SS') AS at
+                                FROM transactions WHERE kind IN ('depart','arrive','refund') ORDER BY created_at DESC LIMIT 6""",
+                                "tx", "step", "at"));
+                    }
+                }
+            }
+            case "notif" -> {
+                try (Connection c = Notifications.openForRead()) {
+                    tables.add(tableJson(c, "notifications — its own database, fed only by Kafka (latest 6)",
+                            "SELECT substr(event_key,1,17) AS key, to_char(created_at,'HH24:MI:SS') AS at FROM notifications ORDER BY created_at DESC LIMIT 6",
+                            "event key", "stored at"));
+                }
+            }
+            default -> { /* browser: nothing to inspect */ }
+        }
+        return Response.json(200, "{\"node\":\"" + Json.esc(node) + "\",\"tables\":[" + String.join(",", tables) + "]}");
+    }
+
+    /** run a query, emit {title, cols, rows} — the generic inspector table */
+    private static String tableJson(Connection c, String title, String sql, String... cols) throws Exception {
+        StringBuilder b = new StringBuilder("{\"title\":\"").append(Json.esc(title)).append("\",\"cols\":[");
+        for (int i = 0; i < cols.length; i++) {
+            if (i > 0) b.append(',');
+            b.append('"').append(Json.esc(cols[i])).append('"');
+        }
+        b.append("],\"rows\":[");
+        try (var st = c.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+            int ncols = rs.getMetaData().getColumnCount();
+            boolean firstRow = true;
+            while (rs.next()) {
+                if (!firstRow) b.append(',');
+                firstRow = false;
+                b.append('[');
+                for (int i = 1; i <= ncols; i++) {
+                    if (i > 1) b.append(',');
+                    b.append('"').append(Json.esc(String.valueOf(rs.getObject(i)))).append('"');
+                }
+                b.append(']');
+            }
+        }
+        return b.append("]}").toString();
     }
 
     /** One transaction's whole journey, assembled from the timestamps the

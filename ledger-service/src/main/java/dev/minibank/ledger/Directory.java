@@ -142,6 +142,11 @@ public final class Directory {
         cache.remove(customerId);
     }
 
+    /** read-only connection for the API layer (the X-ray shows the routing table). */
+    public static Connection openForRead() throws SQLException {
+        return openOwnDb();
+    }
+
     /** tests only: a fresh cache between lessons */
     static void clearCache() {
         cache.clear();
