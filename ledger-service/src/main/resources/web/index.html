@@ -17,6 +17,7 @@
              border-radius:999px; font:600 13px system-ui; cursor:pointer; }
   .tab-btn.on { background:var(--accent); border-color:var(--accent); color:#fff; }
   main { max-width:1100px; margin:0 auto; padding:22px; }
+  main:has(#tab-xray:not(.hidden)) { max-width:1520px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px; }
   .card h2 { font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; margin-bottom:10px; }
   .muted { color:var(--dim); font-size:12px; }
@@ -110,8 +111,9 @@
   @keyframes blink { 50% { opacity:.2; } }
 
   /* ticker + kafka log + trace */
-  .tick-item, .klog-item { display:flex; align-items:center; gap:10px; padding:7px 6px; border-radius:10px;
-    cursor:pointer; font-size:12.5px; }
+  .tick-item, .klog-item { display:flex; align-items:center; gap:9px; padding:4.5px 4px; border-radius:10px;
+    cursor:pointer; font-size:12px; }
+  .tick-ic { width:24px !important; height:24px !important; font-size:12px !important; }
   .tick-item.new, .klog-item.new { animation:slidein .25s ease; }
   .tick-item:hover, .klog-item:hover { background:rgba(255,255,255,.04); }
   @keyframes slidein { from { opacity:0; transform:translateY(-7px); } }
@@ -173,7 +175,11 @@
   .stat:hover { background:rgba(255,255,255,.03); }
 
   /* x-ray map */
-  .xray-grid { display:grid; grid-template-columns: 1fr 340px; gap:16px; }
+  .xray-grid { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(0,1fr) 340px; gap:14px; align-items:start; }
+  .xcol { display:flex; flex-direction:column; gap:14px; min-width:0; }
+  .xray-grid .card { padding:14px 16px; }
+  #xsvg { display:block; }
+  @media (max-width:1180px) { .xray-grid { grid-template-columns:1fr; } .guide { position:static; max-height:none; } }
   svg text { font-family:system-ui; }
   .node { cursor:pointer; }
   .node rect, .node ellipse, .node path { fill:#1c2330; stroke:var(--line); stroke-width:1.5; }
@@ -245,10 +251,10 @@
   <!-- ======================= X-RAY ======================= -->
   <section id="tab-xray" class="hidden">
     <div class="xray-grid">
-      <div>
+      <div class="xcol">
         <div class="card">
-          <h2>The living map — click anything, the Guide explains it</h2>
-          <svg viewBox="0 0 720 470" width="100%" id="xsvg">
+          <h2>The living map — click anything</h2>
+          <svg viewBox="0 0 720 430" width="100%" id="xsvg">
             <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
               <path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker></defs>
             <line class="edge" data-edge="browser_api"  x1="120" y1="60"  x2="165" y2="60"/>
@@ -291,9 +297,8 @@
             <g id="pulse-layer"></g>
           </svg>
         </div>
-
-        <div class="card" style="margin-top:14px">
-          <h2>The ecosystem, live — every technology, right now</h2>
+        <div class="card">
+          <h2>The ecosystem, live</h2>
           <div class="eco-grid">
             <div class="eco" id="eco-pg">
               <div class="eco-head">🐘 PostgreSQL ×4</div>
@@ -315,14 +320,7 @@
             </div>
           </div>
         </div>
-
-        <div class="card" style="margin-top:14px" id="inspect-card" hidden>
-          <h2><span id="inspect-title">Inside</span>
-            <button class="ghost" style="float:right;padding:2px 10px" id="inspect-clear">✕</button></h2>
-          <div id="inspect-body"></div>
-        </div>
-
-        <div class="card" style="margin-top:14px" id="trace-card" hidden>
+        <div class="card" id="trace-card" hidden>
           <h2>Trace <span class="muted" id="trace-tx"></span>
             <button class="ghost" style="float:right;padding:2px 10px" id="trace-clear">✕</button>
             <button class="ghost" style="float:right;padding:2px 10px;margin-right:8px" id="replay-btn">▶ replay 3s</button></h2>
@@ -333,25 +331,21 @@
           </div>
           <div id="trace-steps"></div>
         </div>
-
-        <div class="card" style="margin-top:14px">
-          <h2>The interview map — 12 questions, and where this bank answers them</h2>
-          <div id="qmap"></div>
+        <div class="card" id="inspect-card" hidden>
+          <h2><span id="inspect-title">Inside</span>
+            <button class="ghost" style="float:right;padding:2px 10px" id="inspect-clear">✕</button></h2>
+          <div id="inspect-body"></div>
         </div>
+      </div>
 
-        <div class="card" style="margin-top:14px">
+      <div class="xcol">
+        <div class="card">
           <h2>Live activity</h2>
           <div id="ticker"><span class="muted">watching…</span></div>
         </div>
-
-        <div class="card" style="margin-top:14px">
-          <h2>Kafka — the payments topic, humanly</h2>
+        <div class="card">
+          <h2>Kafka — payments topic</h2>
           <div id="kafkalog"><span class="muted">no events yet</span></div>
-        </div>
-
-        <div class="card" style="margin-top:14px">
-          <h2>Recent ledger entries</h2>
-          <table id="entries-table"><thead><tr><th>who</th><th>amount</th><th>shard</th><th>tx</th></tr></thead><tbody></tbody></table>
         </div>
       </div>
 
@@ -367,8 +361,17 @@
         <div id="guide-hint"></div>
       </div>
     </div>
-  </section>
 
+    <div class="card" style="margin-top:14px">
+      <h2>The interview map — 12 questions, and where this bank answers them</h2>
+      <div id="qmap"></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>Recent ledger entries</h2>
+      <table id="entries-table"><thead><tr><th>who</th><th>amount</th><th>shard</th><th>tx</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
   <!-- ======================= QUIZ ======================= -->
   <section id="tab-quiz" class="hidden">
     <div class="card" id="quiz-card">
@@ -847,7 +850,7 @@ async function xrayTick() {
   evs.forEach(e => seen.add(e.type + e.tx + e.ts));
   if (!firstPoll) fresh.slice(0, 6).reverse().forEach((e, i) => animateEvent(e, i * 350));
 
-  const top = evs.slice(0, 9);
+  const top = evs.slice(0, 7);
   const sig = top.map(e => e.type + e.tx + e.ts).join('|');
   if (sig !== prevTickSig) {
     prevTickSig = sig;
@@ -861,7 +864,7 @@ async function xrayTick() {
     top.forEach(e => tickIds.add(e.type + e.tx + e.ts));
   }
 
-  const pubs = evs.filter(e => e.type === 'published').slice(0, 8);
+  const pubs = evs.filter(e => e.type === 'published').slice(0, 5);
   const notified = new Set(evs.filter(e => e.type === 'notify').map(e => e.tx));
   const arrived = new Set(evs.filter(e => e.type === 'arrive').map(e => e.tx));
   const ksig = pubs.map(e => e.tx + e.ts + (arrived.has(e.tx) ? 'a' : '') + (notified.has(e.tx) ? 'n' : '')).join('|');
