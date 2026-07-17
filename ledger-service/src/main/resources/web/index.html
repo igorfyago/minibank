@@ -42,6 +42,20 @@
   td { padding:5px 8px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
   .amount-pos { color:var(--green); } .amount-neg { color:var(--red); }
 
+  /* the operations ticker — the backend, streaming past on every tab */
+  #ticker-bar { position:fixed; left:0; right:0; bottom:0; height:32px; z-index:45; overflow:hidden;
+    background:rgba(10,13,20,.94); border-top:1px solid var(--line); backdrop-filter:blur(8px);
+    display:flex; align-items:center; }
+  .tk-track { display:inline-flex; gap:34px; white-space:nowrap; will-change:transform;
+    animation:tkscroll 40s linear infinite; }
+  #ticker-bar:hover .tk-track { animation-play-state:paused; }
+  @keyframes tkscroll { from { transform:translateX(0); } to { transform:translateX(-50%); } }
+  .tk-i { display:inline-flex; align-items:center; gap:7px; font:11.5px 'Cascadia Code', Consolas, monospace;
+    color:var(--dim); }
+  .tk-i b { font-weight:650; }
+  .tk-sep { color:#2a3140; }
+  main { padding-bottom:46px; }
+
   /* the hero + the show */
   #hero { position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center;
     background: radial-gradient(90% 100% at 20% 0%, rgba(122,92,255,.20), transparent 50%),
@@ -55,7 +69,7 @@
   .hero-stats { color:var(--dim); font-size:12.5px; margin-bottom:28px; letter-spacing:.02em; }
   .hero-btns { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
   .hero-btns .primary { padding:12px 22px; font-size:14px; background:linear-gradient(135deg, var(--accent), var(--violet)); }
-  #showbar { position:fixed; left:50%; transform:translateX(-50%); bottom:22px; z-index:60; width:min(780px, 92vw);
+  #showbar { position:fixed; left:50%; transform:translateX(-50%); bottom:44px; z-index:60; width:min(780px, 92vw);
     background:rgba(22,27,34,.97); border:1px solid var(--violet); border-radius:14px; padding:14px 18px;
     box-shadow:0 8px 44px rgba(122,92,255,.28); }
   #show-cap { font-size:15px; line-height:1.55; min-height:23px; }
@@ -319,17 +333,20 @@
   #q-explain { margin-top:12px; padding:12px; border:1px solid var(--line); border-radius:8px;
                font-size:13px; display:none; }
   /* Rita — the support agent */
-  #chat-fab { position:fixed; right:20px; bottom:20px; z-index:55; width:54px; height:54px; border-radius:50%;
+  #chat-fab { position:fixed; right:20px; bottom:46px; z-index:55; width:54px; height:54px; border-radius:50%;
     border:none; background:linear-gradient(135deg, var(--accent), var(--violet)); color:#fff; font-size:23px;
     cursor:pointer; box-shadow:0 6px 24px rgba(88,166,255,.35); transition:transform .15s; }
   #chat-fab:hover { transform:scale(1.08); }
-  #chat-panel { position:fixed; right:20px; bottom:84px; z-index:56; width:min(360px, calc(100vw - 24px));
-    height:min(480px, calc(100vh - 120px)); background:var(--panel); border:1px solid var(--line);
-    border-radius:16px; display:flex; flex-direction:column; box-shadow:0 12px 48px rgba(0,0,0,.5);
+  #chat-panel { position:fixed; right:20px; bottom:106px; z-index:56; width:min(430px, calc(100vw - 24px));
+    height:min(640px, calc(100vh - 150px)); background:var(--panel); border:1px solid var(--line);
+    border-radius:18px; display:flex; flex-direction:column; box-shadow:0 12px 48px rgba(0,0,0,.5);
     animation:slidein .2s ease; }
-  .chat-head { padding:12px 14px; border-bottom:1px solid var(--line); font-weight:650; font-size:13.5px;
-    display:flex; align-items:center; gap:8px; }
-  .chat-head .muted { font-weight:400; font-size:11px; flex:1; }
+  .chat-head { padding:13px 15px; border-bottom:1px solid var(--line); font-weight:650; font-size:14.5px;
+    display:flex; align-items:center; gap:9px; }
+  .chat-ava { width:27px; height:27px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(135deg, var(--accent), var(--violet)); color:#fff; font:800 13px system-ui; }
+  .chat-dot { width:7px; height:7px; border-radius:50%; background:var(--green); animation:blink 1.8s infinite; }
+  .chat-note { text-align:center; font-size:10px; color:var(--dim); opacity:.75; padding:0 0 4px; }
   #chat-msgs { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:8px; }
   .chat-b { max-width:85%; padding:8px 12px; border-radius:14px; font-size:13px; line-height:1.5; white-space:pre-wrap; }
   .chat-b.me { align-self:flex-end; background:var(--violet); color:#fff; border-bottom-right-radius:4px; }
@@ -366,7 +383,6 @@
   /* mobile: the same bank, pocket-sized — nothing hidden except the tagline */
   @media (max-width: 760px) {
     header { padding:10px 12px; gap:10px; }
-    header > .muted { display:none; }
     nav { overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
     nav::-webkit-scrollbar { display:none; }
     .tab-btn { padding:5px 12px; font-size:12px; white-space:nowrap; }
@@ -377,7 +393,8 @@
     .hero-title { font-size:42px; }
     .hero-tag { font-size:14.5px; }
     .eco-grid { grid-template-columns:1fr; }
-    #showbar { bottom:10px; padding:10px 14px; width:94vw; }
+    #showbar { bottom:38px; padding:10px 14px; width:94vw; }
+    .tk-i { font-size:10.5px; }
     #show-cap { font-size:13.5px; }
     .guide { position:static; max-height:none; }
     .tx-after { display:block; }
@@ -388,7 +405,6 @@
 <body>
 <header>
   <h1>mini<span>bank</span></h1>
-  <span class="muted">raw Java 21 · PostgreSQL ×2 regions · Kafka — every mechanism proven by a test</span>
   <nav>
     <button class="tab-btn on" data-tab="app">App</button>
     <button class="tab-btn" data-tab="xray">X-ray</button>
@@ -520,6 +536,9 @@
               <text x="105" y="38" text-anchor="middle" class="sub">CoinGecko · Yahoo · EURUSD · 60s cache</text></g>
             <g id="pulse-layer"></g>
           </svg>
+          <div class="muted" style="text-align:center; font-size:11.5px; margin-top:6px">
+            every box is a real running process · raw Java 21, zero frameworks · PostgreSQL ×4 · Kafka ·
+            38 executable proofs in the repo</div>
         </div>
         <div class="card" id="trace-card" hidden>
           <h2>Trace <span class="muted" id="trace-tx"></span>
@@ -585,6 +604,66 @@
         <div id="guide-stats"></div>
         <div id="guide-hint"></div>
       </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>The same design at 75,000,000 customers — what scales is COUNTS, not concepts</h2>
+      <div class="muted" style="font-size:12.5px; margin-bottom:10px">The demo above runs every mechanism once.
+        Production multiplies them. Click any box — the Guide answers with the capacity math.</div>
+      <svg viewBox="0 0 980 380" width="100%">
+        <line class="edge" x1="150" y1="46" x2="185" y2="46"/>
+        <line class="edge" x1="400" y1="46" x2="435" y2="46"/>
+        <line class="edge" x1="610" y1="60" x2="610" y2="92"/>
+        <line class="edge" x1="330" y1="212" x2="330" y2="248"/>
+        <line class="edge" x1="560" y1="274" x2="600" y2="274"/>
+        <line class="edge" x1="180" y1="150" x2="70" y2="150"/>
+        <g class="node" data-node="scale:edge" transform="translate(10,24)">
+          <rect width="140" height="44" rx="9"/><text x="70" y="20" text-anchor="middle">🌐 Edge</text>
+          <text x="70" y="35" text-anchor="middle" class="sub">anycast · WAF · gateway buckets</text></g>
+        <g class="node" data-node="scale:app" transform="translate(185,24)">
+          <rect width="215" height="44" rx="9"/><text x="107" y="20" text-anchor="middle">App tier — stateless, ×hundreds</text>
+          <text x="107" y="35" text-anchor="middle" class="sub">HPA on p99 · canary deploys · no state</text></g>
+        <g class="node" data-node="scale:bouncer" transform="translate(435,24)">
+          <rect width="175" height="44" rx="9"/><text x="87" y="20" text-anchor="middle">PgBouncer tier</text>
+          <text x="87" y="35" text-anchor="middle" class="sub">10,000 client conns → 100s real</text></g>
+        <g class="node" data-node="scale:regions" transform="translate(180,92)">
+          <rect width="620" height="120" rx="12" style="fill:none; stroke-dasharray:5 5"/>
+          <text x="16" y="20" class="sub" style="font-size:11px">region eu — one of 3+ · fault domain = legal domain</text></g>
+        <g class="node" data-node="scale:shard" transform="translate(200,120)">
+          <path d="M0,10 a55,10 0 0 1 110,0 v50 a55,10 0 0 1 -110,0 z"/>
+          <ellipse cx="55" cy="10" rx="55" ry="10"/>
+          <text x="55" y="34" text-anchor="middle" style="font-size:11.5px">shard 1 · h(cust)</text>
+          <text x="55" y="50" text-anchor="middle" class="sub" style="font-size:9.5px">primary + sync standby</text>
+          <text x="55" y="62" text-anchor="middle" class="sub" style="font-size:9.5px">+ 2 async read replicas</text></g>
+        <g class="node" data-node="scale:shard" transform="translate(330,120)">
+          <path d="M0,10 a55,10 0 0 1 110,0 v50 a55,10 0 0 1 -110,0 z"/>
+          <ellipse cx="55" cy="10" rx="55" ry="10"/>
+          <text x="55" y="34" text-anchor="middle" style="font-size:11.5px">shard 2 · h(cust)</text>
+          <text x="55" y="50" text-anchor="middle" class="sub" style="font-size:9.5px">primary + sync standby</text>
+          <text x="55" y="62" text-anchor="middle" class="sub" style="font-size:9.5px">+ 2 async read replicas</text></g>
+        <g class="node" data-node="scale:replica" transform="translate(460,120)">
+          <rect width="150" height="72" rx="10"/>
+          <text x="75" y="24" text-anchor="middle" style="font-size:11.5px">…shard k (≈20–40)</text>
+          <text x="75" y="42" text-anchor="middle" class="sub" style="font-size:9.5px">writes → primary only</text>
+          <text x="75" y="56" text-anchor="middle" class="sub" style="font-size:9.5px">reads → replicas (ms stale)</text></g>
+        <g class="node" data-node="scale:directory" transform="translate(10,120)">
+          <rect width="150" height="60" rx="10"/><text x="75" y="26" text-anchor="middle">Directory</text>
+          <text x="75" y="43" text-anchor="middle" class="sub">75M rows ≈ GBs · cached everywhere</text></g>
+        <g class="node" data-node="scale:kafka" transform="translate(180,248)">
+          <rect width="380" height="52" rx="10"/><text x="190" y="22" text-anchor="middle">Kafka — 3+ brokers · RF=3 · min.insync=2</text>
+          <text x="190" y="39" text-anchor="middle" class="sub">payments partitioned BY CUSTOMER → per-customer order survives scale</text></g>
+        <g class="node" data-node="scale:dlq" transform="translate(600,248)">
+          <rect width="90" height="52" rx="10"/><text x="45" y="24" text-anchor="middle">DLQ</text>
+          <text x="45" y="39" text-anchor="middle" class="sub">poison events</text></g>
+        <g class="node" data-node="scale:consumers" transform="translate(180,322)">
+          <rect width="290" height="46" rx="10"/><text x="145" y="20" text-anchor="middle">appliers ×N · notifications ×N · fraud</text>
+          <text x="145" y="36" text-anchor="middle" class="sub">parallelism = partition count · idempotent ⇒ safe to scale</text></g>
+        <g class="node" data-node="scale:cdc" transform="translate(490,322)">
+          <rect width="200" height="46" rx="10"/><text x="100" y="20" text-anchor="middle">CDC → warehouse / lake</text>
+          <text x="100" y="36" text-anchor="middle" class="sub">strong OLTP · eventual OLAP</text></g>
+        <g class="node" data-node="scale:shard" transform="translate(710,92)">
+          <rect width="90" height="0" rx="0" style="fill:none;stroke:none"/></g>
+      </svg>
     </div>
 
     <div class="card" style="margin-top:14px">
@@ -664,15 +743,18 @@
   </div>
 </div>
 
-<button id="chat-fab" title="Rita — minibank support">💬</button>
+<div id="ticker-bar"><div class="tk-track" id="tk-track"></div></div>
+
+<button id="chat-fab" title="Rita">💬</button>
 <div id="chat-panel" class="hidden">
-  <div class="chat-head">🧑‍💼 Rita · support
-    <span class="muted">same powers as you · every action needs your Allow</span>
+  <div class="chat-head"><span class="chat-ava">R</span><b>Rita</b><span class="chat-dot"></span>
+    <span style="flex:1"></span>
     <button class="ghost" style="padding:1px 9px" id="chat-close">✕</button></div>
   <div id="chat-chips"></div>
   <div id="chat-msgs"></div>
+  <div class="chat-note">acts on your account · every action asks you first</div>
   <div class="chat-row">
-    <input id="chat-in" type="text" placeholder="ask about your account, or the architecture…" maxlength="400">
+    <input id="chat-in" type="text" placeholder="Message Rita" maxlength="400">
     <button class="primary" id="chat-send">→</button>
   </div>
 </div>
@@ -1160,6 +1242,50 @@ const GUIDE = {
       `Today's prod: the same containers via compose on one box — the manifests are the cluster shape.`],
     how: () => [`Clones (Deployments) vs territories (StatefulSets with names and disks). Readiness probes gate traffic; config is env vars — same image everywhere.`],
     win: () => [`Residency enforced by the scheduler turns a compliance requirement into an infrastructure invariant.`] },
+  'scale:edge': { t: 'Edge at 75M — anycast, WAF, gateway limits',
+    plain: () => [`Global anycast fronts everything; TLS terminates at the edge; the WAF eats floods before they cost compute. The demo's per-instance token bucket becomes a GATEWAY policy with shared state (Redis) — same algorithm, fleet-wide.`],
+    how: () => [`Budget: ~1B payments/month ≈ 400 req/s average on the money path, peaks 10–20× (paydays, Black Friday) ≈ 5–8k/s — plus an order of magnitude more reads. Rate limits per user AND per device AND per endpoint class.`],
+    win: () => [`Demo→prod mapping: Caddy → anycast LB + WAF; TokenBucket.java → gateway policy. Nothing conceptually new enters the system at the edge.`] },
+  'scale:app': { t: 'App tier at 75M — hundreds of stateless pods',
+    plain: () => [`The tier that scales by COUNT: hundreds of stateless pods, autoscaled on p99 latency, deployed canary-first. Correctness never lived here — it lives in the databases — which is exactly WHY replicas:300 is a safe number to type.`],
+    how: () => [`Every pod carries a pool per shard, so the connection math is pods × shards × pool — 300 pods × 30 shards × 5 would be 45,000 server connections: impossible. That is why the PgBouncer tier is mandatory, not optional.`],
+    win: () => [`“What scales freely? The stateless tier. What must be budgeted? Its connections.” Pool math before replica math — every time.`] },
+  'scale:bouncer': { t: 'PgBouncer tier — the connection dam',
+    plain: () => [`Transaction-mode poolers collapse ~10,000 app-side connections into a few hundred real Postgres backends per shard. Each Postgres connection is a forked process — the database drowns in connections before it drowns in data.`],
+    how: () => [`Per shard: cap real backends near CPU cores × small factor (~50–100); everything above queues in the bouncer, which is backpressure. JDBC gotcha at this layer: prepareThreshold=0. The demo runs this exact thing on :6432.`],
+    win: () => [`Measured in this repo: connection-per-query was 14× slower than pooling. At fleet scale the same physics, three orders of magnitude bigger.`] },
+  'scale:shard': { t: 'Sharding at 75M — the write budget math',
+    plain: () => [`Shard COUNT comes from a budget, not a guess: peak ~5–8k payments/s, each a small multi-row ACID commit; a healthy primary carries ~2k such tx/s with headroom → 20–40 shards globally, hashed by customer id, spread across regions.`],
+    how: () => [`Why by CUSTOMER: the only fallible decision (payer's funds) stays a local row lock; per-customer ordering is free; a customer is a self-contained unit you can MOVE (the demo's relocation, batched, is the resharding runbook). Hot-key risk is low — no single customer dominates a bank's writes.`],
+    win: () => [`“I size shards from the write budget: peak tx/s ÷ per-primary budget, ×2 headroom. Growth doubles? Split shards by moving customers — milliseconds of write-pause each, no global event.”`] },
+  'scale:replica': { t: 'Replicas — HA and the read path',
+    plain: () => [`Every shard is a trio+: a PRIMARY (all writes), a SYNC standby (commit returns only when it also has the WAL → zero-data-loss failover in seconds), and 2+ ASYNC read replicas serving statements, exports and dashboards milliseconds behind.`],
+    how: () => [`Postgres WAL streaming, built-in — no Kafka involved in replication. Route by staleness tolerance: balance checks before a debit → primary; statement pages → replica. That split removes most read load from the write path.`],
+    win: () => [`“Replicas scale READS and buy failover; they never scale writes — that is what the shards are for. RPO 0 via sync standby, RTO seconds via promotion.” The demo teaches the split; production multiplies it.`] },
+  'scale:directory': { t: 'Directory at 75M — small data, huge fan-out',
+    plain: () => [`75M customer→shard rows is only gigabytes — a SMALL dataset with enormous read fan-out. Answer: replicate it to every region, cache it in every app pod, invalidate through Kafka change events.`],
+    how: () => [`Lookups are ~100% cache hits (a home shard changes approximately never). Writes are rare (signup, relocation) and serialize through one writer. The moving flag is the same write-pause the demo performs.`],
+    win: () => [`“The routing tier people fear is the easiest tier: tiny, immutable-ish, infinitely cacheable. It is a lookup, not a bottleneck.”`] },
+  'scale:kafka': { t: 'Kafka at 75M — partitions and guarantees',
+    plain: () => [`3+ brokers, replication factor 3, min.insync.replicas 2 — so acks=all (which the relay already demands) means two disks before the outbox row is marked. The payments topic is partitioned BY CUSTOMER: per-customer ordering survives any scale.`],
+    how: () => [`Throughput is trivial (peak ~8k events/s × 1KB ≈ 8MB/s); PARTITION COUNT is really a consumer-parallelism decision — 100+ partitions lets appliers scale to 100+ instances. Retention days, compacted where snapshots make sense.`],
+    win: () => [`“Kafka sizing is rarely about MB/s for payments — it is about ordering keys and consumer parallelism. Key by customer, partitions ≥ max consumer count you will ever want.”`] },
+  'scale:consumers': { t: 'Consumers at 75M — scale-out that stays safe',
+    plain: () => [`Appliers and notifications become GROUPS of N instances — Kafka assigns partitions across them. N scales to lag, and lag (end − committed, live in this site's Console) is the SLO that pages someone.`],
+    how: () => [`Scaling consumers is only safe because every handler is idempotent — the txId gates and event_key PKs the demo proves. Redelivery, rebalance, replay: all no-ops. Fraud scoring is just one more group on the same topic.`],
+    win: () => [`“At-least-once + idempotent handlers means my scaling knob is literally 'add instances'. The demo proves the idempotency; production turns the knob.”`] },
+  'scale:dlq': { t: 'Dead-letter queues — poison, quarantined',
+    plain: () => [`An event that fails processing N times moves to the group's DLQ instead of blocking the partition behind it. Money stays safe (in_transit holds it); a human or a repair job replays the DLQ later.`],
+    how: () => [`Without a DLQ one malformed event halts a partition forever — the classic Kafka outage. The demo's bounce-refund is the same philosophy applied to a business failure: compensate, never wedge.`],
+    win: () => [`“Every consumer group ships with a DLQ and a replay tool from day one. A stuck partition at 3am is how you learn this; I prefer learning it in the design review.”`] },
+  'scale:cdc': { t: 'CDC — where analytics lives',
+    plain: () => [`The warehouse/lake is JUST ANOTHER CONSUMER: outbox events (or CDC on the ledgers) stream into OLAP storage. Analysts get everything; the money path feels nothing.`],
+    how: () => [`This is the strong-OLTP / eventual-OLAP split: FOR UPDATE locks and CHECK constraints on one side, columnar scans on the other, an event stream between. Never point a BI tool at a primary.`],
+    win: () => [`“Fit-for-purpose consistency ends at the warehouse: strong where money moves, eventual where dashboards render. Same events, two destinies.”`] },
+  'scale:regions': { t: 'Regions at 75M — fault domain = legal domain',
+    plain: () => [`3+ regions, each a complete stack: its shards, its poolers, its consumers. A region is simultaneously the unit of data-residency LAW and the unit of blast radius — one region down ≠ the bank down.`],
+    how: () => [`Cross-region flows ride ONLY the event fabric (the demo's saga) — no synchronous cross-region calls on the money path, ever: a partition between regions delays settlement, it cannot corrupt it. In k8s terms: nodeSelector pins every stateful set to its soil.`],
+    win: () => [`“My cross-region invariant: the fleet-wide in_transit sum. It is the reconciliation control AND the honesty metric — money in flight, visible on a balance sheet, zero when drained.”`] },
   trace: { t: 'A transaction’s journey',
     plain: c => [`${who(c.tr.payer)} → ${who(c.tr.payee || 'the pipe')}${c.tr.amount ? ', ' + eur(c.tr.amount) : ''}: ${c.tr.steps.length} recorded steps, ${c.total}ms end to end. Click a step; ▶ replays it.`],
     how: () => [`Assembled from timestamps the system already writes — commits, published_at, notification inserts. No tracing agent exists.`],
@@ -1300,7 +1426,7 @@ const QUESTIONS = [
   { short: 'the saga', q: 'igor and coco live on different machines. How does a transfer work with no distributed transaction?',
     nodes: ['api', 'shard0', 'intransit', 'kafka', 'applier', 'shard1'],
     edges: ['api_shard0', 'shard0_kafka', 'kafka_applier', 'applier_shard1'],
-    plain: 'It becomes a SAGA — plainly: a journey told in chapters. Ch.1: money leaves igor into a clearing account (one local ACID commit, event included). Ch.2: Kafka carries it. Ch.3: money lands on coco’s machine (another local ACID commit, gated by the txId). Each chapter is written down.',
+    plain: 'No transaction spans two machines — so it is TWO local ACID commits glued by an event. Commit 1, source region: debit igor, credit the in_transit clearing account, write the outbox event — atomically. Kafka delivers at-least-once. Commit 2, destination region: gated by the same txId, credit coco. Both regions’ books sum to zero at every instant in between.',
     how: 'The in_transit clearing account makes the in-between honest: each region’s books sum to zero at every instant, and the fleet-wide in_transit sum = money in flight (zero when drained). Destination missing? The saga COMPENSATES: a gated refund on the source. Never lost, never doubled — briefly in flight.',
     win: '“Cross-shard = saga, not two-phase commit: 2PC blocks both databases while a coordinator decides, and the coordinator is a new single point of failure. A saga is local transactions chained by the outbox, with compensations — and my trace card shows every chapter with timestamps.”' },
   { short: 'data residency', q: 'UK customer data must stay on UK machines. How?',
@@ -1523,7 +1649,7 @@ function playSegment(st, i, n) {
     pulse(e2, st.step === 'depart' ? 'var(--amber)' : st.step === 'notify' ? 'var(--green)' : 'var(--accent)', j * 260));
   const nd = (STEP_NODE[st.step] || (() => null))(st);
   if (nd) glow(nd);
-  $('#play-caption').textContent = `chapter ${i + 1}/${n} — ${st.detail} · ${st.region}`;
+  $('#play-caption').textContent = `step ${i + 1}/${n} — ${st.detail} · ${st.region}`;
 }
 
 function playTrace(tr) {
@@ -1551,7 +1677,7 @@ function playTrace(tr) {
   });
   playTimers.push(setTimeout(() => {
     document.querySelectorAll('.trace-step').forEach(el => el.classList.remove('active'));
-    $('#play-caption').textContent = `✓ that was the real journey — ${realTotal}ms in real time, replayed slow enough to see`;
+    $('#play-caption').textContent = `✓ real journey, real timestamps — ${realTotal}ms end to end, replayed slow enough to read`;
   }, acc + 250));
 }
 
@@ -1639,6 +1765,44 @@ $('#eco-k8s').onclick = () => gShow('deploy');
 
 $('#trace-clear').onclick = () => { stopPlay(); activeTrace = null; $('#trace-card').hidden = true; $('#play-wrap').hidden = true;
   document.querySelectorAll('.node').forEach(n => n.classList.remove('onpath')); gShow('welcome'); };
+
+/* ---------------- the operations ticker: every backend move, every tab ---------------- */
+let tkSig = '', tkSummary = null, tkN = 0;
+function tkText(e) {
+  const A = e.amount ? '€' + Number(e.amount).toLocaleString('en-US', { maximumFractionDigits: 2 }) : '';
+  switch (e.type) {
+    case 'transfer_local': return ['💸', 'var(--text)', `${e.payer}→${e.payee} ${A} · ${e.region} · 1 ACID commit`];
+    case 'depart': return ['🛫', 'var(--amber)', `${e.payer} ${A} departed ${e.region} → in_transit`];
+    case 'published': return ['📤', 'var(--accent)', `outbox→kafka · ${e.tx.slice(0, 8)} · acks=all · ${e.region}`];
+    case 'arrive': return ['🛬', 'var(--green)', `${A} arrived ${e.region} · txId gate held`];
+    case 'refund': return ['↩', 'var(--amber)', `bounce compensated · refund in ${e.region}`];
+    case 'notify': return ['🔔', 'var(--dim)', `notification stored · dedup by event_key`];
+    default: return ['·', 'var(--dim)', e.type];
+  }
+}
+async function tickerTick() {
+  tkN++;
+  let evs = [];
+  try { evs = await api('/api/xray/events'); } catch (e) { return; }
+  if (tkN % 3 === 1) { try { tkSummary = await api('/api/xray/summary'); } catch (e) {} }
+  const items = evs.slice(0, 14).map(tkText);
+  if (tkSummary) {
+    items.push(['⚖', tkSummary.sumZeroViolations === 0 ? 'var(--green)' : 'var(--red)',
+      `audit: ${tkSummary.sumZeroViolations === 0 ? 'books balance · 0 violations' : tkSummary.sumZeroViolations + ' VIOLATIONS'} · drift ${tkSummary.driftedAccounts === 0 ? 'none' : tkSummary.driftedAccounts}`]);
+    items.push(['✈', parseFloat(tkSummary.inFlight) > 0 ? 'var(--amber)' : 'var(--dim)',
+      `in flight €${tkSummary.inFlight} · pools eu ${tkSummary.shards[0].poolBusy}/${tkSummary.shards[0].poolSize} uk ${tkSummary.shards[1].poolBusy}/${tkSummary.shards[1].poolSize}`]);
+  }
+  const sig = items.map(i => i[2]).join('|');
+  if (sig === tkSig) return;
+  tkSig = sig;
+  const half = items.map(([ic, col, txt]) =>
+    `<span class="tk-i"><b style="color:${col}">${ic}</b>${txt.replace(/</g, '&lt;')}<span class="tk-sep">│</span></span>`).join('');
+  const track = $('#tk-track');
+  track.innerHTML = half + half;   // two copies → seamless -50% loop
+  track.style.animationDuration = Math.max(30, items.length * 4) + 's';
+}
+setInterval(tickerTick, 3000);
+tickerTick();
 
 /* ---------------- the show: a self-driving 60-second demo ---------------- */
 let showRun = null, showTimer = null, showTx = null;
@@ -1819,7 +1983,7 @@ function chatPaint() {
 }
 function chatHello() {
   const mine = accounts.find(a => a.id === me);
-  chatLog = [{ role: 'rita', text: `Hi${mine ? ' ' + mine.owner : ''}! I'm Rita — I can see your live account, and I can DO things: send money, trade, savings, card, mortgage, even relocate you. I have exactly the powers you have — but every action shows you an Allow/Deny card first. Try: "send €50 to oscar" or "buy €50 of bitcoin".` }];
+  chatLog = [{ role: 'rita', text: `Hi${mine ? ' ' + mine.owner : ''}. I can see your account and act on it — send, trade, borrow, relocate. Every action shows you an Allow card first. Try a suggestion below, or ask me how this bank is built.` }];
   chatPaint();
 }
 const CHIP_PROMPTS = ['Send €50 to oscar', 'Buy €50 of bitcoin', 'Request a €10,000 loan',
