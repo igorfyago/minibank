@@ -10,6 +10,7 @@ A public site with two faces:
 
 1. **The app** — a working neobank: sign in, see balances, send money, watch notifications arrive. Correct under concurrency, because every mechanism underneath was proven in a test first.
 2. **The X-ray tab** — a visual explorer of the database itself: accounts, ledger entries, the outbox, Kafka consumer positions, per-shard row counts. Every lesson in this repo becomes something you can *see happen*.
+3. **The Quiz tab** — the site quizzes you on its own architecture: every stage's core questions, answerable in the browser. If you can pass the bank's quiz, you understand the bank.
 
 ## Doctrine: no frameworks
 
