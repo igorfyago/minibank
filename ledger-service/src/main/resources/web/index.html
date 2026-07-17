@@ -31,6 +31,28 @@
   td { padding:5px 8px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
   .amount-pos { color:var(--green); } .amount-neg { color:var(--red); }
 
+  /* the hero + the show */
+  #hero { position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center;
+    background: radial-gradient(90% 100% at 20% 0%, rgba(122,92,255,.20), transparent 50%),
+                radial-gradient(80% 90% at 90% 100%, rgba(88,166,255,.15), transparent 55%), rgba(8,10,16,.96); }
+  .hero-inner { max-width:660px; text-align:center; padding:30px; animation:heroin .6s ease; }
+  @keyframes heroin { from { opacity:0; transform:translateY(14px); } }
+  .hero-title { font-size:64px; font-weight:800; letter-spacing:-1.5px; }
+  .hero-title span { background:linear-gradient(90deg, var(--accent), var(--violet));
+    -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .hero-tag { font-size:16.5px; opacity:.94; margin:16px 0 10px; line-height:1.65; }
+  .hero-stats { color:var(--dim); font-size:12.5px; margin-bottom:28px; letter-spacing:.02em; }
+  .hero-btns { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+  .hero-btns .primary { padding:12px 22px; font-size:14px; background:linear-gradient(135deg, var(--accent), var(--violet)); }
+  #showbar { position:fixed; left:50%; transform:translateX(-50%); bottom:22px; z-index:60; width:min(780px, 92vw);
+    background:rgba(22,27,34,.97); border:1px solid var(--violet); border-radius:14px; padding:14px 18px;
+    box-shadow:0 8px 44px rgba(122,92,255,.28); }
+  #show-cap { font-size:15px; line-height:1.55; min-height:23px; }
+  #show-foot { display:flex; align-items:center; margin-top:10px; gap:10px; }
+  #show-dots { display:flex; gap:5px; flex:1; }
+  .show-dot { width:7px; height:7px; border-radius:50%; background:var(--line); transition:background .3s; }
+  .show-dot.on { background:var(--violet); box-shadow:0 0 6px var(--violet); }
+
   /* app tab — the phone */
   .acct-card { background:radial-gradient(130% 150% at 0% 0%, rgba(188,140,255,.13), transparent 45%),
                radial-gradient(100% 130% at 100% 0%, rgba(88,166,255,.08), transparent 40%), var(--panel); }
@@ -186,6 +208,8 @@
     <button class="tab-btn on" data-tab="app">App</button>
     <button class="tab-btn" data-tab="xray">X-ray</button>
     <button class="tab-btn" data-tab="quiz">Quiz</button>
+    <button class="tab-btn" id="nav-show" title="a 60-second guided, self-driving demo">▶ Show</button>
+    <a class="tab-btn" href="https://github.com/igorfyago/minibank" target="_blank" style="text-decoration:none">GitHub</a>
   </nav>
 </header>
 <main>
@@ -360,13 +384,34 @@
   </section>
 </main>
 
+<div id="hero" class="hidden">
+  <div class="hero-inner">
+    <div class="hero-title">mini<span>bank</span></div>
+    <div class="hero-tag">A real bank, built from first principles — customers sharded across two countries,
+      payments settling over Kafka, every balance a projection of a double-entry ledger.
+      Raw Java 21. Zero frameworks.</div>
+    <div class="hero-stats">2 regions · 5 services · 4 databases · 30 executable lessons · ~300ms cross-border settlement · this is all live</div>
+    <div class="hero-btns">
+      <button class="primary" id="hero-show">▶ Watch the 60-second show</button>
+      <button class="ghost" id="hero-explore">Explore on your own</button>
+      <a class="ghost" style="text-decoration:none; display:inline-flex; align-items:center;"
+         href="https://github.com/igorfyago/minibank" target="_blank">GitHub ↗</a>
+    </div>
+  </div>
+</div>
+
+<div id="showbar" class="hidden">
+  <div id="show-cap"></div>
+  <div id="show-foot"><span id="show-dots"></span><button class="ghost" id="show-skip">skip ✕</button></div>
+</div>
+
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
 const api = (p, opt) => fetch(p, opt).then(r => r.json());
 
 /* ---------------- tabs ---------------- */
-document.querySelectorAll('.tab-btn').forEach(b => b.onclick = () => {
+document.querySelectorAll('.tab-btn[data-tab]').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tab-btn').forEach(x => x.classList.toggle('on', x === b));
   ['app','xray','quiz'].forEach(t => $('#tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
   history.replaceState(null, '', '#' + b.dataset.tab);
@@ -1039,6 +1084,80 @@ $('#eco-k8s').onclick = () => gShow('deploy');
 
 $('#trace-clear').onclick = () => { stopPlay(); activeTrace = null; $('#trace-card').hidden = true; $('#play-wrap').hidden = true;
   document.querySelectorAll('.node').forEach(n => n.classList.remove('onpath')); gShow('welcome'); };
+
+/* ---------------- the show: a self-driving 60-second demo ---------------- */
+let showRun = null, showTimer = null, showTx = null;
+const showSleep = ms => new Promise(r => { showTimer = setTimeout(r, ms); });
+function switchTab(name) { document.querySelector(`.tab-btn[data-tab="${name}"]`).click(); }
+
+const SHOW = [
+  { cap: 'This is a real bank, running live right now: three customers, two countries, four databases, one Kafka.',
+    run: async () => { switchTab('app'); window.scrollTo({ top: 0, behavior: 'smooth' }); await loadAccounts(); }, dwell: 4600 },
+  { cap: 'igor lives in the eu region. coco lives in uk — physically a different database on a different machine. No transaction can span the two.',
+    run: () => switchUser(10), dwell: 4800 },
+  { cap: 'Sending €21 from igor to coco — a payment that has to cross countries…',
+    run: async () => {
+      const mine = (await api('/api/accounts')).find(a => a.id === 10);
+      if (!mine || Number(mine.balance) < 25)
+        await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: 1, to: 10, amount: '100.00' }) });
+      showTx = uuid();
+      await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: showTx, from: 10, to: 11, amount: '21.00' }) });
+      prevStmtSig = ''; await loadStatement(); await loadAccounts();
+    }, dwell: 3400 },
+  { cap: 'The app answers instantly — and honestly: PENDING. The money is truly in flight between two machines, and the books say so.',
+    run: () => {}, dwell: 4600 },
+  { cap: 'Now a network retry hits the bank with the SAME transaction id… and bounces off a primary key: “already processed”. Money cannot move twice.',
+    run: async () => { await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: showTx, from: 10, to: 11, amount: '21.00' }) }); }, dwell: 5000 },
+  { cap: 'This is the whole system, alive — and this is that payment’s REAL journey, replayed slow enough to see: departed eu → Kafka → arrived uk.',
+    run: async () => { switchTab('xray'); window.scrollTo({ top: 0, behavior: 'smooth' }); await xrayTick(); await traceTx(showTx, true); }, dwell: 6200 },
+  { cap: 'Each region keeps double-entry books that sum to zero at every instant. The green lights are live audits — one SQL query each.',
+    run: () => gShow('shard0'), dwell: 4800 },
+  { cap: 'Everything explains itself at three depths, down to its actual database rows. This is the routing directory — the real one.',
+    run: () => { gShow('api'); inspect('api'); }, dwell: 4800 },
+  { cap: 'And the architecture maps itself to the questions it answers: twelve of them, from lost updates to resharding.',
+    run: () => { const q = document.querySelector('.q-item[data-i="9"]'); if (q) { q.click(); q.scrollIntoView({ behavior: 'smooth', block: 'center' }); } }, dwell: 5200 },
+  { cap: 'Raw Java 21 · zero frameworks · 30 executable lessons prove every mechanism · built from first principles — github.com/igorfyago/minibank',
+    run: () => window.scrollTo({ top: 0, behavior: 'smooth' }), dwell: 6500 },
+];
+
+async function startShow() {
+  stopShow(); dismissHero();
+  const my = Symbol(); showRun = my;
+  $('#showbar').classList.remove('hidden');
+  $('#show-dots').innerHTML = SHOW.map(() => '<span class="show-dot"></span>').join('');
+  for (let i = 0; i < SHOW.length; i++) {
+    if (showRun !== my) return;
+    document.querySelectorAll('.show-dot').forEach((d, j) => d.classList.toggle('on', j <= i));
+    const cap = $('#show-cap');
+    cap.style.animation = 'none'; void cap.getBoundingClientRect();
+    cap.style.animation = 'slidein .35s ease';
+    cap.textContent = SHOW[i].cap;
+    try { await SHOW[i].run(); } catch (e) { /* the show must go on */ }
+    if (showRun !== my) return;
+    await showSleep(SHOW[i].dwell);
+  }
+  if (showRun === my) stopShow();
+}
+function stopShow() {
+  showRun = null;
+  if (showTimer) clearTimeout(showTimer);
+  $('#showbar').classList.add('hidden');
+}
+function dismissHero() {
+  $('#hero').classList.add('hidden');
+  try { localStorage.setItem('mb-seen', '1'); } catch (e) {}
+}
+$('#nav-show').onclick = startShow;
+$('#hero-show').onclick = startShow;
+$('#hero-explore').onclick = dismissHero;
+$('#show-skip').onclick = stopShow;
+if (location.hash === '#show') {
+  setTimeout(startShow, 700);
+} else if (!location.hash) {
+  let seen = false;
+  try { seen = !!localStorage.getItem('mb-seen'); } catch (e) {}
+  if (!seen) $('#hero').classList.remove('hidden');
+}
 
 /* ---------------- quiz tab ---------------- */
 const QUIZ = [
