@@ -23,6 +23,7 @@ public final class Main {
         String kafka = System.getenv().getOrDefault("MINIBANK_KAFKA", "localhost:9092");
         int port = Integer.parseInt(System.getenv().getOrDefault("MINIBANK_PORT", "8080"));
 
+        Db.usePool(Integer.parseInt(System.getenv().getOrDefault("MINIBANK_POOL", "10")));
         Ledger.createTables();
         Notifications.createOwnDatabase();
         seedIfEmpty();

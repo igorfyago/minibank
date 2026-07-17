@@ -41,6 +41,9 @@ Every design decision is recorded and argued — the point of this repo is under
 - **D8** Events are written into the SAME database transaction as the money (the transactional outbox); a relay ships them to Kafka afterwards. You cannot commit atomically across two systems, so we only ever commit to one.
 - **D9** Delivery is at-least-once by design (mark-after-send); every consumer is idempotent (event key = primary key + ON CONFLICT DO NOTHING). Loss is impossible, duplicates are harmless.
 - **D10** database-per-service: the notifications consumer owns its own database; the only bridge between services is the topic.
+- **D11** The pool hands out PROXIES whose close() returns the connection instead of closing it — so every existing try-with-resources kept working, unchanged, when the bank flipped to pooling. On every return the pool rolls back any open transaction and resets autocommit: state never leaks between borrowers.
+- **D12** `Db.open()` transparently serves pooled connections once `Db.usePool(n)` runs; `Db.openPhysical()` keeps the naive path alive so the lessons can keep measuring the tax.
+- **D13** PgBouncer runs in transaction pooling mode; the JDBC gotcha is server-side prepared statements, disarmed with `prepareThreshold=0` in the URL.
 - **D7** Concurrency correctness belongs to the database, not the JVM: ordered FOR UPDATE locking (ascending account id) makes deadlock impossible; the caller-supplied transaction id doubles as the idempotency key via the primary key.
 
 ## The curriculum
@@ -73,7 +76,8 @@ Money is strict now; echoes arrive milliseconds later.
 - [x] Stage 1 — the double-entry ledger (deadlock provoked and cured, idempotent retries, reconciliation)
 - [x] Stage 2 — Kafka + the transactional outbox (events commit with the money; at-least-once + idempotent consumer = effectively once)
 - [x] Stage 3 — the bank gets a face: raw JDK HttpServer (a virtual thread per request), the app, the X-ray map where every component explains itself, and the Quiz
-- [ ] Stage 4–6
+- [x] Stage 4 — the connection lesson: the tax measured (~14x), a pool written by hand, the whole bank flipped to it, and PgBouncer as the ops-grade version
+- [ ] Stage 5–6
 
 ## Run
 

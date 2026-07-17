@@ -20,10 +20,30 @@ public final class Db {
     private static final String USER = env("MINIBANK_DB_USER", "minibank");
     private static final String PASSWORD = env("MINIBANK_DB_PASSWORD", "minibank");
 
+    private static volatile MiniPool pool;   // stage 4: null = naive mode
+
     private Db() {}
 
-    /** One new physical connection. Caller closes it (use try-with-resources). */
+    /** Stage 4: flip the whole bank to pooled connections. Nothing else
+     *  changes — the pool hands out proxies whose close() means "return",
+     *  so every existing try-with-resources keeps working, now for free. */
+    public static void usePool(int size) throws SQLException {
+        pool = new MiniPool(URL, USER, PASSWORD, size);
+    }
+
+    public static MiniPool activePool() { return pool; }
+
+    /** A connection: pooled if the pool is on, a fresh physical one if not.
+     *  Caller closes it either way (close = return, when pooled). */
     public static Connection open() throws SQLException {
+        MiniPool p = pool;
+        if (p != null) return p.borrow(5, java.util.concurrent.TimeUnit.SECONDS);
+        return DriverManager.getConnection(URL, USER, PASSWORD);
+    }
+
+    /** Always a REAL physical connection, pool or no pool — the lessons that
+     *  measure connection cost need the naive path on demand. */
+    public static Connection openPhysical() throws SQLException {
         return DriverManager.getConnection(URL, USER, PASSWORD);
     }
 

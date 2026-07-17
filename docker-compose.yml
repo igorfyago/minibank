@@ -10,6 +10,22 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    environment:
+      DB_HOST: postgres
+      DB_USER: minibank
+      DB_PASSWORD: minibank
+      DB_NAME: minibank
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: '1000'
+      DEFAULT_POOL_SIZE: '10'
+      AUTH_TYPE: scram-sha-256
+    ports:
+      - "6432:5432"
+    depends_on:
+      - postgres
+
   kafka:
     image: apache/kafka:3.8.0
     ports:
