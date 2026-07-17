@@ -42,18 +42,32 @@
   td { padding:5px 8px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
   .amount-pos { color:var(--green); } .amount-neg { color:var(--red); }
 
-  /* the operations ticker · the backend, streaming past on every tab */
-  #ticker-bar { position:fixed; left:0; right:0; bottom:0; height:32px; z-index:45; overflow:hidden;
-    background:rgba(10,13,20,.94); border-top:1px solid var(--line); backdrop-filter:blur(8px);
-    display:flex; align-items:center; }
-  .tk-track { display:inline-flex; gap:34px; white-space:nowrap; will-change:transform;
-    animation:tkscroll 40s linear infinite; }
-  #ticker-bar:hover .tk-track { animation-play-state:paused; }
-  @keyframes tkscroll { from { transform:translateX(0); } to { transform:translateX(-50%); } }
-  .tk-i { display:inline-flex; align-items:center; gap:7px; font:11.5px 'Cascadia Code', Consolas, monospace;
-    color:var(--dim); }
-  .tk-i b { font-weight:650; }
-  .tk-sep { color:#2a3140; }
+  /* the operations tape · a market tape: each transaction crosses once, steps in order, then gone */
+  #ticker-bar { position:fixed; left:0; right:0; bottom:0; height:34px; z-index:45; overflow:hidden;
+    background:rgba(7,12,16,.96); border-top:1px solid #143024; backdrop-filter:blur(8px);
+    display:flex; align-items:center; font:11.5px 'Cascadia Code', Consolas, monospace; }
+  #tape-led { flex:none; display:flex; align-items:center; gap:7px; height:100%; padding:0 14px 0 13px;
+    color:#3ddc84; font-size:9.5px; font-weight:700; letter-spacing:.16em; border-right:1px solid #12241c; }
+  #tape-led i { width:7px; height:7px; border-radius:50%; background:#22c55e;
+    box-shadow:0 0 9px #22c55e; animation:ledpulse 2.4s ease-in-out infinite; }
+  #tape-led.hold { color:var(--amber); }
+  #tape-led.hold i { background:var(--amber); box-shadow:0 0 9px var(--amber); animation:none; }
+  @keyframes ledpulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+  #tk-belt { position:relative; flex:1; height:100%; overflow:hidden;
+    -webkit-mask:linear-gradient(90deg, transparent, #000 26px, #000 calc(100% - 26px), transparent);
+    mask:linear-gradient(90deg, transparent, #000 26px, #000 calc(100% - 26px), transparent); }
+  #tk-track { position:absolute; left:0; top:0; height:100%; width:max-content;
+    display:flex; align-items:center; white-space:nowrap; will-change:transform; }
+  .tape-train { flex:none; display:inline-flex; align-items:center; gap:8px; margin-right:76px;
+    cursor:pointer; animation:tapeflash 1.6s ease-out; }
+  @keyframes tapeflash { from { filter:brightness(2.3) saturate(1.7); } }
+  .tp-h { font-size:13px; }
+  .tp-s { color:#5da878; }
+  .tp-a { color:#2e7a4c; font-weight:700; }
+  .tp-x { color:#3c5647; font-size:10px; }
+  .tp-pos { color:#31e981; font-weight:750; text-shadow:0 0 11px rgba(49,233,129,.5); }
+  .tp-neg { color:#ff5d6c; font-weight:750; text-shadow:0 0 11px rgba(255,93,108,.4); }
+  .tp-amb { color:var(--amber); font-weight:700; text-shadow:0 0 10px rgba(245,180,60,.35); }
   main { padding-bottom:46px; }
 
   /* the hero + the show */
@@ -403,7 +417,6 @@
     .hero-tag { font-size:14.5px; }
     .eco-grid { grid-template-columns:1fr; }
     #showbar { bottom:38px; padding:10px 14px; width:94vw; }
-    .tk-i { font-size:10.5px; }
     #show-cap { font-size:13.5px; }
     .guide { position:static; max-height:none; }
     .tx-after { display:block; }
@@ -752,7 +765,7 @@
   </div>
 </div>
 
-<div id="ticker-bar"><div class="tk-track" id="tk-track"></div></div>
+<div id="ticker-bar"><div id="tape-led"><i></i><b>LIVE</b></div><div id="tk-belt"><div id="tk-track"></div></div></div>
 
 <button id="chat-fab" title="Rita">💬</button>
 <div id="chat-panel" class="hidden">
@@ -1776,43 +1789,154 @@ $('#eco-k8s').onclick = () => gShow('deploy');
 $('#trace-clear').onclick = () => { stopPlay(); activeTrace = null; $('#trace-card').hidden = true; $('#play-wrap').hidden = true;
   document.querySelectorAll('.node').forEach(n => n.classList.remove('onpath')); gShow('welcome'); };
 
-/* ---------------- the operations ticker: every backend move, every tab ---------------- */
-let tkSig = '', tkSummary = null, tkN = 0;
-function tkText(e) {
-  const A = e.amount ? '€' + Number(e.amount).toLocaleString('en-US', { maximumFractionDigits: 2 }) : '';
-  switch (e.type) {
-    case 'transfer_local': return ['💸', 'var(--text)', `${e.payer}→${e.payee} ${A} · ${e.region} · 1 ACID commit`];
-    case 'depart': return ['🛫', 'var(--amber)', `${e.payer} ${A} departed ${e.region} → in_transit`];
-    case 'published': return ['📤', 'var(--accent)', `outbox→kafka · ${e.tx.slice(0, 8)} · acks=all · ${e.region}`];
-    case 'arrive': return ['🛬', 'var(--green)', `${A} arrived ${e.region} · txId gate held`];
-    case 'refund': return ['↩', 'var(--amber)', `bounce compensated · refund in ${e.region}`];
-    case 'notify': return ['🔔', 'var(--dim)', `notification stored · dedup by event_key`];
-    default: return ['·', 'var(--dim)', e.type];
-  }
+/* ---------------- the operations tape: the backend as a market tape ---------------- */
+/* Event-driven: each fresh commit becomes a train of chips reading left to right
+   in the exact order the backend took the steps, ending in the balance deltas.
+   A train crosses the screen once, then it is gone. Quiet bank = empty tape. */
+const tapeSeen = new Set();
+let tapeFirst = true, tapeX = 0, tapePaused = false, tapePrev = 0;
+const tapeTrack = $('#tk-track'), tapeBelt = $('#tk-belt');
+const tapeEsc = s => String(s == null ? '' : s).replace(/</g, '&lt;');
+const tapeEur = a => '€' + Number(a).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const tapeSys = s => !s || s === 'world' || s === 'in_transit' || s === 'cafe' || s.startsWith('broker');
+if (matchMedia('(hover: hover)').matches) {
+  $('#ticker-bar').addEventListener('mouseenter', () => { tapePaused = true;
+    $('#tape-led').classList.add('hold'); $('#tape-led b').textContent = 'HOLD'; });
+  $('#ticker-bar').addEventListener('mouseleave', () => { tapePaused = false;
+    $('#tape-led').classList.remove('hold'); $('#tape-led b').textContent = 'LIVE'; });
 }
-async function tickerTick() {
-  tkN++;
+
+function tapeTrain(e) {
+  const A = e.amount ? tapeEur(e.amount) : '';
+  const P = tapeEsc(e.payer), Y = tapeEsc(e.payee), R = e.region, t = e.type;
+  const UP = s => s.toUpperCase();
+  const NET = location.protocol === 'https:' ? 'TLS 1.3' : 'HTTP';
+  if (t === 'transfer_local') {
+    if (e.payer === 'card' && e.payee === 'card hold') return { h: '💳',
+      s: ['POST /api/card', 'authorize: hold the amount', 'BEGIN ' + R, 'entries: card → holds',
+          'card carries the hold', 'INSERT outbox', 'COMMIT'],
+      d: [['CARD', '−' + A, 'neg'], ['HOLDS', '+' + A, 'amb']] };
+    if (e.payer === 'card hold' && e.payee === 'cafe') return { h: '💳',
+      s: ['POST /api/card', 'capture: deterministic txId', 'BEGIN ' + R, 'entries: holds → cafe',
+          'INSERT outbox', 'COMMIT'],
+      d: [['HOLDS', '−' + A, 'amb'], ['CAFE', '+' + A, 'pos']] };
+    if (e.payer === 'card hold' && e.payee === 'card') return { h: '💳',
+      s: ['POST /api/card', 'release: hold undone', 'BEGIN ' + R, 'entries: holds → card',
+          'INSERT outbox', 'COMMIT'],
+      d: [['HOLDS', '−' + A, 'amb'], ['CARD', '+' + A, 'pos']] };
+    if (e.payer === 'world') return { h: '💰', s: ['POST /api/transfer', 'world funds ' + Y,
+      'BEGIN ' + R, 'INSERT entries ×2 · Σ=0', 'UPDATE cached balance', 'INSERT outbox', 'COMMIT'],
+      d: [[UP(Y), '+' + A, 'pos']] };
+    if (e.payee === 'world') return { h: '🌍', s: ['POST /api/transfer', 'IBAN out: world absorbs it',
+      'BEGIN ' + R, 'entries: ' + P + ' → world', 'INSERT outbox', 'COMMIT'],
+      d: [[UP(P), '−' + A, 'neg'], ['IBAN OUT', A, 'amb']] };
+    return { h: '💸', s: [NET, 'POST /api/transfer', 'directory: both @ ' + R, 'BEGIN',
+      'FOR UPDATE ×2 · id asc', 'INSERT entries ×2 · Σ=0', 'INSERT outbox', 'COMMIT · 1 ACID'],
+      d: [[UP(P), '−' + A, 'neg'], [UP(Y), '+' + A, 'pos']] };
+  }
+  if (t === 'depart') return { h: '🛫', s: ['txId gate ✓', 'BEGIN ' + R,
+    'FOR UPDATE: in_transit, ' + P + ' · id asc', 'funds ✓', 'entries: ' + P + ' → in_transit',
+    'outbox · same commit', 'COMMIT ' + R],
+    d: [[UP(P), '−' + A, 'neg'], ['IN_TRANSIT', '+' + A, 'amb']] };
+  if (t === 'published') return { h: '📤', s: ['relay: SELECT outbox', 'KafkaProducer · payments',
+    'acks=all ✓', 'UPDATE published_at'], d: [] };
+  if (t === 'arrive') return { h: '🛬', s: ['txId gate ✓ · once only', 'BEGIN ' + R,
+    'entries: in_transit → ' + Y, 'COMMIT ' + R + ' · settled'],
+    d: [['IN_TRANSIT', '−' + A, 'amb'], [UP(Y), '+' + A, 'pos']] };
+  if (t === 'refund') return { h: '↩', s: ['bounce: no destination', 'refund = uuid("refund:"+tx)',
+    'BEGIN ' + R, 'compensating entries', 'COMMIT'], d: [[UP(Y), '+' + A, 'pos']] };
+  if (t === 'notify') return { h: '🔔', s: ['consumer: poll(payments)', 'event_key gate ✓',
+    'INSERT notification', 'COMMIT'], d: [] };
+  if (t.indexOf('trade:') === 0) {
+    const parts = t.split(':'), asset = parts[1] === 'btc' ? 'BTC' : 'AAPL', buy = parts[2] === 'buy';
+    const who = UP(!tapeSys(e.payer) ? P : (!tapeSys(e.payee) ? Y : 'trader'));
+    return { h: parts[1] === 'btc' ? '₿' : '🍏',
+      s: ['POST /api/trade', 'PriceFeed quote', 'BEGIN ' + R, '4 entries · 2 currencies',
+          'Σ=0 per currency', 'COMMIT · 1 ACID'],
+      d: buy ? [[who, '−' + A, 'neg'], [who, '+' + asset, 'pos']]
+             : [[who, '−' + asset, 'neg'], [who, '+' + A, 'pos']] };
+  }
+  if (t === 'mortgage') { const who = UP(!tapeSys(e.payee) ? Y : P);
+    return { h: '🏦', s: ['POST /api/mortgage', 'cap: ≤ €20,000 ✓', 'BEGIN ' + R,
+      'entries: loan → main', 'COMMIT · net worth flat'],
+      d: [[who, '+' + A, 'pos'], ['LOAN', '−' + A, 'neg']] }; }
+  return { h: '·', s: ['BEGIN ' + (R || ''), tapeEsc(t), 'entries · Σ=0', 'COMMIT'],
+    d: e.payer && e.payee ? [[UP(P), '−' + A, 'neg'], [UP(Y), '+' + A, 'pos']] : [] };
+}
+
+function tapePush(tr, tx) {
+  const el = document.createElement('span');
+  el.className = 'tape-train';
+  const bits = ['<span class="tp-h">' + tr.h + '</span>'];
+  tr.s.forEach((st, i) => {
+    if (i) bits.push('<span class="tp-a">→</span>');
+    bits.push('<span class="tp-s">' + st + '</span>');
+  });
+  if (tr.d.length) bits.push('<span class="tp-a">▸</span>');
+  tr.d.forEach(d => bits.push('<span class="tp-' + d[2] + '">' + d[0] + ' ' + d[1] + '</span>'));
+  if (tx) bits.push('<span class="tp-x">' + tx.slice(0, 8) + '</span>');
+  el.innerHTML = bits.join(' ');
+  if (tx) el.onclick = () => { switchTab('xray'); traceTx(tx, true); };
+  const enterAt = tapeBelt.clientWidth - tapeX;   // track coordinate at the belt's right edge
+  const end = tapeTrack.scrollWidth;
+  if (end < enterAt) el.style.marginLeft = (enterAt - end) + 'px';
+  tapeTrack.appendChild(el);
+}
+
+function tapeFrame(now) {
+  const dt = Math.min(120, now - (tapePrev || now));
+  tapePrev = now;
+  if (!tapePaused && tapeTrack.firstChild) {
+    tapeX -= dt * 0.104;
+    let head = tapeTrack.firstChild;
+    while (head && head.offsetLeft + head.offsetWidth + tapeX < -10) {
+      const next = head.nextSibling;
+      if (!next) { tapeTrack.innerHTML = ''; tapeX = 0; head = null; break; }
+      const before = next.getBoundingClientRect().left;
+      head.remove();
+      tapeX += before - next.getBoundingClientRect().left;
+      head = tapeTrack.firstChild;
+    }
+    tapeTrack.style.transform = 'translate3d(' + tapeX.toFixed(1) + 'px,0,0)';
+  }
+  requestAnimationFrame(tapeFrame);
+}
+requestAnimationFrame(tapeFrame);
+
+let tapeBusy = false;
+async function tapeTick() {
+  if (tapeBusy) return;
+  tapeBusy = true;
+  try {
   let evs = [];
-  try { evs = await api('/api/xray/events'); } catch (e) { return; }
-  if (tkN % 3 === 1) { try { tkSummary = await api('/api/xray/summary'); } catch (e) {} }
-  const items = evs.slice(0, 14).map(tkText);
-  if (tkSummary) {
-    items.push(['⚖', tkSummary.sumZeroViolations === 0 ? 'var(--green)' : 'var(--red)',
-      `audit: ${tkSummary.sumZeroViolations === 0 ? 'books balance · 0 violations' : tkSummary.sumZeroViolations + ' VIOLATIONS'} · drift ${tkSummary.driftedAccounts === 0 ? 'none' : tkSummary.driftedAccounts}`]);
-    items.push(['✈', parseFloat(tkSummary.inFlight) > 0 ? 'var(--amber)' : 'var(--dim)',
-      `in flight €${tkSummary.inFlight} · pools eu ${tkSummary.shards[0].poolBusy}/${tkSummary.shards[0].poolSize} uk ${tkSummary.shards[1].poolBusy}/${tkSummary.shards[1].poolSize}`]);
+  try { evs = await api('/api/xray/events'); } catch (err) { return; }
+  if (!Array.isArray(evs)) return;   // 429/500 answer with an {error} body
+  const fresh = [];
+  const cutoff = Date.now() - 10000;
+  for (const e of evs) {
+    const id = e.type + e.tx + e.ts;
+    if (tapeSeen.has(id)) continue;
+    tapeSeen.add(id);
+    // on the first poll, replay only the last few seconds, not history
+    if (!tapeFirst || new Date(e.ts).getTime() > cutoff) fresh.push(e);
   }
-  const sig = items.map(i => i[2]).join('|');
-  if (sig === tkSig) return;
-  tkSig = sig;
-  const half = items.map(([ic, col, txt]) =>
-    `<span class="tk-i"><b style="color:${col}">${ic}</b>${txt.replace(/</g, '&lt;')}<span class="tk-sep">│</span></span>`).join('');
-  const track = $('#tk-track');
-  track.innerHTML = half + half;   // two copies → seamless -50% loop
-  track.style.animationDuration = Math.max(30, items.length * 4) + 's';
+  if (tapeSeen.size > 4000) {
+    const keep = evs.map(e => e.type + e.tx + e.ts);
+    tapeSeen.clear(); keep.forEach(k => tapeSeen.add(k));
+  }
+  if (tapeFirst) { tapeFirst = false; tapePush({ h: '●', s: ['MINIBANK OPERATIONS TAPE'], d: [] }, null); }
+  // a hidden tab gets no animation frames: do not build a backlog it would replay for minutes
+  if (document.hidden || tapeTrack.children.length > 30) return;
+  fresh.sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const money = fresh.filter(e => e.type !== 'notify' && e.type !== 'published');
+  const wire = fresh.filter(e => e.type === 'notify' || e.type === 'published');
+  const picked = money.slice(0, 5).concat(wire.slice(0, Math.max(0, 6 - Math.min(5, money.length))));
+  picked.sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  picked.forEach(e => tapePush(tapeTrain(e), e.tx));
+  } finally { tapeBusy = false; }
 }
-setInterval(tickerTick, 3000);
-tickerTick();
+setInterval(tapeTick, 3000);
+tapeTick();
 
 /* ---------------- the show: a self-driving 60-second demo ---------------- */
 let showRun = null, showTimer = null, showTx = null;
