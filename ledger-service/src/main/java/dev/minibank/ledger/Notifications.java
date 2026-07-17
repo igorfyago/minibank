@@ -8,7 +8,7 @@ import java.sql.SQLException;
 
 /**
  * The first CONSUMER service: notifications. It represents a different
- * microservice, so it gets its OWN database (database-per-service) — same
+ * microservice, so it gets its OWN database (database-per-service) · same
  * Postgres container, separate database, no shared tables with the ledger.
  * The ONLY thing connecting the two services is the Kafka topic.
  *
@@ -30,7 +30,7 @@ public final class Notifications {
     }
 
     /** database-per-service, bootstrapped visibly: create our own database
-     *  (Postgres has no CREATE DATABASE IF NOT EXISTS — we check first). */
+     *  (Postgres has no CREATE DATABASE IF NOT EXISTS · we check first). */
     public static void createOwnDatabase() throws SQLException {
         try (Connection c = Db.open(); var st = c.createStatement();
              ResultSet rs = st.executeQuery("SELECT 1 FROM pg_database WHERE datname = '" + DB + "'")) {

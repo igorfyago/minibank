@@ -3,7 +3,7 @@ package dev.minibank.ledger;
 /**
  * Hand-rolled JSON, both directions, for FLAT objects only.
  * DECISION: no JSON library yet. Our payloads are tiny and flat; a real
- * fleet would use a proper mapper and schemas — that upgrade is a later,
+ * fleet would use a proper mapper and schemas · that upgrade is a later,
  * deliberate decision, not a reflex. Meanwhile: zero magic.
  */
 final class Json {

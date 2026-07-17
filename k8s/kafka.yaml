@@ -1,4 +1,4 @@
-# Kafka: the space BETWEEN services — notifications, cross-region sagas,
+# Kafka: the space BETWEEN services · notifications, cross-region sagas,
 # and any consumer yet to be born. Single KRaft node here; production runs
 # 3+ brokers with replication.factor 3 / min.insync.replicas 2 so acks=all
 # (which the relay already demands) means "on two disks before we mark the

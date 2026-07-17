@@ -14,11 +14,11 @@ import java.util.regex.Pattern;
 
 /**
  * Live prices, honestly labeled. BTC/EUR from CoinGecko; AAPL from Yahoo
- * (USD) converted at the live EURUSD rate from frankfurter.app — all
+ * (USD) converted at the live EURUSD rate from frankfurter.app · all
  * keyless public endpoints, cached for 60s, with a fallback price and a
  * `source` flag so the UI never has to lie about freshness.
  *
- * The price is captured AT EXECUTION and written into the trade's event —
+ * The price is captured AT EXECUTION and written into the trade's event ·
  * the ledger stores the units and the euros; the ratio IS the price paid.
  */
 public final class PriceFeed {
@@ -64,7 +64,7 @@ public final class PriceFeed {
 
     private static final Map<String, Object[]> histCache = new ConcurrentHashMap<>();
 
-    /** ~30 days of real prices as [[ms,eur],...] JSON — cached 10 min,
+    /** ~30 days of real prices as [[ms,eur],...] JSON · cached 10 min,
      *  thinned to ≤120 points, empty array when the feed is down. */
     public static String historyJson(String symbol) {
         Object[] hit = histCache.get(symbol);
@@ -82,7 +82,7 @@ public final class PriceFeed {
 
     private static String btcHistory() throws Exception {
         String body = getBody("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=eur&days=30&interval=daily");
-        // the response carries prices, market_caps AND total_volumes —
+        // the response carries prices, market_caps AND total_volumes ·
         // scan ONLY the prices array or the chart plots market caps
         int i = body.indexOf("\"prices\"");
         int j = body.indexOf("]]", i);

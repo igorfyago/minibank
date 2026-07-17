@@ -11,9 +11,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * STAGE 4 — A CONNECTION POOL, WRITTEN BY HAND.
+ * STAGE 4 · A CONNECTION POOL, WRITTEN BY HAND.
  *
- * Why pools exist: opening a Postgres connection is EXPENSIVE — a TCP
+ * Why pools exist: opening a Postgres connection is EXPENSIVE · a TCP
  * handshake, authentication, and a whole server process allocated on the
  * other side. Milliseconds each, times every query, forever. Meanwhile a
  * typical indexed query takes microseconds. Connection-per-query means
@@ -24,14 +24,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  * this, plus a decade of hardening (health checks, leak detection, metrics).
  *
  * THE INDUSTRY'S CLEVEREST TRICK, reproduced here: borrowers receive a
- * PROXY whose close() does not close anything — it RETURNS the real
+ * PROXY whose close() does not close anything · it RETURNS the real
  * connection to the pool. That is why all our existing code (Ledger,
  * HttpApi) works unchanged with try-with-resources: "closing" a pooled
  * connection has always secretly meant "give it back".
  *
  * THE HYGIENE RULE: connections carry state. A borrower that set
  * autoCommit(false) and crashed would poison the next borrower with an
- * open transaction — so on every return we rollback if needed and reset
+ * open transaction · so on every return we rollback if needed and reset
  * autoCommit(true). State never leaks between borrowers.
  */
 public final class MiniPool implements AutoCloseable {
@@ -48,7 +48,7 @@ public final class MiniPool implements AutoCloseable {
         }
     }
 
-    /** Borrow a connection; blocks (bounded) if the pool is exhausted —
+    /** Borrow a connection; blocks (bounded) if the pool is exhausted ·
      *  that blocking IS backpressure: better to queue briefly at the pool
      *  than to melt the database with unbounded connections. */
     public Connection borrow(long timeout, TimeUnit unit) throws SQLException {

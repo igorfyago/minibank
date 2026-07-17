@@ -9,15 +9,15 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * STAGE 6 — THE DIRECTORY: routing becomes a FACT, not a FORMULA.
+ * STAGE 6 · THE DIRECTORY: routing becomes a FACT, not a FORMULA.
  *
- * Stage 5 routed by arithmetic (id mod 2) — fine for spreading load, but
+ * Stage 5 routed by arithmetic (id mod 2) · fine for spreading load, but
  * regions do not exist for load. They exist for LAW: a UK customer's data
  * must live on UK machines, an EEA customer's in the EEA. Residency is an
  * attribute of the customer, and no hash function can compute an attribute
- * — so the router asks a lookup service: this directory.
+ * · so the router asks a lookup service: this directory.
  *
- * It is its own service with its OWN tiny database (the third one —
+ * It is its own service with its OWN tiny database (the third one ·
  * database-per-service is a habit by now). The hot path is served from an
  * in-process cache: the home region of a customer changes approximately
  * never, which makes it the world's most cacheable data. (A real fleet
@@ -25,15 +25,15 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * The directory also owns the one moving part of stage 6: the MOVING flag.
  * While a customer relocates between regions, the router refuses to start
- * new transfers for them — a write-pause measured in milliseconds, and the
+ * new transfers for them · a write-pause measured in milliseconds, and the
  * honest price of moving state between machines.
  */
 public final class Directory {
 
     /** Thrown by the router while a customer is mid-relocation: not an
-     *  error, an instruction — retry in a moment. */
+     *  error, an instruction · retry in a moment. */
     public static final class CustomerMoving extends RuntimeException {
-        public CustomerMoving(long id) { super("customer " + id + " is relocating between regions — retry"); }
+        public CustomerMoving(long id) { super("customer " + id + " is relocating between regions · retry"); }
     }
 
     private static final String DB = "minibank_directory";
@@ -130,7 +130,7 @@ public final class Directory {
         cache.remove(customerId);
     }
 
-    /** The pointer flip — the last step of a relocation: new home, not moving. */
+    /** The pointer flip · the last step of a relocation: new home, not moving. */
     public static void flip(long customerId, int newShard) throws SQLException {
         try (Connection c = openOwnDb();
              PreparedStatement ps = c.prepareStatement(

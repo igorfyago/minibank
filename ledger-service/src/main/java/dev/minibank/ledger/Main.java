@@ -2,12 +2,12 @@ package dev.minibank.ledger;
 
 /**
  * The whole bank, one process (each piece is a service waiting to be cut
- * loose — the boundaries are already database-shaped):
+ * loose · the boundaries are already database-shaped):
  *
  *   HTTP API + router + web app ... :8080  (virtual thread per request)
  *   ledger, SHARDED ............... shard0 :5434, shard1 :5435
  *                                   (a pool per shard; igor lives on 0,
- *                                    coco on 1 — every igor->coco payment
+ *                                    coco on 1 · every igor->coco payment
  *                                    is a real cross-shard saga)
  *   outbox relays ................. one virtual thread PER SHARD -> Kafka
  *   shard applier ................. Kafka -> destination shard (arrivals)
@@ -28,7 +28,7 @@ public final class Main {
                 System.getenv().getOrDefault("MINIBANK_SHARD1_URL", "jdbc:postgresql://localhost:5435/minibank"),
                 "minibank", "minibank", poolSize);
 
-        // STAGE 6: the shards become REGIONS — routing by residency
+        // STAGE 6: the shards become REGIONS · routing by residency
         // (directory lookup), not by arithmetic. igor starts in eu, coco
         // in uk; the Relocate button moves people and the directory
         // remembers across restarts (register is first-write-wins).

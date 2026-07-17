@@ -9,12 +9,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * SQL STUDIO — the real databases behind the bank, browsable like an IDE.
+ * SQL STUDIO · the real databases behind the bank, browsable like an IDE.
  *
  * The web page shows the exact SQL and the exact rows, but the CATALOG is
  * fixed: the client sends only (database id, query id) and the server runs
  * a named query from this file. A public bank demo does not execute
- * arbitrary SQL from the internet — the IDE look is real, the injection
+ * arbitrary SQL from the internet · the IDE look is real, the injection
  * surface is zero.
  */
 public final class Explorer {
@@ -24,11 +24,11 @@ public final class Explorer {
     private Explorer() {}
 
     private static final List<Q> SHARD_QUERIES = List.of(
-        new Q("accounts", "accounts — every account on this machine", """
+        new Q("accounts", "accounts · every account on this machine", """
             SELECT id, owner, kind, currency, trim_scale(balance) AS balance
             FROM accounts
             ORDER BY id"""),
-        new Q("entries", "entries — the double-entry truth (latest 30)", """
+        new Q("entries", "entries · the double-entry truth (latest 30)", """
             SELECT e.id, substr(e.tx_id::text, 1, 8) AS tx, a.owner, a.currency,
                    trim_scale(e.amount) AS amount,
                    to_char(e.created_at, 'HH24:MI:SS') AS at
@@ -36,26 +36,26 @@ public final class Explorer {
             JOIN accounts a ON a.id = e.account_id
             ORDER BY e.id DESC
             LIMIT 30"""),
-        new Q("transactions", "transactions — the idempotency gates (latest 25)", """
+        new Q("transactions", "transactions · the idempotency gates (latest 25)", """
             SELECT substr(id::text, 1, 13) AS tx_id, kind,
                    to_char(created_at, 'HH24:MI:SS') AS at
             FROM transactions
             ORDER BY created_at DESC
             LIMIT 25"""),
-        new Q("outbox", "outbox — events born inside money commits (latest 20)", """
+        new Q("outbox", "outbox · events born inside money commits (latest 20)", """
             SELECT id, key,
                    CASE WHEN published_at IS NULL THEN 'PENDING' ELSE 'published' END AS state,
                    to_char(created_at, 'HH24:MI:SS') AS created
             FROM outbox
             ORDER BY id DESC
             LIMIT 20"""),
-        new Q("audit_sumzero", "audit: sum-zero — every tx sums to 0, per currency (expect 0 rows)", """
+        new Q("audit_sumzero", "audit: sum-zero · every tx sums to 0, per currency (expect 0 rows)", """
             SELECT e.tx_id, a.currency, SUM(e.amount) AS should_be_zero
             FROM entries e
             JOIN accounts a ON a.id = e.account_id
             GROUP BY e.tx_id, a.currency
             HAVING SUM(e.amount) <> 0"""),
-        new Q("audit_drift", "audit: cache drift — balance must equal SUM(entries) (expect 0 rows)", """
+        new Q("audit_drift", "audit: cache drift · balance must equal SUM(entries) (expect 0 rows)", """
             SELECT a.id, a.owner, trim_scale(a.balance) AS cached,
                    trim_scale(COALESCE(e.s, 0)) AS from_ledger
             FROM accounts a
@@ -63,7 +63,7 @@ public final class Explorer {
                        FROM entries GROUP BY account_id) e
                    ON e.account_id = a.id
             WHERE a.balance <> COALESCE(e.s, 0)"""),
-        new Q("in_flight", "in_transit — this region's slice of money in the pipe", """
+        new Q("in_flight", "in_transit · this region's slice of money in the pipe", """
             SELECT owner, currency, trim_scale(balance) AS balance
             FROM accounts
             WHERE id = 3"""));
@@ -73,13 +73,13 @@ public final class Explorer {
         CATALOG.put("eu", SHARD_QUERIES);
         CATALOG.put("uk", SHARD_QUERIES);
         CATALOG.put("directory", List.of(
-            new Q("customers", "customers — the routing table (who lives where)", """
+            new Q("customers", "customers · the routing table (who lives where)", """
                 SELECT customer_id, owner,
                        CASE WHEN shard = 0 THEN 'eu' ELSE 'uk' END AS region, moving
                 FROM customers
                 ORDER BY customer_id""")));
         CATALOG.put("notifications", List.of(
-            new Q("notifications", "notifications — the idempotent consumer's own table (latest 20)", """
+            new Q("notifications", "notifications · the idempotent consumer's own table (latest 20)", """
                 SELECT substr(event_key, 1, 22) AS event_key,
                        substr(message, 1, 60) AS message,
                        to_char(created_at, 'HH24:MI:SS') AS at
@@ -89,10 +89,10 @@ public final class Explorer {
     }
 
     private static final Map<String, String> DB_TITLES = Map.of(
-        "eu", "eu — PostgreSQL 16 · :5434",
-        "uk", "uk — PostgreSQL 16 · :5435",
-        "directory", "directory — pg-control · minibank_directory",
-        "notifications", "notifications — pg-control · minibank_notifications");
+        "eu", "eu · PostgreSQL 16 · :5434",
+        "uk", "uk · PostgreSQL 16 · :5435",
+        "directory", "directory · pg-control · minibank_directory",
+        "notifications", "notifications · pg-control · minibank_notifications");
 
     public static String catalogJson() {
         StringBuilder b = new StringBuilder("{\"dbs\":[");

@@ -11,7 +11,7 @@ import java.util.Properties;
 /**
  * The notifications service's consumer loop: reads the payments topic,
  * handles each event idempotently. A stable group id means Kafka remembers
- * our position — restarts resume where we left off, and at-least-once
+ * our position · restarts resume where we left off, and at-least-once
  * delivery across restarts is exactly why handle() must stay idempotent.
  */
 public final class NotificationsConsumer {

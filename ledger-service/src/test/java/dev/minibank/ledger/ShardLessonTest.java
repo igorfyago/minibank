@@ -16,16 +16,16 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * STAGE 5 — SHARDING: WRITES ONLY SCALE BY REDRAWING THE MAP.
+ * STAGE 5 · SHARDING: WRITES ONLY SCALE BY REDRAWING THE MAP.
  *
  * Replicas are clones (they scale reads). Shards are TERRITORIES: the
  * customers are split across independent databases, and each customer's
  * whole world lives on one of them.
  *
- *   lesson 1  a shard is a different machine — igor does not exist on shard1
+ *   lesson 1  a shard is a different machine · igor does not exist on shard1
  *   lesson 2  same-shard transfers are stage 1 unchanged: plain ACID
  *   lesson 3  cross-shard is a SAGA: depart, honestly in-flight, arrive
- *   lesson 4  Kafka may deliver twice — the money arrives once
+ *   lesson 4  Kafka may deliver twice · the money arrives once
  *   lesson 5  the applier fed the outbox's own bytes: the real pipe, end to end
  *   lesson 6  destination missing -> the compensating refund; nothing is lost
  *
@@ -60,7 +60,7 @@ class ShardLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 1: a shard is a different MACHINE — igor exists on his shard and nowhere else")
+    @DisplayName("lesson 1: a shard is a different MACHINE · igor exists on his shard and nowhere else")
     void lesson1_customersLiveOnExactlyOneShard() throws Exception {
         assertEquals(0, Shards.forCustomer(IGOR).index, "igor (10, even) routes to shard0");
         assertEquals(1, Shards.forCustomer(COCO).index, "coco (11, odd) routes to shard1");
@@ -77,7 +77,7 @@ class ShardLessonTest {
     @DisplayName("lesson 2: both parties on one shard -> the stage-1 transfer, unchanged. Sharding kept the common case ACID")
     void lesson2_sameShardIsPlainAcid() throws Exception {
         // a top-up: world -> igor. System accounts exist on EVERY shard, so
-        // this never crosses anything — full ACID, ordered locks, idempotency.
+        // this never crosses anything · full ACID, ordered locks, idempotency.
         var r = Shards.plan(Shard.WORLD, IGOR);
         assertFalse(r.crossShard(), "system accounts take the customer's shard: local by construction");
 
@@ -89,16 +89,16 @@ class ShardLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 3: cross-shard is a SAGA — money is honestly IN FLIGHT between two local ACID transactions")
+    @DisplayName("lesson 3: cross-shard is a SAGA · money is honestly IN FLIGHT between two local ACID transactions")
     void lesson3_crossShardSaga() throws Exception {
         UUID tx = UUID.randomUUID();
         assertTrue(Shards.plan(IGOR, COCO).crossShard(), "igor and coco live on different machines");
 
-        // HALF ONE — depart, on igor's shard, fully ACID:
+        // HALF ONE · depart, on igor's shard, fully ACID:
         assertInstanceOf(Ledger.Ok.class, Shards.s(0).depart(tx, IGOR, COCO, eur("30.00")));
 
         // the in-between state, stated without embarrassment: igor has paid,
-        // coco has not been paid, and the books SAY SO — the money sits in
+        // coco has not been paid, and the books SAY SO · the money sits in
         // the clearing account. Nothing is wrong here. This is what
         // "eventual consistency" looks like when it is done honestly.
         assertEquals(0, eur("470.00").compareTo(Shards.s(0).balance(IGOR)), "igor already debited");
@@ -106,7 +106,7 @@ class ShardLessonTest {
         assertEquals(0, eur("30.00").compareTo(Shards.inFlight()), "the fleet says: 30.00 in the pipe");
         assertEquals(0, sumZero(Shards.s(0)).size(), "shard0 balances ALONE, right now");
 
-        // HALF TWO — arrive, on coco's shard, fully ACID:
+        // HALF TWO · arrive, on coco's shard, fully ACID:
         assertInstanceOf(Ledger.Ok.class, Shards.s(1).arrive(tx, COCO, eur("30.00")));
 
         assertEquals(0, eur("530.00").compareTo(Shards.s(1).balance(COCO)), "coco credited");
@@ -116,14 +116,14 @@ class ShardLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 4: the arrival is idempotent — Kafka may deliver five times, the money lands once")
+    @DisplayName("lesson 4: the arrival is idempotent · Kafka may deliver five times, the money lands once")
     void lesson4_duplicateArrivalIsHarmless() throws Exception {
         UUID tx = UUID.randomUUID();
         Shards.s(0).depart(tx, IGOR, COCO, eur("30.00"));
 
         assertInstanceOf(Ledger.Ok.class, Shards.s(1).arrive(tx, COCO, eur("30.00")));
         assertInstanceOf(Ledger.AlreadyProcessed.class, Shards.s(1).arrive(tx, COCO, eur("30.00")),
-                "same txId, same shard-local gate as stage 1 — the second delivery bounces off the primary key");
+                "same txId, same shard-local gate as stage 1 · the second delivery bounces off the primary key");
         assertInstanceOf(Ledger.AlreadyProcessed.class, Shards.s(1).arrive(tx, COCO, eur("30.00")));
 
         assertEquals(0, eur("530.00").compareTo(Shards.s(1).balance(COCO)), "credited exactly once");
@@ -131,12 +131,12 @@ class ShardLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 5: the real pipe — the applier is fed the outbox's OWN bytes and the money lands")
+    @DisplayName("lesson 5: the real pipe · the applier is fed the outbox's OWN bytes and the money lands")
     void lesson5_theRealPipe() throws Exception {
         UUID tx = UUID.randomUUID();
         Shards.s(0).depart(tx, IGOR, COCO, eur("42.00"));
 
-        // read the event the depart-transaction committed — these are the
+        // read the event the depart-transaction committed · these are the
         // exact bytes the relay hands to Kafka and Kafka hands back.
         List<Outbox.Event> events;
         try (Connection c = Shards.s(0).open()) {
@@ -154,12 +154,12 @@ class ShardLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 6: destination doesn't exist — the saga COMPENSATES. Money can be in flight, never in limbo")
+    @DisplayName("lesson 6: destination doesn't exist · the saga COMPENSATES. Money can be in flight, never in limbo")
     void lesson6_theBounce() throws Exception {
         UUID tx = UUID.randomUUID();
         long nobody = 99;   // routes to shard1; no such account there
 
-        // departure cannot know — the destination lives on another machine.
+        // departure cannot know · the destination lives on another machine.
         // It checks what it CAN check (igor's funds) and commits.
         assertInstanceOf(Ledger.Ok.class, Shards.s(0).depart(tx, IGOR, nobody, eur("30.00")));
         assertEquals(0, eur("470.00").compareTo(Shards.s(0).balance(IGOR)));
@@ -168,7 +168,7 @@ class ShardLessonTest {
         String payload = "{\"type\":\"transfer.departed\",\"txId\":\"" + tx +
                 "\",\"from\":" + IGOR + ",\"to\":" + nobody + ",\"amount\":\"30.00\"}";
         ShardApplier.handle(payload);
-        ShardApplier.handle(payload);   // the bounce redelivered — refund is gated too
+        ShardApplier.handle(payload);   // the bounce redelivered · refund is gated too
 
         assertEquals(0, eur("500.00").compareTo(Shards.s(0).balance(IGOR)), "igor made whole, exactly once");
         assertEquals(0, BigDecimal.ZERO.compareTo(Shards.inFlight()), "nothing left in the pipe");

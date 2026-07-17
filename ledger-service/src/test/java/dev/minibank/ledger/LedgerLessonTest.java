@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * STAGE 1 — THE DOUBLE-ENTRY LEDGER.
+ * STAGE 1 · THE DOUBLE-ENTRY LEDGER.
  *
  * Cast: igor and coco (customers), world (the outside: top-ups come from it),
  * cafe (a merchant). Accounts are born empty; the world funds them by transfer.
@@ -55,7 +55,7 @@ class LedgerLessonTest {
         Ledger.createAccount(CAFE, "cafe", Ledger.KIND_EXTERNAL);
         Ledger.createAccount(IGOR, "igor", Ledger.KIND_CUSTOMER);
         Ledger.createAccount(COCO, "coco", Ledger.KIND_CUSTOMER);
-        // Fund the customers FROM the outside world — through the ledger,
+        // Fund the customers FROM the outside world · through the ledger,
         // like all money. The world goes negative; that is its job.
         Ledger.transfer(UUID.randomUUID(), WORLD, IGOR, EUR_100);
         Ledger.transfer(UUID.randomUUID(), WORLD, COCO, EUR_100);
@@ -63,7 +63,7 @@ class LedgerLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 1: igor pays coco 30 — two entries, sum zero, caches true")
+    @DisplayName("lesson 1: igor pays coco 30 · two entries, sum zero, caches true")
     void lesson1_transferIsTwoEntriesSummingZero() throws Exception {
         var result = Ledger.transfer(UUID.randomUUID(), IGOR, COCO, EUR_30);
 
@@ -80,14 +80,14 @@ class LedgerLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 2: insufficient funds — rejected, and NOTHING was written")
+    @DisplayName("lesson 2: insufficient funds · rejected, and NOTHING was written")
     void lesson2_insufficientFundsWritesNothing() throws Exception {
         var result = Ledger.transfer(UUID.randomUUID(), IGOR, COCO, new BigDecimal("100.01"));
 
         assertInstanceOf(Ledger.InsufficientFunds.class, result);
         assertEquals(0, Ledger.cachedBalance(IGOR).compareTo(EUR_100));
         assertEquals(0, Ledger.cachedBalance(COCO).compareTo(EUR_100));
-        // atomicity: the rejected attempt left zero rows behind — not even
+        // atomicity: the rejected attempt left zero rows behind · not even
         // the transactions row survived the rollback
         try (Connection c = Db.open(); var st = c.createStatement();
              var rs = st.executeQuery("SELECT COUNT(*) FROM transactions WHERE kind = 'transfer'")) {
@@ -98,9 +98,9 @@ class LedgerLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 3: the same transfer retried — moves money exactly once")
+    @DisplayName("lesson 3: the same transfer retried · moves money exactly once")
     void lesson3_retryIsIdempotent() throws Exception {
-        UUID txId = UUID.randomUUID();   // the caller owns the id — that IS the idempotency key
+        UUID txId = UUID.randomUUID();   // the caller owns the id · that IS the idempotency key
 
         var first = Ledger.transfer(txId, IGOR, COCO, EUR_30);
         var retry = Ledger.transfer(txId, IGOR, COCO, EUR_30);   // network blip, client retried
@@ -112,11 +112,11 @@ class LedgerLessonTest {
     }
 
     // ------------------------------------------------------------------
-    // LESSON 4 — the disease. Lock the two accounts in OPPOSITE orders and
+    // LESSON 4 · the disease. Lock the two accounts in OPPOSITE orders and
     // Postgres has to kill somebody. Watch for SQLState 40P01.
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 4: wrong-order locking — a real deadlock, Postgres kills one (40P01)")
+    @DisplayName("lesson 4: wrong-order locking · a real deadlock, Postgres kills one (40P01)")
     void lesson4_wrongOrderLocking_deadlocks() throws Exception {
         CountDownLatch bothHoldFirstLock = new CountDownLatch(2);
         AtomicInteger deadlocks = new AtomicInteger();
@@ -157,15 +157,15 @@ class LedgerLessonTest {
     }
 
     // ------------------------------------------------------------------
-    // LESSON 5 — the cure. Real crossing payments through Ledger.transfer(),
+    // LESSON 5 · the cure. Real crossing payments through Ledger.transfer(),
     // which always locks ascending-by-id. Same collision, zero deadlocks.
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 5: crossing payments with ordered locking — no deadlock, correct balances")
+    @DisplayName("lesson 5: crossing payments with ordered locking · no deadlock, correct balances")
     void lesson5_orderedLocking_neverDeadlocks() throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(2);
         CountDownLatch start = new CountDownLatch(1);
-        // igor pays coco 30 WHILE coco pays igor 30 — the classic deadlock shape
+        // igor pays coco 30 WHILE coco pays igor 30 · the classic deadlock shape
         long[][] payments = { {IGOR, COCO}, {COCO, IGOR} };
         for (long[] p : payments) {
             pool.submit(() -> {
@@ -186,7 +186,7 @@ class LedgerLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 6: a corrupted cache cannot hide — reconciliation catches it")
+    @DisplayName("lesson 6: a corrupted cache cannot hide · reconciliation catches it")
     void lesson6_reconciliationCatchesDrift() throws Exception {
         // a rogue code path "fixes" a balance by hand, bypassing the ledger
         try (Connection c = Db.open(); var st = c.createStatement()) {
@@ -196,7 +196,7 @@ class LedgerLessonTest {
         var drifted = Ledger.driftedAccounts();
         assertEquals(1, drifted.size(), "exactly one account must be flagged");
         assertEquals(IGOR, drifted.get(0));
-        // the ledger still sums to zero — the TRUTH is intact; the CACHE lied.
+        // the ledger still sums to zero · the TRUTH is intact; the CACHE lied.
         assertTrue(Ledger.sumZeroViolations().isEmpty());
     }
 }

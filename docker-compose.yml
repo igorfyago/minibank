@@ -10,7 +10,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
-  # STAGE 5 — sharding. Two MORE Postgres servers, deliberately separate
+  # STAGE 5 · sharding. Two MORE Postgres servers, deliberately separate
   # containers: a shard is a different MACHINE. You cannot JOIN across them,
   # and that impossibility is the whole lesson.
   shard0:

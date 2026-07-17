@@ -8,22 +8,22 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * STAGE 2 — THE TRANSACTIONAL OUTBOX.
+ * STAGE 2 · THE TRANSACTIONAL OUTBOX.
  *
  * The problem it solves: after a transfer commits, other services must hear
- * about it (notifications, statements, analytics). The naive approach —
- * commit to Postgres, THEN publish to Kafka — has a fatal crack: crash
+ * about it (notifications, statements, analytics). The naive approach ·
+ * commit to Postgres, THEN publish to Kafka · has a fatal crack: crash
  * between the two and the payment exists but the echo never happens.
  * Publishing FIRST is worse: the echo happens for money that never moved.
  * You cannot atomically commit across two different systems.
  *
  * The trick: don't write to two systems. Write the event INTO THE SAME
- * DATABASE TRANSACTION as the transfer — an `outbox` table. One system,
+ * DATABASE TRANSACTION as the transfer · an `outbox` table. One system,
  * one commit, money and event live or die together. A relay then moves
  * outbox rows to Kafka afterwards, at its own pace.
  *
  * Delivery guarantee this creates: AT-LEAST-ONCE. The relay might publish
- * a row and crash before marking it published — on restart it publishes
+ * a row and crash before marking it published · on restart it publishes
  * again. Duplicates are possible, loss is not. That is exactly the right
  * trade for money, and it is why every consumer must be idempotent.
  */
@@ -55,7 +55,7 @@ public final class Outbox {
         }
     }
 
-    /** Called INSIDE an open business transaction — same commit, same fate. */
+    /** Called INSIDE an open business transaction · same commit, same fate. */
     static void append(Connection conn, String topic, String key, String payload) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
                 "INSERT INTO outbox(topic, key, payload) VALUES (?,?,?)")) {

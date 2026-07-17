@@ -20,10 +20,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * STAGE 2 — EVENTS WITHOUT LIES: THE OUTBOX, THE RELAY, THE IDEMPOTENT CONSUMER.
+ * STAGE 2 · EVENTS WITHOUT LIES: THE OUTBOX, THE RELAY, THE IDEMPOTENT CONSUMER.
  *
- *   lesson 1  the event commits WITH the money — same transaction, same fate
- *   lesson 2  relay down? nothing is lost — the echo is late, never absent
+ *   lesson 1  the event commits WITH the money · same transaction, same fate
+ *   lesson 2  relay down? nothing is lost · the echo is late, never absent
  *   lesson 3  end-to-end: outbox -> relay -> Kafka -> consumer -> notification
  *   lesson 4  the same event delivered twice -> exactly one notification
  *
@@ -69,7 +69,7 @@ class OutboxLessonTest {
         assertEquals(txId.toString(), event.key());
         assertTrue(event.payload().contains("payment.completed"));
 
-        // and the counter-proof: a FAILED transfer leaves NO event —
+        // and the counter-proof: a FAILED transfer leaves NO event ·
         // the echo cannot exist for money that never moved.
         Ledger.transfer(UUID.randomUUID(), IGOR, COCO, new BigDecimal("999.00"));
         assertEquals(before + 1, Outbox.pollUnpublished(1000).size(), "rejected transfer, no event");
@@ -77,7 +77,7 @@ class OutboxLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 2: relay down — the echo is late, never lost")
+    @DisplayName("lesson 2: relay down · the echo is late, never lost")
     void lesson2_relayDownNothingLost() throws Exception {
         // The relay is simply not running. Business continues.
         Ledger.transfer(UUID.randomUUID(), IGOR, COCO, EUR_30);
@@ -114,7 +114,7 @@ class OutboxLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 4: the same event delivered twice — exactly one notification")
+    @DisplayName("lesson 4: the same event delivered twice · exactly one notification")
     void lesson4_idempotentConsumer() throws Exception {
         UUID txId = UUID.randomUUID();
         Ledger.transfer(txId, IGOR, COCO, EUR_30);
@@ -158,7 +158,7 @@ class OutboxLessonTest {
         // count via the service's own API surface: how many notifications exist
         // for this key. (Notifications owns its DB; we ask it, not the tables.)
         // For the lesson we just re-handle idempotently and inspect the count
-        // delta — simplest honest probe: query through a tiny helper.
+        // delta · simplest honest probe: query through a tiny helper.
         return NotificationsProbe.countByKey(txId.toString());
     }
 }

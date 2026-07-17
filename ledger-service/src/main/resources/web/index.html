@@ -42,7 +42,7 @@
   td { padding:5px 8px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
   .amount-pos { color:var(--green); } .amount-neg { color:var(--red); }
 
-  /* the operations ticker — the backend, streaming past on every tab */
+  /* the operations ticker · the backend, streaming past on every tab */
   #ticker-bar { position:fixed; left:0; right:0; bottom:0; height:32px; z-index:45; overflow:hidden;
     background:rgba(10,13,20,.94); border-top:1px solid var(--line); backdrop-filter:blur(8px);
     display:flex; align-items:center; }
@@ -78,13 +78,22 @@
   .show-dot { width:7px; height:7px; border-radius:50%; background:var(--line); transition:background .3s; }
   .show-dot.on { background:var(--violet); box-shadow:0 0 6px var(--violet); }
 
-  /* app tab — the phone */
+  /* app tab · the phone */
   .acct-card { background:radial-gradient(130% 150% at 0% 0%, rgba(188,140,255,.13), transparent 45%),
                radial-gradient(100% 130% at 100% 0%, rgba(88,166,255,.08), transparent 40%), var(--panel); }
   .action-ic { background:linear-gradient(135deg, var(--violet), #7a5cff) !important; transition:transform .15s, filter .15s; }
   .action:hover .action-ic { transform:scale(1.08); }
   .prod-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; }
-  .prod { min-width:0; }
+  .sk { background:linear-gradient(90deg, #161c28 25%, #202939 37%, #161c28 63%);
+    background-size:400% 100%; animation:skm 1.3s ease infinite; border-radius:7px; }
+  @keyframes skm { 0% { background-position:100% 0; } 100% { background-position:0 0; } }
+  .sk-tile { border:1px solid var(--line); border-radius:14px; padding:11px 13px; height:96px; }
+  .sk-row { display:flex; align-items:center; gap:12px; padding:9px 4px; }
+  .prod { min-width:0; position:relative; transition:border-color .15s, transform .15s; }
+  .prod.expandable:hover { border-color:var(--violet); transform:translateY(-1px); cursor:pointer; }
+  .prod-chev { position:absolute; top:9px; right:12px; color:var(--dim); font:600 17px system-ui;
+    transition:transform .2s, color .2s; }
+  .prod.open .prod-chev { transform:rotate(90deg); color:var(--violet); }
   .prod-val, .prod-sub { overflow-wrap:break-word; }
   .prod { border:1px solid var(--line); border-radius:14px; padding:11px 13px; }
   .prod-name { color:var(--dim); font-size:11.5px; font-weight:650; }
@@ -169,7 +178,7 @@
   .tx-after { color:var(--dim); font-size:11.5px; font-variant-numeric:tabular-nums; }
   .tx-detail { color:var(--dim); font-size:11.5px; padding:0 4px 10px 58px; }
 
-  /* x-ray map — alive */
+  /* x-ray map · alive */
   .edge { stroke-dasharray:4 7; animation:dashflow 1.5s linear infinite; }
   @keyframes dashflow { to { stroke-dashoffset:-22; } }
   .node.onpath rect, .node.onpath ellipse, .node.onpath path { stroke:var(--violet); stroke-width:2.5; }
@@ -332,7 +341,7 @@
   .q-opt.wrong { border-color:var(--red); background:rgba(248,81,73,.12); }
   #q-explain { margin-top:12px; padding:12px; border:1px solid var(--line); border-radius:8px;
                font-size:13px; display:none; }
-  /* Rita — the support agent */
+  /* Rita · the support agent */
   #chat-fab { position:fixed; right:20px; bottom:46px; z-index:55; width:54px; height:54px; border-radius:50%;
     border:none; background:linear-gradient(135deg, var(--accent), var(--violet)); color:#fff; font-size:23px;
     cursor:pointer; box-shadow:0 6px 24px rgba(88,166,255,.35); transition:transform .15s; }
@@ -380,7 +389,7 @@
 
   .hidden { display:none !important; }
 
-  /* mobile: the same bank, pocket-sized — nothing hidden except the tagline */
+  /* mobile: the same bank, pocket-sized · nothing hidden except the tagline */
   @media (max-width: 760px) {
     header { padding:10px 12px; gap:10px; }
     nav { overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
@@ -428,13 +437,13 @@
           <button class="ghost" id="su-uk">🇬🇧 uk</button>
           <button class="primary" id="su-go">Create</button>
         </div>
-        <div class="muted" style="margin-top:8px">pick your region — that choice decides WHICH DATABASE you live on
+        <div class="muted" style="margin-top:8px">pick your region · that choice decides WHICH DATABASE you live on
           (data residency, the stage-6 lesson). The world funds you €500.</div>
         <div id="su-result" style="margin-top:6px; font-size:13px; min-height:18px"></div>
       </div>
       <div class="card acct-card">
         <div class="acct-label" id="acct-label">Main · EUR</div>
-        <div class="balance-num" id="balance">—</div>
+        <div class="balance-num" id="balance"><span class="sk" style="display:inline-block;width:190px;height:44px;border-radius:12px;vertical-align:middle"></span></div>
         <div class="muted" id="networth" style="margin:-4px 0 6px; font-size:13px"></div>
         <div class="actions">
           <button class="action" id="act-add"><span class="action-ic">+</span>Add money</button>
@@ -448,7 +457,7 @@
             <button id="seg-out">🏦 other bank</button>
           </div>
           <div class="fld">
-            <label id="send-to-label">To — minibank user</label>
+            <label id="send-to-label">To · minibank user</label>
             <select id="send-to"></select>
             <div class="iban-wrap hidden" id="iban-wrap"><span>🏦</span>
               <input id="send-iban" type="text" value="ES91 2100 0418 4502 0005 1332" maxlength="34" spellcheck="false"></div>
@@ -465,11 +474,11 @@
       </div>
       <div class="card tx-card">
         <h2>Products</h2>
-        <div class="prod-grid" id="prods"><span class="muted">loading…</span></div>
+        <div class="prod-grid" id="prods"><div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div><div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div><div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div><div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div><div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div><div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div></div>
       </div>
       <div class="card tx-card">
         <h2>Transactions</h2>
-        <div id="txlist"></div>
+        <div id="txlist"><div class="sk-row"><div class="sk" style="width:42px;height:42px;border-radius:50%;flex:none"></div><div style="flex:1"><div class="sk" style="width:35%;height:12px;margin-bottom:7px"></div><div class="sk" style="width:55%;height:10px"></div></div><div class="sk" style="width:70px;height:14px"></div></div><div class="sk-row"><div class="sk" style="width:42px;height:42px;border-radius:50%;flex:none"></div><div style="flex:1"><div class="sk" style="width:35%;height:12px;margin-bottom:7px"></div><div class="sk" style="width:55%;height:10px"></div></div><div class="sk" style="width:70px;height:14px"></div></div><div class="sk-row"><div class="sk" style="width:42px;height:42px;border-radius:50%;flex:none"></div><div style="flex:1"><div class="sk" style="width:35%;height:12px;margin-bottom:7px"></div><div class="sk" style="width:55%;height:10px"></div></div><div class="sk" style="width:70px;height:14px"></div></div><div class="sk-row"><div class="sk" style="width:42px;height:42px;border-radius:50%;flex:none"></div><div style="flex:1"><div class="sk" style="width:35%;height:12px;margin-bottom:7px"></div><div class="sk" style="width:55%;height:10px"></div></div><div class="sk" style="width:70px;height:14px"></div></div><div class="sk-row"><div class="sk" style="width:42px;height:42px;border-radius:50%;flex:none"></div><div style="flex:1"><div class="sk" style="width:35%;height:12px;margin-bottom:7px"></div><div class="sk" style="width:55%;height:10px"></div></div><div class="sk" style="width:70px;height:14px"></div></div></div>
       </div>
     </div>
   </section>
@@ -479,7 +488,7 @@
     <div class="xray-grid">
       <div class="xcol">
         <div class="card">
-          <h2>The living map — click anything</h2>
+          <h2>The living map · click anything</h2>
           <svg viewBox="0 0 720 560" width="100%" id="xsvg">
             <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
               <path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker></defs>
@@ -512,12 +521,12 @@
             <g class="node" data-node="shard0" transform="translate(430,84)">
               <path d="M0,12 a67,12 0 0 1 134,0 v46 a67,12 0 0 1 -134,0 z"/>
               <ellipse cx="67" cy="12" rx="67" ry="12"/>
-              <text x="67" y="40" text-anchor="middle">eu — PostgreSQL 16</text>
+              <text x="67" y="40" text-anchor="middle">eu · PostgreSQL 16</text>
               <text x="67" y="55" text-anchor="middle" class="sub" id="shard0-sub">:5434 · pool · outbox</text></g>
             <g class="node" data-node="shard1" transform="translate(430,196)">
               <path d="M0,12 a67,12 0 0 1 134,0 v46 a67,12 0 0 1 -134,0 z"/>
               <ellipse cx="67" cy="12" rx="67" ry="12"/>
-              <text x="67" y="40" text-anchor="middle">uk — PostgreSQL 16</text>
+              <text x="67" y="40" text-anchor="middle">uk · PostgreSQL 16</text>
               <text x="67" y="55" text-anchor="middle" class="sub" id="shard1-sub">:5435 · pool · outbox</text></g>
             <g class="node" data-node="applier" transform="translate(182,330)">
               <rect width="168" height="52" rx="9"/><text x="84" y="22" text-anchor="middle">Applier</text>
@@ -529,7 +538,7 @@
               <rect width="114" height="52" rx="9"/><text x="57" y="22" text-anchor="middle">Notifications</text>
               <text x="57" y="38" text-anchor="middle" class="sub">own DB · dedupe</text></g>
             <g class="node" data-node="rita" transform="translate(96,470)">
-              <rect width="200" height="52" rx="9"/><text x="100" y="22" text-anchor="middle">Rita — support agent</text>
+              <rect width="200" height="52" rx="9"/><text x="100" y="22" text-anchor="middle">Rita · support agent</text>
               <text x="100" y="38" text-anchor="middle" class="sub">gpt-4o-mini · 7 tools · Allow/Deny</text></g>
             <g class="node" data-node="pricefeed" transform="translate(430,470)">
               <rect width="210" height="52" rx="9"/><text x="105" y="22" text-anchor="middle">PriceFeed</text>
@@ -575,7 +584,7 @@
               <div class="eco-head">☸ Kubernetes</div>
               <div class="eco-body">app <b>×3</b> replicas (the ONLY thing that scales)<br>
                 pg-eu → <b>eu-west-1</b> · pg-uk → <b>eu-west-2</b><br>residency = a scheduling constraint</div>
-              <div class="eco-sub">manifests in k8s/ — the cluster shape of this exact system</div>
+              <div class="eco-sub">manifests in k8s/ · the cluster shape of this exact system</div>
             </div>
           </div>
         </div>
@@ -583,11 +592,11 @@
 
       <div class="xcol">
         <div class="card">
-          <h2>Live activity — every commit, publish and delivery</h2>
+          <h2>Live activity · every commit, publish and delivery</h2>
           <div id="ticker"><span class="muted">watching…</span></div>
         </div>
         <div class="card">
-          <h2>The ledger it produced — every group sums to zero
+          <h2>The ledger it produced · every group sums to zero
             <button class="mini" style="float:right" onclick="gotoStudio('eu','entries')">SQL ▸</button></h2>
           <div id="txgroups"></div>
         </div>
@@ -600,16 +609,16 @@
           <button data-d="how">Mechanism</button>
           <button data-d="win">Interview</button>
         </div>
-        <div id="guide-body"><p class="muted">Click any component, event, trace step or invariant — I explain it at three depths, with its live numbers.</p></div>
+        <div id="guide-body"><p class="muted">Click any component, event, trace step or invariant · I explain it at three depths, with its live numbers.</p></div>
         <div id="guide-stats"></div>
         <div id="guide-hint"></div>
       </div>
     </div>
 
     <div class="card" style="margin-top:14px">
-      <h2>The same design at 75,000,000 customers — what scales is COUNTS, not concepts</h2>
+      <h2>The same design at 75,000,000 customers · what scales is COUNTS, not concepts</h2>
       <div class="muted" style="font-size:12.5px; margin-bottom:10px">The demo above runs every mechanism once.
-        Production multiplies them. Click any box — the Guide answers with the capacity math.</div>
+        Production multiplies them. Click any box · the Guide answers with the capacity math.</div>
       <svg viewBox="0 0 980 380" width="100%">
         <line class="edge" x1="150" y1="46" x2="185" y2="46"/>
         <line class="edge" x1="400" y1="46" x2="435" y2="46"/>
@@ -621,14 +630,14 @@
           <rect width="140" height="44" rx="9"/><text x="70" y="20" text-anchor="middle">🌐 Edge</text>
           <text x="70" y="35" text-anchor="middle" class="sub">anycast · WAF · gateway buckets</text></g>
         <g class="node" data-node="scale:app" transform="translate(185,24)">
-          <rect width="215" height="44" rx="9"/><text x="107" y="20" text-anchor="middle">App tier — stateless, ×hundreds</text>
+          <rect width="215" height="44" rx="9"/><text x="107" y="20" text-anchor="middle">App tier · stateless, ×hundreds</text>
           <text x="107" y="35" text-anchor="middle" class="sub">HPA on p99 · canary deploys · no state</text></g>
         <g class="node" data-node="scale:bouncer" transform="translate(435,24)">
           <rect width="175" height="44" rx="9"/><text x="87" y="20" text-anchor="middle">PgBouncer tier</text>
           <text x="87" y="35" text-anchor="middle" class="sub">10,000 client conns → 100s real</text></g>
         <g class="node" data-node="scale:regions" transform="translate(180,92)">
           <rect width="620" height="120" rx="12" style="fill:none; stroke-dasharray:5 5"/>
-          <text x="16" y="20" class="sub" style="font-size:11px">region eu — one of 3+ · fault domain = legal domain</text></g>
+          <text x="16" y="20" class="sub" style="font-size:11px">region eu · one of 3+ · fault domain = legal domain</text></g>
         <g class="node" data-node="scale:shard" transform="translate(200,120)">
           <path d="M0,10 a55,10 0 0 1 110,0 v50 a55,10 0 0 1 -110,0 z"/>
           <ellipse cx="55" cy="10" rx="55" ry="10"/>
@@ -650,7 +659,7 @@
           <rect width="150" height="60" rx="10"/><text x="75" y="26" text-anchor="middle">Directory</text>
           <text x="75" y="43" text-anchor="middle" class="sub">75M rows ≈ GBs · cached everywhere</text></g>
         <g class="node" data-node="scale:kafka" transform="translate(180,248)">
-          <rect width="380" height="52" rx="10"/><text x="190" y="22" text-anchor="middle">Kafka — 3+ brokers · RF=3 · min.insync=2</text>
+          <rect width="380" height="52" rx="10"/><text x="190" y="22" text-anchor="middle">Kafka · 3+ brokers · RF=3 · min.insync=2</text>
           <text x="190" y="39" text-anchor="middle" class="sub">payments partitioned BY CUSTOMER → per-customer order survives scale</text></g>
         <g class="node" data-node="scale:dlq" transform="translate(600,248)">
           <rect width="90" height="52" rx="10"/><text x="45" y="24" text-anchor="middle">DLQ</text>
@@ -667,11 +676,11 @@
     </div>
 
     <div class="card" style="margin-top:14px">
-      <h2>The interview map — 16 questions, and where this bank answers them</h2>
+      <h2>The interview map · 16 questions, and where this bank answers them</h2>
       <div class="muted" style="font-size:12px;margin-bottom:8px">Run the hour like Revolut runs it:
         <b>clarify</b> (requirements, throughput, consistency needs) → <b>high-level</b> (this map)
         → <b>deep dive</b> (any question below) → <b>trade-offs</b> (the Interview tab of each answer)
-        → <b>wrap-up</b>. Strong consistency where money moves, eventual where echoes ripple — say it early.</div>
+        → <b>wrap-up</b>. Strong consistency where money moves, eventual where echoes ripple · say it early.</div>
       <div id="qmap"></div>
     </div>
 
@@ -680,15 +689,15 @@
   <!-- ======================= CONSOLE ======================= -->
   <section id="tab-console" class="hidden">
     <div class="pipe-head"><span class="pipe-num">1</span>
-      <div><b>PostgreSQL — where money commits</b>
-        <div class="muted">Every payment is one ACID transaction — and the event announcing it is written INTO that same
+      <div><b>PostgreSQL · where money commits</b>
+        <div class="muted">Every payment is one ACID transaction · and the event announcing it is written INTO that same
         commit (the <b>outbox</b> table). Pick any database, run the exact query, read the exact rows. The two
         <b>⚖ audits</b> are the bank auditing itself: zero rows = the books balance.</div></div></div>
     <div class="card">
       <div class="studio">
         <div class="db-rail" id="db-rail"><span class="muted">loading catalog…</span></div>
         <div class="studio-main">
-          <div class="ed-head"><b id="ed-title">—</b>
+          <div class="ed-head"><b id="ed-title">·</b>
             <button class="mini" id="ed-run">▶ Run</button>
             <span class="muted" id="ed-stat"></span></div>
           <pre class="ed" id="ed-sql"></pre>
@@ -697,14 +706,14 @@
       </div>
     </div>
 
-    <div class="pipe-link">⬇ &nbsp;a relay (a virtual thread per region) polls the outbox and ships each event —
+    <div class="pipe-link">⬇ &nbsp;a relay (a virtual thread per region) polls the outbox and ships each event ·
       sent with acks=all, marked <b>published</b> only after the broker confirms: at-least-once, never lost &nbsp;⬇</div>
 
     <div class="pipe-head"><span class="pipe-num">2</span>
-      <div><b>Kafka — where events travel</b>
+      <div><b>Kafka · where events travel</b>
         <div class="muted">The broker itself, not a mirror: real partition·offset numbers, the exact bytes. The two
-        consumer groups below read independently — <b>shard-applier</b> moves cross-region money,
-        <b>notifications</b> stores echoes — and <b>lag</b> (end − committed) is the number every Kafka operator
+        consumer groups below read independently · <b>shard-applier</b> moves cross-region money,
+        <b>notifications</b> stores echoes · and <b>lag</b> (end − committed) is the number every Kafka operator
         watches. lag 0 = fully caught up.</div></div></div>
     <div class="card">
       <div class="kf-groups" id="kf-groups"></div>
@@ -730,7 +739,7 @@
 <div id="hero" class="hidden">
   <div class="hero-inner">
     <div class="hero-title">mini<span>bank</span></div>
-    <div class="hero-tag">A real bank, built from first principles — customers sharded across two countries,
+    <div class="hero-tag">A real bank, built from first principles · customers sharded across two countries,
       payments settling over Kafka, every balance a projection of a double-entry ledger.
       Raw Java 21. Zero frameworks.</div>
     <div class="hero-stats">2 regions · 5 services · 4 databases · 30 executable lessons · ~300ms cross-border settlement · this is all live</div>
@@ -791,7 +800,7 @@ async function loadAccounts() {
     `<button class="ghost ${a.id === me ? 'on' : ''}" onclick="switchUser(${a.id})">${a.owner} <span style="opacity:.55;font-size:11px">· ${a.region}</span></button>`).join('')
     + `<button class="ghost" onclick="toggleSignup()" title="create your own customer">+</button>`;
   const mine = accounts.find(a => a.id === me);
-  $('#balance').textContent = mine ? fmt(mine.balance) : '—';
+  $('#balance').textContent = mine ? fmt(mine.balance) : '·';
   $('#acct-label').textContent = mine ? `Main · EUR · ${mine.region} region` : 'Main · EUR';
   $('#send-to').innerHTML = customers.filter(a => a.id !== me)
     .map(a => `<option value="${a.id}">${a.owner} · ${a.region}</option>`).join('');
@@ -821,7 +830,7 @@ $('#su-go').onclick = async () => {
     $('#signup-panel').classList.add('hidden');
     $('#su-name').value = '';
     me = r.id; lastTx = null;
-    say(`✓ welcome, ${name} — you live in ${r.region}: your account was just created on that region's database, and the world funded you €500`, 'var(--green)');
+    say(`✓ welcome, ${name} · you live in ${r.region}: your account was just created on that region's database, and the world funded you €500`, 'var(--green)');
     refreshAll();
   } else { el.textContent = '✗ ' + (r.error || r.result); el.style.color = 'var(--red)'; }
 };
@@ -831,10 +840,10 @@ async function doTransfer(txId) {
   const body = JSON.stringify({ txId, from: me, to: Number($('#send-to').value), amount: $('#send-amount').value });
   const r = await api('/api/transfer', { method: 'POST', body });
   if (r.result === 'ok') {
-    say(r.crossShard ? '✓ sent across regions — in flight, Kafka settles it' : '✓ sent', 'var(--green)');
+    say(r.crossShard ? '✓ sent across regions · in flight, Kafka settles it' : '✓ sent', 'var(--green)');
     followTx(txId);   // the museum: jump to the map and watch it actually happen
   }
-  else if (r.result === 'already_processed') say('↩ already processed — same txId, money moved once', 'var(--amber)');
+  else if (r.result === 'already_processed') say('↩ already processed · same txId, money moved once', 'var(--amber)');
   else if (r.result === 'relocating') say('⏸ ' + r.error, 'var(--amber)');
   else say('✗ ' + (r.result || r.error), 'var(--red)');
   loadAccounts(); loadStatement();
@@ -850,28 +859,28 @@ function segPaint() {
 function sendBtnPaint() {
   const a = Number($('#send-amount').value) || 0;
   $('#send-btn').textContent = 'Send ' + fmt(a) + (sendMode === 'out' ? ' · SEPA' : '');
-  $('#send-to-label').textContent = sendMode === 'out' ? 'To — another bank (IBAN)' : 'To — minibank user';
+  $('#send-to-label').textContent = sendMode === 'out' ? 'To · another bank (IBAN)' : 'To · minibank user';
 }
 $('#send-amount').addEventListener('input', sendBtnPaint);
 $('#seg-user').onclick = () => { sendMode = 'user'; segPaint(); };
 $('#seg-out').onclick = () => { sendMode = 'out'; segPaint(); };
 
 /* external (SEPA-style) transfers: the ledger commits instantly (money
-   leaves via the world account — how money exits a bank); the card below
+   leaves via the world account · how money exits a bank); the card below
    shows the clearing lifecycle the outside rails would take. */
 function extAll() { try { return JSON.parse(localStorage.getItem('mb-ext') || '[]'); } catch (e) { return []; } }
 function extSave(a) { try { localStorage.setItem('mb-ext', JSON.stringify(a.slice(-12))); } catch (e) {} }
 async function sendExternal() {
   const iban = $('#send-iban').value.replace(/\s/g, '').toUpperCase();
   const amount = $('#send-amount').value;
-  if (iban.length < 12) { say('that IBAN looks short — 12+ characters', 'var(--amber)'); return; }
+  if (iban.length < 12) { say('that IBAN looks short · 12+ characters', 'var(--amber)'); return; }
   const tx = uuid();
   const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: tx, from: me, to: 1, amount }) });
   if (r.result !== 'ok') { say('✗ ' + (r.result || r.error), 'var(--red)'); return; }
   const a = extAll();
   a.push({ tx, me, iban: '••' + iban.slice(-4), amount, t0: Date.now() });
   extSave(a);
-  say('✓ external transfer accepted — your balance moved now; the outside rails take ~30s', 'var(--green)');
+  say('✓ external transfer accepted · your balance moved now; the outside rails take ~30s', 'var(--green)');
   renderExt(); refreshAll();
 }
 const EXT_STAGES = [['Pending', 5000], ['Approved', 12000], ['Sending', 25000], ['Sent', 1/0]];
@@ -886,7 +895,7 @@ function renderExt() {
     const stage = idx < 0 ? 3 : idx;
     return `<div class="ext-card">
       <div class="ext-top"><span>🏦 To ${x.iban}</span><span>−${fmt(x.amount)}</span></div>
-      <div class="ext-sub">${stage === 3 ? 'Sent ✓ · left minibank via the world account' : 'SEPA credit transfer · your balance already moved — the rails are settling'}</div>
+      <div class="ext-sub">${stage === 3 ? 'Sent ✓ · left minibank via the world account' : 'SEPA credit transfer · your balance already moved · the rails are settling'}</div>
       <div class="ext-stages">${EXT_STAGES.map(([n], i) =>
         `<div class="ext-st ${i < stage || stage === 3 ? 'done' : i === stage ? 'now' : ''}">${n}</div>`).join('')}</div>
     </div>`;
@@ -898,10 +907,10 @@ $('#send-btn').onclick = () => {
 };
 $('#send-amount').addEventListener('keydown', e => { if (e.key === 'Enter') $('#send-btn').click(); });
 $('#act-send').onclick = () => { $('#send-panel').classList.toggle('hidden'); $('#send-amount').focus(); };
-$('#act-retry').onclick = () => { if (lastTx) doTransfer(lastTx); else say('send something first — Retry replays the SAME txId to prove idempotency', 'var(--dim)'); };
+$('#act-retry').onclick = () => { if (lastTx) doTransfer(lastTx); else say('send something first · Retry replays the SAME txId to prove idempotency', 'var(--dim)'); };
 $('#act-add').onclick = async () => {
   const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: 1, to: me, amount: '100.00' }) });
-  say(r.result === 'ok' ? '✓ added €100.00 from the world — your region, plain ACID' : '✗ ' + (r.result || r.error),
+  say(r.result === 'ok' ? '✓ added €100.00 from the world · your region, plain ACID' : '✗ ' + (r.result || r.error),
       r.result === 'ok' ? 'var(--green)' : 'var(--red)');
   loadAccounts(); loadStatement();
 };
@@ -909,12 +918,12 @@ $('#act-move').onclick = async () => {
   const mine = accounts.find(a => a.id === me);
   if (!mine) return;
   const r = await api('/api/relocate', { method: 'POST', body: JSON.stringify({ customer: me, to: 1 - mine.shard }) });
-  if (r.result === 'ok') say(`✈ relocated to ${r.region} — the balance travelled as ONE saga, then the pointer flipped`, 'var(--green)');
+  if (r.result === 'ok') say(`✈ relocated to ${r.region} · the balance travelled as ONE saga, then the pointer flipped`, 'var(--green)');
   else say('✗ ' + (r.error || r.result), 'var(--amber)');
   loadAccounts(); loadStatement();
 };
 
-/* the product shelf — every product is accounts + transfers, valued live */
+/* the product shelf · every product is accounts + transfers, valued live */
 let prevPortSig = '';
 const fmtBtc = v => '₿' + Number(v).toFixed(8).replace(/\.?0+$/, '').replace(/^([0-9]+)$/, '$1.0');
 let openProd = null;
@@ -976,7 +985,8 @@ async function loadPortfolio() {
   prevPortSig = sig;
   const total = Number(pf.main) + Number(pf.savings) + Number(pf.card) + Number(pf.btcEur) + Number(pf.aaplEur) + Number(pf.loan);
   const loanBal = Number(pf.loan), card = Number(pf.card);
-  const tile = (k, head, body) => `<div class="prod${openProd === k ? ' open' : ''}" onclick="prodOpen('${k}')">${head}
+  const tile = (k, head, body) => `<div class="prod expandable${openProd === k ? ' open' : ''}" onclick="prodOpen('${k}')">
+    <span class="prod-chev">›</span>${head}
     ${openProd === k ? `<div class="prod-x" onclick="event.stopPropagation()">${body}</div>` : ''}</div>`;
   const nwEl = document.querySelector('#networth');
   if (nwEl) nwEl.textContent = 'net worth ' + fmt(total) + (Number(pf.loan) < 0 || Number(pf.card) < 0 ? ' (after debts)' : '');
@@ -986,45 +996,45 @@ async function loadPortfolio() {
       <div class="prod-sub">main + savings + assets + card + loan · prices: ${pf.priceSource}</div></div>`
     + tile('sv',
       `<div class="prod-name">💰 Savings</div><div class="prod-val">${fmt(pf.savings)}</div>
-       <div class="prod-sub">a second account — tap to manage</div>`,
+       <div class="prod-sub">a second account, nothing more</div>`,
       slider('sv', 10, 500, 10, 50) +
       `<div class="prod-btns"><button class="mini" onclick="pSav('to_savings')">⬇ into savings</button>
        <button class="mini" onclick="pSav('to_main')">⬆ back to main</button></div>
        <div class="ph" id="ph-sv"></div>`)
     + tile('cd',
       `<div class="prod-name">💳 Credit card</div><div class="prod-val">${fmt(pf.card)}</div>
-       <div class="prod-sub">available ${fmt(1000 + card)} of €1,000${Number(pf.held) > 0 ? ' · held ' + fmt(pf.held) : ''} — tap</div>`,
+       <div class="prod-sub">available ${fmt(1000 + card)} of €1,000${Number(pf.held) > 0 ? ' · held ' + fmt(pf.held) : ''}</div>`,
       slider('cd', 5, 200, 5, 25) +
       `<div class="prod-btns"><button class="mini" onclick="pCard('pay_cafe')">pay café</button>
        <button class="mini" onclick="pCard('hold')">hold</button>
        ${lastAuth[me] ? `<button class="mini" onclick="pCard('capture')">capture</button><button class="mini" onclick="pCard('release')">release</button>` : ''}
        ${card < 0 ? `<button class="mini" onclick="pCard('repay')">repay</button>` : ''}</div>
-       <div class="prod-sub" style="margin-top:6px">the limit is a CHECK constraint — holds count automatically</div>
+       <div class="prod-sub" style="margin-top:6px">the limit is a CHECK constraint · holds count automatically</div>
        <div class="ph" id="ph-cd"></div>`)
     + tile('bt',
       `<div class="prod-name">₿ Bitcoin</div><div class="prod-val">${fmtBtc(pf.btc)} <span class="prod-sub">≈ ${fmt(pf.btcEur)}</span></div>
-       <div class="prod-sub">@ ${fmt(pf.btcPrice)} · live CoinGecko — tap to trade</div>`,
+       <div class="prod-sub">@ ${fmt(pf.btcPrice)} · live CoinGecko</div>`,
       `<div class="ch" id="ch-bt"></div>` + slider('bt', 10, 250, 5, 50) +
       `<div class="prod-btns"><button class="mini" onclick="pTrade('btc','buy',false)">buy</button>
        ${Number(pf.btcEur) > 0.5 ? `<button class="mini" onclick="pTrade('btc','sell',false)">sell</button>
        <button class="mini" onclick="pTrade('btc','sell',true)">sell all</button>` : ''}</div>
-       <div class="prod-sub" style="margin-top:6px">one transaction, four entries, two currencies — both ledgers sum to zero</div>
+       <div class="prod-sub" style="margin-top:6px">one transaction, four entries, two currencies · both ledgers sum to zero</div>
        <div class="ph" id="ph-bt"></div>`)
     + tile('ap',
       `<div class="prod-name">🍏 Apple stock</div><div class="prod-val">${Number(pf.aapl).toFixed(4)} sh <span class="prod-sub">≈ ${fmt(pf.aaplEur)}</span></div>
-       <div class="prod-sub">@ ${fmt(pf.aaplPrice)} · Yahoo × EURUSD — tap to trade</div>`,
+       <div class="prod-sub">@ ${fmt(pf.aaplPrice)} · Yahoo × EURUSD</div>`,
       `<div class="ch" id="ch-ap"></div>` + slider('ap', 10, 250, 5, 50) +
       `<div class="prod-btns"><button class="mini" onclick="pTrade('aapl','buy',false)">buy</button>
        ${Number(pf.aaplEur) > 0.5 ? `<button class="mini" onclick="pTrade('aapl','sell',false)">sell</button>
        <button class="mini" onclick="pTrade('aapl','sell',true)">sell all</button>` : ''}</div>
        <div class="ph" id="ph-ap"></div>`)
     + tile('ln',
-      `<div class="prod-name">🏦 Loan</div><div class="prod-val">${loanBal === 0 ? '—' : fmt(pf.loan)}</div>
-       <div class="prod-sub">${loanBal === 0 ? 'borrow up to €20,000, instant decision — tap' : 'the debt heals by plain transfers — tap'}</div>`,
+      `<div class="prod-name">🏦 Loan</div><div class="prod-val">${loanBal === 0 ? '€0.00' : fmt(pf.loan)}</div>
+       <div class="prod-sub">${loanBal === 0 ? 'borrow up to €20,000 · instant decision' : 'the debt heals by plain transfers'}</div>`,
       loanBal === 0
         ? slider('ln', 1000, 20000, 500, 10000) +
           `<div class="prod-btns"><button class="mini" onclick="pLoan('apply')">apply</button></div>
-           <div class="prod-sub" style="margin-top:6px">disbursement: loan −X, main +X in one commit — net worth unchanged</div>
+           <div class="prod-sub" style="margin-top:6px">disbursement: loan −X, main +X in one commit · net worth unchanged</div>
            <div class="ph" id="ph-ln"></div>`
         : slider('lnr', 100, 2000, 100, 500) +
           `<div class="prod-btns"><button class="mini" onclick="pLoan('repay')">repay</button></div>
@@ -1035,7 +1045,7 @@ async function loadPortfolio() {
   if (openProd === 'ap') loadChart('ap', 'aapl');
 }
 function refreshAll() { loadAccounts(); prevStmtSig = ''; loadStatement(); prevPortSig = ''; loadPortfolio(); }
-/* the statement — the double-entry ledger, told the way a bank app tells it */
+/* the statement · the double-entry ledger, told the way a bank app tells it */
 async function loadStatement() {
   if (me === null) return;
   const items = await api('/api/statement?customer=' + me);
@@ -1064,16 +1074,16 @@ async function loadStatement() {
       ? `<span class="pend-dot"></span><span style="color:var(--amber)">Pending</span> · ${time} · settling across regions`
       : `${SUB[x.tag] || ''} · ${time}${x.cross ? ' · cross-region' : ''}`;
     const strat = x.tag === 'relocation'
-      ? 'strategy: RELOCATION — the whole balance as one standard saga, then the directory pointer flips; write-pause of milliseconds, every step idempotent'
+      ? 'strategy: RELOCATION · the whole balance as one standard saga, then the directory pointer flips; write-pause of milliseconds, every step idempotent'
       : x.tag === 'refund'
-      ? 'strategy: COMPENSATION — the saga could not complete (no such destination), so a gated refund undid the departure; deterministic refund id makes even the undo idempotent'
+      ? 'strategy: COMPENSATION · the saga could not complete (no such destination), so a gated refund undid the departure; deterministic refund id makes even the undo idempotent'
       : ['buy', 'sell'].includes(x.tag)
-      ? 'strategy: ONE ACID COMMIT, TWO CURRENCIES — four entries: your EUR ↔ broker, broker ↔ your asset. Each currency’s ledger sums to zero on its own; the price is locked at execution and the ratio of the legs IS the price paid'
+      ? 'strategy: ONE ACID COMMIT, TWO CURRENCIES · four entries: your EUR ↔ broker, broker ↔ your asset. Each currency’s ledger sums to zero on its own; the price is locked at execution and the ratio of the legs IS the price paid'
       : x.tag === 'loan'
-      ? 'strategy: DISBURSEMENT — loan −X and main +X in one commit: your net position is unchanged; the debt is real, on the books, and heals by plain transfers'
+      ? 'strategy: DISBURSEMENT · loan −X and main +X in one commit: your net position is unchanged; the debt is real, on the books, and heals by plain transfers'
       : x.cross
-      ? 'strategy: SAGA — pessimistic FOR UPDATE on the payer (source region only) · in_transit clearing account · Kafka at-least-once · idempotent arrival gate. No optimistic retries anywhere: hot money gets locks'
-      : 'strategy: ONE ACID COMMIT — pessimistic SELECT … FOR UPDATE on both rows, ascending id order (deadlock-proof) · caller-owned txId idempotency gate. Optimistic version+retry deliberately not used: balances are hot rows';
+      ? 'strategy: SAGA · pessimistic FOR UPDATE on the payer (source region only) · in_transit clearing account · Kafka at-least-once · idempotent arrival gate. No optimistic retries anywhere: hot money gets locks'
+      : 'strategy: ONE ACID COMMIT · pessimistic SELECT … FOR UPDATE on both rows, ascending id order (deadlock-proof) · caller-owned txId idempotency gate. Optimistic version+retry deliberately not used: balances are hot rows';
     html += `<div class="tx-row${x.pending ? ' tx-pend' : ''}" onclick="this.nextElementSibling.classList.toggle('hidden')">
       ${av}
       <div class="tx-main"><div class="tx-name">${name}</div>
@@ -1083,7 +1093,7 @@ async function loadStatement() {
     </div>
     <div class="tx-detail hidden">tx ${x.tx}<br>${strat}<br>the grey number is your balance right after this transaction, recomputed from the ledger itself · <a href="#xray" style="color:var(--accent)" onclick="traceTx('${x.tx}', true);document.querySelector('[data-tab=&quot;xray&quot;]').click()">watch it on the map →</a></div>`;
   }
-  $('#txlist').innerHTML = html || '<span class="muted">no transactions yet — add money or send some</span>';
+  $('#txlist').innerHTML = html || '<span class="muted">no transactions yet · add money or send some</span>';
 }
 
 /* ---------------- x-ray tab: the living map ---------------- */
@@ -1139,162 +1149,162 @@ const who = s => s ? s[0].toUpperCase() + s.slice(1) : 'someone';
 const evLine = e => {
   const a = e.amount ? ' ' + eur(e.amount) : '';
   switch (e.type) {
-    case 'transfer_local': return `${who(e.payer)} paid ${who(e.payee)}${a} — one ACID commit in ${e.region}`;
+    case 'transfer_local': return `${who(e.payer)} paid ${who(e.payee)}${a} · one ACID commit in ${e.region}`;
     case 'depart': return `${who(e.payer)}'s${a} left ${e.region} into the pipe`;
     case 'published': return `the ${e.region} relay handed an event to Kafka`;
     case 'arrive': return `${e.payee ? who(e.payee) + ' received' : 'money arrived'}${a} in ${e.region}`;
-    case 'refund': return `a payment bounced — refund landed in ${e.region}`;
+    case 'refund': return `a payment bounced · refund landed in ${e.region}`;
     case 'notify': return `the notifications service stored the echo`;
     default: return e.type;
   }
 };
 const GUIDE = {
   welcome: { t: 'The Guide',
-    plain: () => [`This is the exact architecture, drawn live — every box is a real running process or database, labeled with what it actually is. Click any of them: I answer with facts, at three depths.`],
+    plain: () => [`This is the exact architecture, drawn live · every box is a real running process or database, labeled with what it actually is. Click any of them: I answer with facts, at three depths.`],
     how: () => [`Every number on this page is a query against the live system. The animations replay real events from real timestamps; nothing is mocked, nothing is a stock diagram.`],
     win: () => [`One page = the design doc, the running system and the observability, agreeing with each other in real time.`] },
-  browser: { t: 'Browser — the client',
-    plain: () => [`Vanilla JS, zero frameworks, installable as a PWA. It mints every transaction id (crypto.randomUUID) before calling the API — the CALLER owns the idempotency key. Polls every 2s; never sees a database.`],
-    how: () => [`Retry same tx resends the identical UUID and bounces off a primary key. Rita's Allow button executes here too — the agent's actions ride the same client calls as the buttons.`],
+  browser: { t: 'Browser · the client',
+    plain: () => [`Vanilla JS, zero frameworks, installable as a PWA. It mints every transaction id (crypto.randomUUID) before calling the API · the CALLER owns the idempotency key. Polls every 2s; never sees a database.`],
+    how: () => [`Retry same tx resends the identical UUID and bounces off a primary key. Rita's Allow button executes here too · the agent's actions ride the same client calls as the buttons.`],
     win: () => [`Server-minted keys + a lost response = client retries into a double spend. Caller-minted keys make every retry safe by construction.`] },
-  caddy: { t: 'Caddy 2 — the front door',
+  caddy: { t: 'Caddy 2 · the front door',
     plain: () => [`TLS terminated here (Let's Encrypt, auto-renewed), HTTP 308-redirected to HTTPS, reverse-proxied by service name to the app on :8080. One shared edge for every app on this box.`],
     how: () => [`Adds X-Forwarded-For, which the rate limiter keys on. In the k8s manifests this role is the Ingress + cert-manager.`],
     win: () => [`Terminate TLS once at the edge; keep app containers plain HTTP on a private network. Fewer certs, fewer ciphers in app code, one place to audit.`] },
-  api: { t: 'API + Router — raw JDK HttpServer',
-    plain: s => [`No framework: com.sun.net.httpserver + one Java 21 VIRTUAL THREAD per request — blocking code, async economics. In front of every /api route: a per-caller token bucket, 60 burst, 25/s refill, 429 when empty.`,
+  api: { t: 'API + Router · raw JDK HttpServer',
+    plain: s => [`No framework: com.sun.net.httpserver + one Java 21 VIRTUAL THREAD per request · blocking code, async economics. In front of every /api route: a per-caller token bucket, 60 burst, 25/s refill, 429 when empty.`,
       `Routing = one directory lookup: which region owns this customer. ${s.shards.map(x => x.region).join(' and ')} today.`],
     how: () => [`Money endpoints are idempotent by caller txId. Same-region transfers run the six-step ACID transfer; cross-region departs the saga. During a relocation the directory answers "moving" and this layer refuses with a retriable 409.`],
     win: () => [`Virtual threads are the modern Java answer to C10K. And pair the limiter with idempotency: one makes retries cheap, the other makes them safe.`] },
-  directory: { t: 'Directory — the routing truth',
-    plain: () => [`Its own Postgres database (minibank_directory on pg-control :5433): customer_id → shard, plus a moving flag. Cached in-process because a home region changes approximately never. Click me — the inspector below shows the actual table.`],
-    how: () => [`Residency is a FACT, so routing is a LOOKUP — arithmetic (id mod N) spreads load but cannot encode law. Relocation = set moving (writes pause, milliseconds) → balance travels as a standard saga → pointer flip.`],
-    win: () => [`Regions are shards whose routing key is law. The directory is read-mostly and infinitely cacheable — it is not the bottleneck people fear.`] },
-  intransit: { t: 'in_transit — clearing account (id 3, every region)',
+  directory: { t: 'Directory · the routing truth',
+    plain: () => [`Its own Postgres database (minibank_directory on pg-control :5433): customer_id → shard, plus a moving flag. Cached in-process because a home region changes approximately never. Click me · the inspector below shows the actual table.`],
+    how: () => [`Residency is a FACT, so routing is a LOOKUP · arithmetic (id mod N) spreads load but cannot encode law. Relocation = set moving (writes pause, milliseconds) → balance travels as a standard saga → pointer flip.`],
+    win: () => [`Regions are shards whose routing key is law. The directory is read-mostly and infinitely cacheable · it is not the bottleneck people fear.`] },
+  intransit: { t: 'in_transit · clearing account (id 3, every region)',
     plain: s => [`The pipe between regions, as an account. Right now: ${eur(s.inFlight)} in flight (eu holds ${eur(s.shards[0].inTransit)}, uk ${eur(s.shards[1].inTransit)}).`,
-      `Departure: payer −A, in_transit +A — the source region's books balance instantly. Arrival: in_transit −A, payee +A. Every region sums to zero at every instant.`],
+      `Departure: payer −A, in_transit +A · the source region's books balance instantly. Arrival: in_transit −A, payee +A. Every region sums to zero at every instant.`],
     how: () => [`Fleet-wide SUM(in_transit) = money in flight; zero when drained. That single number is the cross-region reconciliation control.`],
-    win: () => [`Nostro/vostro, in miniature — banks have settled across borders exactly like this for centuries. Eventual consistency with the in-between state ON the balance sheet, not hidden in a coordinator.`] },
-  shard0: { t: 'Region eu — PostgreSQL 16 (:5434)', plain: s => shardPlain(s.shards[0]), how: s => shardHow(s.shards[0]), win: () => shardWin() },
-  shard1: { t: 'Region uk — PostgreSQL 16 (:5435)', plain: s => shardPlain(s.shards[1]), how: s => shardHow(s.shards[1]), win: () => shardWin() },
-  kafka: { t: 'Kafka 3.8 — KRaft, topic "payments"',
+    win: () => [`Nostro/vostro, in miniature · banks have settled across borders exactly like this for centuries. Eventual consistency with the in-between state ON the balance sheet, not hidden in a coordinator.`] },
+  shard0: { t: 'Region eu · PostgreSQL 16 (:5434)', plain: s => shardPlain(s.shards[0]), how: s => shardHow(s.shards[0]), win: () => shardWin() },
+  shard1: { t: 'Region uk · PostgreSQL 16 (:5435)', plain: s => shardPlain(s.shards[1]), how: s => shardHow(s.shards[1]), win: () => shardWin() },
+  kafka: { t: 'Kafka 3.8 · KRaft, topic "payments"',
     plain: s => [`Single KRaft broker (no ZooKeeper). One topic: payments. Producers (one relay per region) send with acks=all + enable.idempotence; the outbox row is marked published only AFTER the broker acks. ${s.outboxPublished} published, ${s.outboxPending} pending right now.`],
     how: () => [`That mark-after-ack order is the whole crash-safety argument: crash between send and mark → resend → at-least-once, never at-most-once. Two consumer groups read independently: shard-applier (moves money) and notifications (stores echoes), each tracking its own offsets.`],
-    win: () => [`You cannot commit atomically to Postgres AND Kafka — so the event is committed WITH the money (outbox) and shipped after. Loss impossible; duplicates designed-for downstream.`] },
-  applier: { t: 'Applier — consumer group "shard-applier"',
-    plain: s => [`Reads departed events, routes each to the destination customer's region, and lands the money in one local ACID commit — gated by the SAME txId on that region's own transactions table. In flight now: ${eur(s.inFlight)}.`],
+    win: () => [`You cannot commit atomically to Postgres AND Kafka · so the event is committed WITH the money (outbox) and shipped after. Loss impossible; duplicates designed-for downstream.`] },
+  applier: { t: 'Applier · consumer group "shard-applier"',
+    plain: s => [`Reads departed events, routes each to the destination customer's region, and lands the money in one local ACID commit · gated by the SAME txId on that region's own transactions table. In flight now: ${eur(s.inFlight)}.`],
     how: () => [`Five deliveries → one credit: the gate is a primary key, not a promise. Unknown destination → a compensating refund on the source region under a deterministic id. Typical settle: a few hundred ms.`],
-    win: () => [`This is the saga's second half, and the alternative — 2PC — blocks both databases while a coordinator decides, and the coordinator is a new single point of failure.`] },
-  notif: { t: 'Notifications — group "notifications", own database',
+    win: () => [`This is the saga's second half, and the alternative · 2PC · blocks both databases while a coordinator decides, and the coordinator is a new single point of failure.`] },
+  notif: { t: 'Notifications · group "notifications", own database',
     plain: s => [`A separate consumer group with its own database (minibank_notifications on pg-control). INSERT with event_key as PRIMARY KEY + ON CONFLICT DO NOTHING. ${s.notifications} stored.`],
     how: () => [`Database-per-service: the only thing connecting it to the ledger is the topic. Down for an hour? Kafka holds its offset; it catches up losslessly.`],
     win: () => [`At-least-once + idempotent consumer = effectively once, for the cost of one conflict clause.`] },
-  rita: { t: 'Rita — the support agent',
-    plain: () => [`gpt-4o-mini behind a raw JDK HttpClient call (no SDK). Grounded per request: your live balances, recent ledger rows and the cast list are queried and injected into her context. Seven tools — exactly the app's buttons.`],
-    how: () => [`She PROPOSES tool calls; your browser executes on Allow via the same public API as the buttons — same idempotency keys, limiter, constraints. Metered by her own token buckets (4-burst per caller, 300/day global).`],
-    win: () => [`Agents and humans get the same power; the human's click is the gate. Least privilege beats prompt engineering: an injection can render a card you decline — never move money.`] },
-  pricefeed: { t: 'PriceFeed — live market data',
+  rita: { t: 'Rita · the support agent',
+    plain: () => [`gpt-4o-mini behind a raw JDK HttpClient call (no SDK). Grounded per request: your live balances, recent ledger rows and the cast list are queried and injected into her context. Seven tools · exactly the app's buttons.`],
+    how: () => [`She PROPOSES tool calls; your browser executes on Allow via the same public API as the buttons · same idempotency keys, limiter, constraints. Metered by her own token buckets (4-burst per caller, 300/day global).`],
+    win: () => [`Agents and humans get the same power; the human's click is the gate. Least privilege beats prompt engineering: an injection can render a card you decline · never move money.`] },
+  pricefeed: { t: 'PriceFeed · live market data',
     plain: () => [`BTC/EUR from CoinGecko; AAPL from Yahoo (USD) converted at the live EURUSD rate from frankfurter.app. All keyless, cached 60s, source labeled (live/cached/fallback) so the UI never lies about freshness.`],
-    how: () => [`The price is captured AT EXECUTION and written into the trade event — the ledger stores euros and units; their ratio IS the price paid. Feeds down? Fallback prices, honestly labeled.`],
+    how: () => [`The price is captured AT EXECUTION and written into the trade event · the ledger stores euros and units; their ratio IS the price paid. Feeds down? Fallback prices, honestly labeled.`],
     win: () => [`Never let a UI display a price the ledger didn't record. Execution price lives in the transaction, not in a cache.`] },
   'ev:transfer_local': { t: 'A local transfer',
     plain: c => [`${evLine(c.ev)}. Same region → the six-step ACID transfer: claim txId, lock both rows FOR UPDATE ascending, funds check, two entries summing to zero, cached balances, outbox event. One commit.`],
     how: () => [`Ordered locking makes deadlock impossible by construction; the txId gate makes retries no-ops; the CHECK constraints veto credit/loan floor breaches inside the same commit.`],
-    win: () => [`Money = lock it or ledger it. Pessimistic FOR UPDATE in a fixed global order — synchronized only protects one JVM and production runs many.`] },
+    win: () => [`Money = lock it or ledger it. Pessimistic FOR UPDATE in a fixed global order · synchronized only protects one JVM and production runs many.`] },
   'ev:depart': { t: 'A departure',
-    plain: c => [`${evLine(c.ev)}. Payer debited, in_transit credited, outbox event written — one commit on the source region. The funds check (the only fallible decision) happened here, under a local row lock.`],
-    how: () => [`That locality is WHY the bank shards by customer. The recipient's region hasn't been touched yet — and the books already balance on both sides of the pipe.`],
+    plain: c => [`${evLine(c.ev)}. Payer debited, in_transit credited, outbox event written · one commit on the source region. The funds check (the only fallible decision) happened here, under a local row lock.`],
+    how: () => [`That locality is WHY the bank shards by customer. The recipient's region hasn't been touched yet · and the books already balance on both sides of the pipe.`],
     win: () => [`The honest in-between state: visible on a balance sheet, not hidden in a coordinator.`] },
   'ev:published': { t: 'A publish',
-    plain: c => [`${evLine(c.ev)} — acks=all, then the outbox row was marked. Crash before the mark → resend later.`],
+    plain: c => [`${evLine(c.ev)} · acks=all, then the outbox row was marked. Crash before the mark → resend later.`],
     how: () => [`At-least-once chosen deliberately: for money, duplicates you can dedupe beat losses you can't detect.`],
     win: () => [`Mark-after-send is the crash-safety argument in four words.`] },
   'ev:arrive': { t: 'An arrival',
     plain: c => [`${evLine(c.ev)}. The applier claimed the txId on the destination's own transactions table, then moved in_transit → recipient in one local commit.`],
-    how: () => [`No funds check — the one failure left (missing destination) is compensated by a gated refund, not rolled back.`],
+    how: () => [`No funds check · the one failure left (missing destination) is compensated by a gated refund, not rolled back.`],
     win: () => [`Kafka may deliver this five times; deliveries 2–5 die on a primary key.`] },
   'ev:refund': { t: 'A bounce, compensated',
     plain: c => [`${evLine(c.ev)}. Destination didn't exist; the saga put the money back under a DETERMINISTIC refund id.`],
-    how: () => [`Even the undo is idempotent — process the bounce twice, refund once.`],
+    how: () => [`Even the undo is idempotent · process the bounce twice, refund once.`],
     win: () => [`Sagas don't roll back; they compensate. In flight, never in limbo.`] },
   'ev:notify': { t: 'A notification stored',
-    plain: c => [`${evLine(c.ev)} — into its own database, deduped by event_key primary key.`],
-    how: () => [`The feed the app shows is this table, not the ledger — a read model fed by events.`],
+    plain: c => [`${evLine(c.ev)} · into its own database, deduped by event_key primary key.`],
+    how: () => [`The feed the app shows is this table, not the ledger · a read model fed by events.`],
     win: () => [`Database-per-service: the ledger never grants anyone else a JOIN.`] },
   entry: { t: 'A ledger entry',
     plain: () => [`One leg of a double-entry transaction: −30 here means +30 somewhere else in the same commit, always, per currency. The balance column is a cache of SUM(entries), reconciled live.`],
-    how: () => [`Append-only, enforced by a trigger — UPDATE or DELETE raises an exception. Corrections are reversing entries.`],
+    how: () => [`Append-only, enforced by a trigger · UPDATE or DELETE raises an exception. Corrections are reversing entries.`],
     win: () => [`Auditing the whole bank is one GROUP BY. Compliance lives in the schema.`] },
   inv_sumzero: { t: 'Invariant: books balance',
     plain: c => [`Entries sum to zero per transaction per currency. Live: ${c.n === 0 ? 'HOLDS.' : c.n + ' VIOLATIONS.'}`],
-    how: () => [`SELECT tx_id FROM entries JOIN accounts … GROUP BY tx_id, currency HAVING SUM(amount) <> 0 — run on every refresh.`],
+    how: () => [`SELECT tx_id FROM entries JOIN accounts … GROUP BY tx_id, currency HAVING SUM(amount) <> 0 · run on every refresh.`],
     win: () => [`Correctness as a property you can SELECT.`] },
   inv_drift: { t: 'Invariant: no cache drift',
     plain: c => [`Every balance equals SUM of its entries. Live: ${c.n === 0 ? 'NONE drifted.' : c.n + ' drifted!'}`],
     how: () => [`A LEFT JOIN between accounts and per-account entry sums, WHERE they disagree.`],
     win: () => [`State the truth once, derive the rest, reconcile continuously.`] },
   pool: { t: 'The connection pool',
-    plain: c => [`${c.size} real connections per region, ${c.busy} busy now. borrow() blocks bounded when empty — backpressure, not collapse.`],
+    plain: c => [`${c.size} real connections per region, ${c.busy} busy now. borrow() blocks bounded when empty · backpressure, not collapse.`],
     how: () => [`close() returns to the pool (proxy), state reset on return. Measured: connection-per-query was 14x slower.`],
     win: () => [`A database drowns in connections before it drowns in data. Pool math before replica math: pods × regions × pool size.`] },
-  deploy: { t: 'Kubernetes — how this ships',
+  deploy: { t: 'Kubernetes · how this ships',
     plain: () => [`One Docker image (classes + three driver jars). Manifests: app Deployment ×3 (the ONLY thing that scales), StatefulSets per region pinned by nodeSelector topology.kubernetes.io/region, Kafka, Ingress + cert-manager.`,
-      `Today's prod: the same containers via compose on one box — the manifests are the cluster shape.`],
-    how: () => [`Clones (Deployments) vs territories (StatefulSets with names and disks). Readiness probes gate traffic; config is env vars — same image everywhere.`],
+      `Today's prod: the same containers via compose on one box · the manifests are the cluster shape.`],
+    how: () => [`Clones (Deployments) vs territories (StatefulSets with names and disks). Readiness probes gate traffic; config is env vars · same image everywhere.`],
     win: () => [`Residency enforced by the scheduler turns a compliance requirement into an infrastructure invariant.`] },
-  'scale:edge': { t: 'Edge at 75M — anycast, WAF, gateway limits',
-    plain: () => [`Global anycast fronts everything; TLS terminates at the edge; the WAF eats floods before they cost compute. The demo's per-instance token bucket becomes a GATEWAY policy with shared state (Redis) — same algorithm, fleet-wide.`],
-    how: () => [`Budget: ~1B payments/month ≈ 400 req/s average on the money path, peaks 10–20× (paydays, Black Friday) ≈ 5–8k/s — plus an order of magnitude more reads. Rate limits per user AND per device AND per endpoint class.`],
+  'scale:edge': { t: 'Edge at 75M · anycast, WAF, gateway limits',
+    plain: () => [`Global anycast fronts everything; TLS terminates at the edge; the WAF eats floods before they cost compute. The demo's per-instance token bucket becomes a GATEWAY policy with shared state (Redis) · same algorithm, fleet-wide.`],
+    how: () => [`Budget: ~1B payments/month ≈ 400 req/s average on the money path, peaks 10–20× (paydays, Black Friday) ≈ 5–8k/s · plus an order of magnitude more reads. Rate limits per user AND per device AND per endpoint class.`],
     win: () => [`Demo→prod mapping: Caddy → anycast LB + WAF; TokenBucket.java → gateway policy. Nothing conceptually new enters the system at the edge.`] },
-  'scale:app': { t: 'App tier at 75M — hundreds of stateless pods',
-    plain: () => [`The tier that scales by COUNT: hundreds of stateless pods, autoscaled on p99 latency, deployed canary-first. Correctness never lived here — it lives in the databases — which is exactly WHY replicas:300 is a safe number to type.`],
-    how: () => [`Every pod carries a pool per shard, so the connection math is pods × shards × pool — 300 pods × 30 shards × 5 would be 45,000 server connections: impossible. That is why the PgBouncer tier is mandatory, not optional.`],
-    win: () => [`“What scales freely? The stateless tier. What must be budgeted? Its connections.” Pool math before replica math — every time.`] },
-  'scale:bouncer': { t: 'PgBouncer tier — the connection dam',
-    plain: () => [`Transaction-mode poolers collapse ~10,000 app-side connections into a few hundred real Postgres backends per shard. Each Postgres connection is a forked process — the database drowns in connections before it drowns in data.`],
+  'scale:app': { t: 'App tier at 75M · hundreds of stateless pods',
+    plain: () => [`The tier that scales by COUNT: hundreds of stateless pods, autoscaled on p99 latency, deployed canary-first. Correctness never lived here · it lives in the databases · which is exactly WHY replicas:300 is a safe number to type.`],
+    how: () => [`Every pod carries a pool per shard, so the connection math is pods × shards × pool · 300 pods × 30 shards × 5 would be 45,000 server connections: impossible. That is why the PgBouncer tier is mandatory, not optional.`],
+    win: () => [`“What scales freely? The stateless tier. What must be budgeted? Its connections.” Pool math before replica math · every time.`] },
+  'scale:bouncer': { t: 'PgBouncer tier · the connection dam',
+    plain: () => [`Transaction-mode poolers collapse ~10,000 app-side connections into a few hundred real Postgres backends per shard. Each Postgres connection is a forked process · the database drowns in connections before it drowns in data.`],
     how: () => [`Per shard: cap real backends near CPU cores × small factor (~50–100); everything above queues in the bouncer, which is backpressure. JDBC gotcha at this layer: prepareThreshold=0. The demo runs this exact thing on :6432.`],
     win: () => [`Measured in this repo: connection-per-query was 14× slower than pooling. At fleet scale the same physics, three orders of magnitude bigger.`] },
-  'scale:shard': { t: 'Sharding at 75M — the write budget math',
+  'scale:shard': { t: 'Sharding at 75M · the write budget math',
     plain: () => [`Shard COUNT comes from a budget, not a guess: peak ~5–8k payments/s, each a small multi-row ACID commit; a healthy primary carries ~2k such tx/s with headroom → 20–40 shards globally, hashed by customer id, spread across regions.`],
-    how: () => [`Why by CUSTOMER: the only fallible decision (payer's funds) stays a local row lock; per-customer ordering is free; a customer is a self-contained unit you can MOVE (the demo's relocation, batched, is the resharding runbook). Hot-key risk is low — no single customer dominates a bank's writes.`],
-    win: () => [`“I size shards from the write budget: peak tx/s ÷ per-primary budget, ×2 headroom. Growth doubles? Split shards by moving customers — milliseconds of write-pause each, no global event.”`] },
-  'scale:replica': { t: 'Replicas — HA and the read path',
+    how: () => [`Why by CUSTOMER: the only fallible decision (payer's funds) stays a local row lock; per-customer ordering is free; a customer is a self-contained unit you can MOVE (the demo's relocation, batched, is the resharding runbook). Hot-key risk is low · no single customer dominates a bank's writes.`],
+    win: () => [`“I size shards from the write budget: peak tx/s ÷ per-primary budget, ×2 headroom. Growth doubles? Split shards by moving customers · milliseconds of write-pause each, no global event.”`] },
+  'scale:replica': { t: 'Replicas · HA and the read path',
     plain: () => [`Every shard is a trio+: a PRIMARY (all writes), a SYNC standby (commit returns only when it also has the WAL → zero-data-loss failover in seconds), and 2+ ASYNC read replicas serving statements, exports and dashboards milliseconds behind.`],
-    how: () => [`Postgres WAL streaming, built-in — no Kafka involved in replication. Route by staleness tolerance: balance checks before a debit → primary; statement pages → replica. That split removes most read load from the write path.`],
-    win: () => [`“Replicas scale READS and buy failover; they never scale writes — that is what the shards are for. RPO 0 via sync standby, RTO seconds via promotion.” The demo teaches the split; production multiplies it.`] },
-  'scale:directory': { t: 'Directory at 75M — small data, huge fan-out',
-    plain: () => [`75M customer→shard rows is only gigabytes — a SMALL dataset with enormous read fan-out. Answer: replicate it to every region, cache it in every app pod, invalidate through Kafka change events.`],
+    how: () => [`Postgres WAL streaming, built-in · no Kafka involved in replication. Route by staleness tolerance: balance checks before a debit → primary; statement pages → replica. That split removes most read load from the write path.`],
+    win: () => [`“Replicas scale READS and buy failover; they never scale writes · that is what the shards are for. RPO 0 via sync standby, RTO seconds via promotion.” The demo teaches the split; production multiplies it.`] },
+  'scale:directory': { t: 'Directory at 75M · small data, huge fan-out',
+    plain: () => [`75M customer→shard rows is only gigabytes · a SMALL dataset with enormous read fan-out. Answer: replicate it to every region, cache it in every app pod, invalidate through Kafka change events.`],
     how: () => [`Lookups are ~100% cache hits (a home shard changes approximately never). Writes are rare (signup, relocation) and serialize through one writer. The moving flag is the same write-pause the demo performs.`],
     win: () => [`“The routing tier people fear is the easiest tier: tiny, immutable-ish, infinitely cacheable. It is a lookup, not a bottleneck.”`] },
-  'scale:kafka': { t: 'Kafka at 75M — partitions and guarantees',
-    plain: () => [`3+ brokers, replication factor 3, min.insync.replicas 2 — so acks=all (which the relay already demands) means two disks before the outbox row is marked. The payments topic is partitioned BY CUSTOMER: per-customer ordering survives any scale.`],
-    how: () => [`Throughput is trivial (peak ~8k events/s × 1KB ≈ 8MB/s); PARTITION COUNT is really a consumer-parallelism decision — 100+ partitions lets appliers scale to 100+ instances. Retention days, compacted where snapshots make sense.`],
-    win: () => [`“Kafka sizing is rarely about MB/s for payments — it is about ordering keys and consumer parallelism. Key by customer, partitions ≥ max consumer count you will ever want.”`] },
-  'scale:consumers': { t: 'Consumers at 75M — scale-out that stays safe',
-    plain: () => [`Appliers and notifications become GROUPS of N instances — Kafka assigns partitions across them. N scales to lag, and lag (end − committed, live in this site's Console) is the SLO that pages someone.`],
-    how: () => [`Scaling consumers is only safe because every handler is idempotent — the txId gates and event_key PKs the demo proves. Redelivery, rebalance, replay: all no-ops. Fraud scoring is just one more group on the same topic.`],
+  'scale:kafka': { t: 'Kafka at 75M · partitions and guarantees',
+    plain: () => [`3+ brokers, replication factor 3, min.insync.replicas 2 · so acks=all (which the relay already demands) means two disks before the outbox row is marked. The payments topic is partitioned BY CUSTOMER: per-customer ordering survives any scale.`],
+    how: () => [`Throughput is trivial (peak ~8k events/s × 1KB ≈ 8MB/s); PARTITION COUNT is really a consumer-parallelism decision · 100+ partitions lets appliers scale to 100+ instances. Retention days, compacted where snapshots make sense.`],
+    win: () => [`“Kafka sizing is rarely about MB/s for payments · it is about ordering keys and consumer parallelism. Key by customer, partitions ≥ max consumer count you will ever want.”`] },
+  'scale:consumers': { t: 'Consumers at 75M · scale-out that stays safe',
+    plain: () => [`Appliers and notifications become GROUPS of N instances · Kafka assigns partitions across them. N scales to lag, and lag (end − committed, live in this site's Console) is the SLO that pages someone.`],
+    how: () => [`Scaling consumers is only safe because every handler is idempotent · the txId gates and event_key PKs the demo proves. Redelivery, rebalance, replay: all no-ops. Fraud scoring is just one more group on the same topic.`],
     win: () => [`“At-least-once + idempotent handlers means my scaling knob is literally 'add instances'. The demo proves the idempotency; production turns the knob.”`] },
-  'scale:dlq': { t: 'Dead-letter queues — poison, quarantined',
+  'scale:dlq': { t: 'Dead-letter queues · poison, quarantined',
     plain: () => [`An event that fails processing N times moves to the group's DLQ instead of blocking the partition behind it. Money stays safe (in_transit holds it); a human or a repair job replays the DLQ later.`],
-    how: () => [`Without a DLQ one malformed event halts a partition forever — the classic Kafka outage. The demo's bounce-refund is the same philosophy applied to a business failure: compensate, never wedge.`],
+    how: () => [`Without a DLQ one malformed event halts a partition forever · the classic Kafka outage. The demo's bounce-refund is the same philosophy applied to a business failure: compensate, never wedge.`],
     win: () => [`“Every consumer group ships with a DLQ and a replay tool from day one. A stuck partition at 3am is how you learn this; I prefer learning it in the design review.”`] },
-  'scale:cdc': { t: 'CDC — where analytics lives',
+  'scale:cdc': { t: 'CDC · where analytics lives',
     plain: () => [`The warehouse/lake is JUST ANOTHER CONSUMER: outbox events (or CDC on the ledgers) stream into OLAP storage. Analysts get everything; the money path feels nothing.`],
     how: () => [`This is the strong-OLTP / eventual-OLAP split: FOR UPDATE locks and CHECK constraints on one side, columnar scans on the other, an event stream between. Never point a BI tool at a primary.`],
     win: () => [`“Fit-for-purpose consistency ends at the warehouse: strong where money moves, eventual where dashboards render. Same events, two destinies.”`] },
-  'scale:regions': { t: 'Regions at 75M — fault domain = legal domain',
-    plain: () => [`3+ regions, each a complete stack: its shards, its poolers, its consumers. A region is simultaneously the unit of data-residency LAW and the unit of blast radius — one region down ≠ the bank down.`],
-    how: () => [`Cross-region flows ride ONLY the event fabric (the demo's saga) — no synchronous cross-region calls on the money path, ever: a partition between regions delays settlement, it cannot corrupt it. In k8s terms: nodeSelector pins every stateful set to its soil.`],
-    win: () => [`“My cross-region invariant: the fleet-wide in_transit sum. It is the reconciliation control AND the honesty metric — money in flight, visible on a balance sheet, zero when drained.”`] },
+  'scale:regions': { t: 'Regions at 75M · fault domain = legal domain',
+    plain: () => [`3+ regions, each a complete stack: its shards, its poolers, its consumers. A region is simultaneously the unit of data-residency LAW and the unit of blast radius · one region down ≠ the bank down.`],
+    how: () => [`Cross-region flows ride ONLY the event fabric (the demo's saga) · no synchronous cross-region calls on the money path, ever: a partition between regions delays settlement, it cannot corrupt it. In k8s terms: nodeSelector pins every stateful set to its soil.`],
+    win: () => [`“My cross-region invariant: the fleet-wide in_transit sum. It is the reconciliation control AND the honesty metric · money in flight, visible on a balance sheet, zero when drained.”`] },
   trace: { t: 'A transaction’s journey',
     plain: c => [`${who(c.tr.payer)} → ${who(c.tr.payee || 'the pipe')}${c.tr.amount ? ', ' + eur(c.tr.amount) : ''}: ${c.tr.steps.length} recorded steps, ${c.total}ms end to end. Click a step; ▶ replays it.`],
-    how: () => [`Assembled from timestamps the system already writes — commits, published_at, notification inserts. No tracing agent exists.`],
+    how: () => [`Assembled from timestamps the system already writes · commits, published_at, notification inserts. No tracing agent exists.`],
     win: () => [`If the data model records every state change, distributed tracing is a JOIN, not a vendor.`] },
 };
 function shardPlain(sh) { return [`postgres:16-alpine, its own machine. MiniPool: ${sh.poolBusy}/${sh.poolSize} connections busy. ${sh.accounts} accounts, ${sh.entries} ledger entries, outbox ${sh.outboxPending} pending. in_transit here: ${eur(sh.inTransit)}.`,
   `Schema: accounts (kind + currency, NUMERIC(20,8), CHECK constraints for credit/loan floors) · transactions (txId PK = idempotency gates) · entries (double-entry, append-only by trigger) · outbox. A relay on a virtual thread ships the outbox to Kafka.`]; }
 function shardHow(sh) { return [`Everything about this region's customers is local: the six-step ACID transfer, the funds check under a row lock, the product accounts at fixed offsets. No JOIN, no FK, no transaction can reach the other region.`,
-  `books ${sh.sumZeroViolations === 0 ? 'balance ✓' : sh.sumZeroViolations + ' violations ✗'} · drift ${sh.driftedAccounts === 0 ? 'none ✓' : sh.driftedAccounts + ' ✗'} — audited on every refresh of this page.`]; }
+  `books ${sh.sumZeroViolations === 0 ? 'balance ✓' : sh.sumZeroViolations + ' violations ✗'} · drift ${sh.driftedAccounts === 0 ? 'none ✓' : sh.driftedAccounts + ' ✗'} · audited on every refresh of this page.`]; }
 function shardWin() { return [`Replicas scale reads; territories scale writes. Shard by CUSTOMER so the only fallible decision is a local lock; region it by LAW with a directory. The audit is one query per region.`]; }
 
 const STATS = {
@@ -1364,7 +1374,7 @@ async function refreshInspect() {
     kafka: ['eu', 'outbox'], applier: ['uk', 'transactions'], notif: ['notifications', 'notifications'],
     intransit: ['eu', 'in_flight'] };
   const jump = SDB[inspectNode] ? ` <button class="mini" onclick="gotoStudio('${SDB[inspectNode][0]}','${SDB[inspectNode][1]}')">open in SQL Studio ▸</button>` : '';
-  $('#inspect-title').innerHTML = ('Inside ' + (GUIDE[inspectNode]?.t || inspectNode) + ' — its actual rows, live').replace(/</g, '&lt;') + jump;
+  $('#inspect-title').innerHTML = ('Inside ' + (GUIDE[inspectNode]?.t || inspectNode) + ' · its actual rows, live').replace(/</g, '&lt;') + jump;
   $('#inspect-body').innerHTML = d.tables.map(tb => `
     <div class="insp-title">${tb.title}</div>
     <table><thead><tr>${tb.cols.map(c2 => `<th>${c2}</th>`).join('')}</tr></thead>
@@ -1378,90 +1388,90 @@ function Shard0Name(s) { return s === 0 ? 'eu' : 'uk'; }
 const NODENAME = { api: 'router', shard0: 'eu', shard1: 'uk', kafka: 'kafka', applier: 'applier',
   notif: 'notifications', intransit: 'in-flight', browser: 'browser' };
 const QUESTIONS = [
-  { short: 'the lost update', q: 'Two requests update the same balance at once — what goes wrong?',
+  { short: 'the lost update', q: 'Two requests update the same balance at once · what goes wrong?',
     nodes: ['shard0'], edges: ['api_shard0'],
-    plain: 'Both read €100, both subtract 30, both write €70 — thirty euros vanished with no error anywhere. The fix is never in Java: the DATABASE locks the row.',
-    how: 'SELECT … FOR UPDATE takes a row lock, so the second request WAITS, then sees €70 and computes correctly. Java-side synchronized cannot do this job — it protects one JVM, and production runs many JVMs against one database.',
-    win: '“Money = lock it or ledger it. Default answer: pessimistic — SELECT FOR UPDATE, locks taken in a fixed order. Optimistic version-and-retry is for low-contention data, never hot balances.”' },
-  { short: 'deadlock', q: 'Two transfers lock the same two accounts — deadlock. How do you prevent it?',
+    plain: 'Both read €100, both subtract 30, both write €70 · thirty euros vanished with no error anywhere. The fix is never in Java: the DATABASE locks the row.',
+    how: 'SELECT … FOR UPDATE takes a row lock, so the second request WAITS, then sees €70 and computes correctly. Java-side synchronized cannot do this job · it protects one JVM, and production runs many JVMs against one database.',
+    win: '“Money = lock it or ledger it. Default answer: pessimistic · SELECT FOR UPDATE, locks taken in a fixed order. Optimistic version-and-retry is for low-contention data, never hot balances.”' },
+  { short: 'deadlock', q: 'Two transfers lock the same two accounts · deadlock. How do you prevent it?',
     nodes: ['shard0'], edges: [],
-    plain: 'A locks igor then coco; B locks coco then igor. Each holds what the other needs — Postgres kills one with error 40P01.',
+    plain: 'A locks igor then coco; B locks coco then igor. Each holds what the other needs · Postgres kills one with error 40P01.',
     how: 'The cure is ORDER: every transfer locks account rows in ascending id, regardless of who pays whom. One global order → no cycle of waiting can form → deadlock impossible by construction. The test suite provokes a real 40P01 first, then cures it.',
-    win: '“I don’t handle deadlocks, I make them unconstructible: all lock acquisition in one global order. And I’ve seen a real 40P01 — I provoked one in a test on purpose.”' },
+    win: '“I don’t handle deadlocks, I make them unconstructible: all lock acquisition in one global order. And I’ve seen a real 40P01 · I provoked one in a test on purpose.”' },
   { short: 'safe retries', q: 'The network dies after the transfer commits but before the client hears. Now what?',
     nodes: ['browser', 'api', 'shard0'], edges: ['browser_api', 'api_shard0'],
-    plain: 'The client MUST retry — so retries must be free. The CALLER mints the transaction id; sending the same id twice moves money once.',
+    plain: 'The client MUST retry · so retries must be free. The CALLER mints the transaction id; sending the same id twice moves money once.',
     how: 'The txId is the PRIMARY KEY of the transactions table, claimed with INSERT … ON CONFLICT DO NOTHING as step one. A retry’s insert conflicts → “already processed” → nothing else runs. The Retry tx button on the App tab demos it live.',
-    win: '“Idempotency keys are CALLER-owned — if the server invented them, a lost response would make the client retry into a double spend. One primary key makes every retry safe.”' },
+    win: '“Idempotency keys are CALLER-owned · if the server invented them, a lost response would make the client retry into a double spend. One primary key makes every retry safe.”' },
   { short: 'double-entry', q: 'Why double-entry? How do you audit a whole bank?',
     nodes: ['shard0', 'shard1'], edges: [],
-    plain: 'Money never appears or vanishes — it MOVES: −30 on igor, +30 on coco, in one transaction, always summing to zero. The “balance” is only a cached summary of those entries.',
-    how: 'Two invariants run live on this page: every transaction’s entries sum to zero (GROUP BY tx_id HAVING SUM ≠ 0 must return nothing), and every balance equals SUM of its entries (the drift check). Money enters via external accounts that MAY go negative — that is how value flows in.',
-    win: '“Auditing the whole bank is one query. Balance is a projection of the ledger, reconciled continuously — state the truth once, derive everything else.”' },
+    plain: 'Money never appears or vanishes · it MOVES: −30 on igor, +30 on coco, in one transaction, always summing to zero. The “balance” is only a cached summary of those entries.',
+    how: 'Two invariants run live on this page: every transaction’s entries sum to zero (GROUP BY tx_id HAVING SUM ≠ 0 must return nothing), and every balance equals SUM of its entries (the drift check). Money enters via external accounts that MAY go negative · that is how value flows in.',
+    win: '“Auditing the whole bank is one query. Balance is a projection of the ledger, reconciled continuously · state the truth once, derive everything else.”' },
   { short: 'the outbox', q: 'How do other services learn a payment happened? Why not just publish to Kafka?',
     nodes: ['shard0', 'kafka'], edges: ['shard0_kafka'],
-    plain: 'You cannot atomically commit to Postgres AND Kafka. Crash between the two and the payment exists with no echo — or worse, an echo for money that never moved.',
+    plain: 'You cannot atomically commit to Postgres AND Kafka. Crash between the two and the payment exists with no echo · or worse, an echo for money that never moved.',
     how: 'So never write to two systems: the event is INSERTed into an outbox table inside the SAME transaction as the money. A relay ships it afterwards and marks it published only AFTER the broker acks. Crash anywhere → resent, never lost.',
     win: '“The dual-write problem, solved by the transactional outbox: money and event share one commit, delivery is at-least-once, consumers dedupe. Loss impossible, duplicates designed-for.”' },
   { short: 'exactly-once', q: 'Kafka delivers the same event five times. Does money move five times?',
     nodes: ['kafka', 'applier', 'notif'], edges: ['kafka_applier', 'kafka_notif'],
-    plain: 'No — every consumer records what it has already seen and shrugs at repeats. Five deliveries, one effect.',
+    plain: 'No · every consumer records what it has already seen and shrugs at repeats. Five deliveries, one effect.',
     how: 'Notifications: the event key is the table’s PRIMARY KEY + ON CONFLICT DO NOTHING. The applier: the txId gates on the destination region’s own transactions table. At-least-once delivery + idempotent consumers = effectively once.',
-    win: '“True exactly-once DELIVERY doesn’t exist across systems — exactly-once EFFECT does, and it costs one conflict clause per consumer.”' },
+    win: '“True exactly-once DELIVERY doesn’t exist across systems · exactly-once EFFECT does, and it costs one conflict clause per consumer.”' },
   { short: '10K requests', q: 'How does Java handle 10,000 concurrent requests here?',
     nodes: ['api'], edges: ['browser_api'],
     plain: 'Every request gets its own VIRTUAL thread (Java 21). A parked thread costs almost nothing, so simple blocking code scales to huge concurrency.',
     how: 'No callback pyramids, no reactive framework: handlers block on JDBC and Kafka in plain style, but tens of thousands of virtual threads can wait simultaneously. The relays, the applier and the consumers all run on virtual threads too.',
-    win: '“The modern Java answer to C10K: virtual threads — blocking style, async economics. Correctness lives in the database; Java’s job is throughput.”' },
+    win: '“The modern Java answer to C10K: virtual threads · blocking style, async economics. Correctness lives in the database; Java’s job is throughput.”' },
   { short: 'connections', q: 'What happens to Postgres under thousands of connections?',
     nodes: ['shard0', 'shard1'], edges: [],
-    plain: 'It drowns — each connection is a whole forked server process. Measured in this repo: 200 queries cost 2,355ms opening a connection each time vs 170ms pooled. 14x.',
+    plain: 'It drowns · each connection is a whole forked server process. Measured in this repo: 200 queries cost 2,355ms opening a connection each time vs 170ms pooled. 14x.',
     how: 'A pool opens N real connections once and lends them out; borrowers get a proxy whose close() RETURNS it, state reset. Empty pool → the next borrower WAITS: bounded queueing is backpressure. Fleet-scale: PgBouncer in transaction mode (JDBC needs prepareThreshold=0).',
-    win: '“A database drowns in connections before it drowns in data. Pool small, queue at the pool, PgBouncer in front at scale — and do the pool math before raising replicas: pods × shards × pool size = server connections.”' },
+    win: '“A database drowns in connections before it drowns in data. Pool small, queue at the pool, PgBouncer in front at scale · and do the pool math before raising replicas: pods × shards × pool size = server connections.”' },
   { short: 'scaling writes', q: 'Reads are slow → replicas. Writes are slow → ? (replicas vs shards)',
     nodes: ['api', 'shard0', 'shard1'], edges: ['api_shard0', 'api_shard1'],
-    plain: 'Replicas are CLONES: more readers of one truth — they scale reads only. Writes scale by TERRITORIES: split the customers themselves across independent databases. That is sharding, and this page runs two real ones.',
-    how: 'Shard by CUSTOMER id, so a customer’s whole world is on one machine and the only decision that can fail — does the payer have the money — is a local row lock. Credits can’t fail on funds; the one failure left, a missing destination, bounces into a compensating refund. No distributed locking exists anywhere.',
+    plain: 'Replicas are CLONES: more readers of one truth · they scale reads only. Writes scale by TERRITORIES: split the customers themselves across independent databases. That is sharding, and this page runs two real ones.',
+    how: 'Shard by CUSTOMER id, so a customer’s whole world is on one machine and the only decision that can fail · does the payer have the money · is a local row lock. Credits can’t fail on funds; the one failure left, a missing destination, bounces into a compensating refund. No distributed locking exists anywhere.',
     win: '“Progression: one strong Postgres → read replicas → shard by customer LAST, because sharding is operationally expensive. Clones versus territories.”' },
   { short: 'the saga', q: 'igor and coco live on different machines. How does a transfer work with no distributed transaction?',
     nodes: ['api', 'shard0', 'intransit', 'kafka', 'applier', 'shard1'],
     edges: ['api_shard0', 'shard0_kafka', 'kafka_applier', 'applier_shard1'],
-    plain: 'No transaction spans two machines — so it is TWO local ACID commits glued by an event. Commit 1, source region: debit igor, credit the in_transit clearing account, write the outbox event — atomically. Kafka delivers at-least-once. Commit 2, destination region: gated by the same txId, credit coco. Both regions’ books sum to zero at every instant in between.',
-    how: 'The in_transit clearing account makes the in-between honest: each region’s books sum to zero at every instant, and the fleet-wide in_transit sum = money in flight (zero when drained). Destination missing? The saga COMPENSATES: a gated refund on the source. Never lost, never doubled — briefly in flight.',
-    win: '“Cross-shard = saga, not two-phase commit: 2PC blocks both databases while a coordinator decides, and the coordinator is a new single point of failure. A saga is local transactions chained by the outbox, with compensations — and my trace card shows every chapter with timestamps.”' },
+    plain: 'No transaction spans two machines · so it is TWO local ACID commits glued by an event. Commit 1, source region: debit igor, credit the in_transit clearing account, write the outbox event · atomically. Kafka delivers at-least-once. Commit 2, destination region: gated by the same txId, credit coco. Both regions’ books sum to zero at every instant in between.',
+    how: 'The in_transit clearing account makes the in-between honest: each region’s books sum to zero at every instant, and the fleet-wide in_transit sum = money in flight (zero when drained). Destination missing? The saga COMPENSATES: a gated refund on the source. Never lost, never doubled · briefly in flight.',
+    win: '“Cross-shard = saga, not two-phase commit: 2PC blocks both databases while a coordinator decides, and the coordinator is a new single point of failure. A saga is local transactions chained by the outbox, with compensations · and my trace card shows every chapter with timestamps.”' },
   { short: 'data residency', q: 'UK customer data must stay on UK machines. How?',
     nodes: ['api'], edges: ['api_shard0', 'api_shard1'],
-    plain: 'That is law, not load — and you cannot compute law with a hash. So the router asks a DIRECTORY where each customer lives. Click the router node: the inspector shows the actual routing table.',
+    plain: 'That is law, not load · and you cannot compute law with a hash. So the router asks a DIRECTORY where each customer lives. Click the router node: the inspector shows the actual routing table.',
     how: 'The directory is a tiny service with its own database (customer → region + a moving flag), cached in-process because home regions change approximately never. In Kubernetes the law becomes a scheduling constraint: nodeSelector topology.kubernetes.io/region pins each region’s database to its soil.',
-    win: '“Load shards route by arithmetic; regions route by LAW, which must be a lookup. Same machinery underneath — regions are shards with a passport.”' },
-  { short: 'resharding', q: '“Fine, you sharded — now how do you ever MOVE a customer?”',
+    win: '“Load shards route by arithmetic; regions route by LAW, which must be a lookup. Same machinery underneath · regions are shards with a passport.”' },
+  { short: 'resharding', q: '“Fine, you sharded · now how do you ever MOVE a customer?”',
     nodes: ['api', 'shard0', 'intransit', 'shard1'],
     edges: ['api_shard0', 'shard0_kafka', 'kafka_applier', 'applier_shard1'],
     plain: 'A balance is money, and money already knows how to move: by transfer. Relocation = drain the whole balance through the standard cross-region flow, then flip one pointer in the directory. Hit Relocate on the App tab and watch this map do it.',
-    how: 'Steps: create the empty account in the new region; set MOVING (the router refuses new transfers with a retriable 409 — a write-pause of milliseconds, reads unaffected); transfer the balance; flip the pointer. Every step is idempotent, so a crash mid-way just retries.',
-    win: '“Resharding without downtime: per-customer moves, milliseconds of write-pause each, no global locks — the payoff of sharding by customer. Even the duplicate Kafka delivery of the move lands on a closed idempotency gate.”' },
-  { short: 'CAP, applied', q: 'Consistency vs availability — where do you sit? (CAP, fit-for-purpose)',
+    how: 'Steps: create the empty account in the new region; set MOVING (the router refuses new transfers with a retriable 409 · a write-pause of milliseconds, reads unaffected); transfer the balance; flip the pointer. Every step is idempotent, so a crash mid-way just retries.',
+    win: '“Resharding without downtime: per-customer moves, milliseconds of write-pause each, no global locks · the payoff of sharding by customer. Even the duplicate Kafka delivery of the move lands on a closed idempotency gate.”' },
+  { short: 'CAP, applied', q: 'Consistency vs availability · where do you sit? (CAP, fit-for-purpose)',
     nodes: ['shard0', 'kafka', 'notif'], edges: ['shard0_kafka', 'kafka_notif'],
-    plain: 'Not one answer — one PER DATA CLASS. Balances: strong consistency, single-region ACID, locks (a wrong balance is unacceptable; a moment of unavailability is survivable). Echoes — notifications, analytics, the feed: eventual, over Kafka, seconds behind and honestly so.',
+    plain: 'Not one answer · one PER DATA CLASS. Balances: strong consistency, single-region ACID, locks (a wrong balance is unacceptable; a moment of unavailability is survivable). Echoes · notifications, analytics, the feed: eventual, over Kafka, seconds behind and honestly so.',
     how: 'Under partition, the money side chooses C over A: a region that cannot reach its database refuses writes rather than guessing. The event side chooses availability: the outbox holds events until the broker returns; consumers catch up. This page IS that split, running.',
-    win: '“Fit-for-purpose consistency: strong where money moves, eventual where echoes ripple. I choose per data class, not per system — and my in-flight pill shows the eventual part being honest about itself.”' },
-  { short: 'card authorization', q: 'Design card authorization — what happens when you tap your card?',
+    win: '“Fit-for-purpose consistency: strong where money moves, eventual where echoes ripple. I choose per data class, not per system · and my in-flight pill shows the eventual part being honest about itself.”' },
+  { short: 'card authorization', q: 'Design card authorization · what happens when you tap your card?',
     nodes: ['api', 'shard0'], edges: ['browser_api', 'api_shard0'],
-    plain: 'Two moments, not one. AUTHORIZE reserves the money — a transfer from card to a holds account, one local ACID commit, milliseconds. Days later CAPTURE moves the held money to the merchant, or RELEASE gives it back. Try it: the card tile on the App has all three buttons.',
-    how: 'The card account CARRIES its holds, so the credit-limit CHECK constraint counts them automatically. Capture and release use DETERMINISTIC ids derived from the authorization — the card network can redeliver either, and each happens at most once. Capture-after-release finds the holds account short and dies politely.',
-    win: '“Auth is latency-critical (one local ACID tx, no network hops — that is your sub-200ms), capture is eventual. If the network times out: decline by default; never guess with money. The hold lifecycle is three gated transfers — no new machinery.”' },
+    plain: 'Two moments, not one. AUTHORIZE reserves the money · a transfer from card to a holds account, one local ACID commit, milliseconds. Days later CAPTURE moves the held money to the merchant, or RELEASE gives it back. Try it: the card tile on the App has all three buttons.',
+    how: 'The card account CARRIES its holds, so the credit-limit CHECK constraint counts them automatically. Capture and release use DETERMINISTIC ids derived from the authorization · the card network can redeliver either, and each happens at most once. Capture-after-release finds the holds account short and dies politely.',
+    win: '“Auth is latency-critical (one local ACID tx, no network hops · that is your sub-200ms), capture is eventual. If the network times out: decline by default; never guess with money. The hold lifecycle is three gated transfers · no new machinery.”' },
   { short: 'rate limiting', q: 'How do you protect the ledger from a retry storm?',
     nodes: ['api'], edges: ['browser_api'],
-    plain: 'A token bucket at the edge: every caller gets a burst allowance that refills at a steady rate; an empty bucket answers 429 before the request ever touches a database lock. This site runs one right now — 25 requests/second per caller.',
-    how: 'The bucket is a counter and a timestamp: refill = elapsed × rate, capped at capacity; take one token or refuse. Per-instance here (and honestly labeled as such); a fleet shares the state at the gateway or in Redis — same algorithm, different address.',
-    win: '“Idempotency makes retries SAFE, rate limiting makes them CHEAP — you need both. And 429 with Retry-After is backpressure at the edge, the same idea as my bounded connection pool, one layer up.”' },
+    plain: 'A token bucket at the edge: every caller gets a burst allowance that refills at a steady rate; an empty bucket answers 429 before the request ever touches a database lock. This site runs one right now · 25 requests/second per caller.',
+    how: 'The bucket is a counter and a timestamp: refill = elapsed × rate, capped at capacity; take one token or refuse. Per-instance here (and honestly labeled as such); a fleet shares the state at the gateway or in Redis · same algorithm, different address.',
+    win: '“Idempotency makes retries SAFE, rate limiting makes them CHEAP · you need both. And 429 with Retry-After is backpressure at the edge, the same idea as my bounded connection pool, one layer up.”' },
   { short: 'immutable audit', q: 'A regulator asks: can anyone edit transaction history?',
     nodes: ['shard0', 'shard1'], edges: [],
-    plain: 'No — and not because we promise not to. A database trigger REFUSES every UPDATE and DELETE on the ledger. Corrections are reversing entries: history grows, it never changes.',
+    plain: 'No · and not because we promise not to. A database trigger REFUSES every UPDATE and DELETE on the ledger. Corrections are reversing entries: history grows, it never changes.',
     how: 'BEFORE UPDATE OR DELETE on entries and transactions → RAISE EXCEPTION. There is a test that tries to tamper and asserts the database says no. Add the trace timeline (every state change timestamped) and you have the audit trail a regulator actually wants.',
     win: '“Immutability is enforced, not promised: append-only by trigger, corrections by reversing entries, every movement traceable end-to-end. Compliance lives in the schema, next to the credit limit.”' },
 ];
-QUESTIONS.forEach((qq, i) => GUIDE['q:' + i] = { t: 'Q' + (i + 1) + ' — ' + qq.short,
+QUESTIONS.forEach((qq, i) => GUIDE['q:' + i] = { t: 'Q' + (i + 1) + ' · ' + qq.short,
   plain: () => [qq.plain], how: () => [qq.how], win: () => [qq.win] });
 $('#qmap').innerHTML = QUESTIONS.map((qq, i) => `
   <div class="q-item" data-i="${i}"><span class="q-badge">Q${i + 1}</span>
@@ -1512,7 +1522,7 @@ async function xrayTick() {
         <div class="tick-ic">${ICON[e.type] || '·'}</div>
         <div class="tick-main">${evLine(e)}<div class="tick-sub">${new Date(e.ts).toLocaleTimeString()} · tx ${e.tx.slice(0, 8)}…</div></div>
         <span class="chip ${e.region}">${e.region}</span></div>`;
-    }).join('') || '<span class="muted">quiet — send some money on the App tab</span>';
+    }).join('') || '<span class="muted">quiet · send some money on the App tab</span>';
     top.forEach(e => tickIds.add(e.type + e.tx + e.ts));
   }
 
@@ -1531,7 +1541,7 @@ async function xrayTick() {
       const amt = (pl.match(/"amount":"([^"]+)"/) || [])[1] || (pl.match(/"eur":"([^"]+)"/) || [])[1];
       const side = (pl.match(/"side":"(\w+)"/) || [])[1];
       const asset = (pl.match(/"asset":"(\w+)"/) || [])[1];
-      const name = id2 => id2 == null ? '—'
+      const name = id2 => id2 == null ? '·'
         : (accounts.find(a => a.id === Number(id2)) || {}).owner || (id2 === '1' ? 'world' : 'user ' + id2);
       const headline =
           ty === 'transfer.departed' ? (from === to ? `✈ relocation · ${who(name(from))} · ${eur(amt)}`
@@ -1583,11 +1593,11 @@ async function xrayTick() {
   if (inspectNode) refreshInspect();
 
   if (gSubject === 'welcome' && evs[0]) {
-    $('#guide-hint').textContent = `Latest: ${evLine(evs[0])} — click it in Live activity to trace its whole journey.`;
+    $('#guide-hint').textContent = `Latest: ${evLine(evs[0])} · click it in Live activity to trace its whole journey.`;
   } else if (!$('#guide-hint').textContent) {
     $('#guide-hint').textContent = 'Tip: the three tabs above change how deep I go.';
   }
-  } catch (e) { /* transient fetch failure — the next tick retries */ }
+  } catch (e) { /* transient fetch failure · the next tick retries */ }
 }
 window.tickClick = evJson => { const e = JSON.parse(evJson); gShow('ev:' + e.type, { ev: e }); traceTx(e.tx, true); };
 
@@ -1649,7 +1659,7 @@ function playSegment(st, i, n) {
     pulse(e2, st.step === 'depart' ? 'var(--amber)' : st.step === 'notify' ? 'var(--green)' : 'var(--accent)', j * 260));
   const nd = (STEP_NODE[st.step] || (() => null))(st);
   if (nd) glow(nd);
-  $('#play-caption').textContent = `step ${i + 1}/${n} — ${st.detail} · ${st.region}`;
+  $('#play-caption').textContent = `step ${i + 1}/${n} · ${st.detail} · ${st.region}`;
 }
 
 function playTrace(tr) {
@@ -1677,7 +1687,7 @@ function playTrace(tr) {
   });
   playTimers.push(setTimeout(() => {
     document.querySelectorAll('.trace-step').forEach(el => el.classList.remove('active'));
-    $('#play-caption').textContent = `✓ real journey, real timestamps — ${realTotal}ms end to end, replayed slow enough to read`;
+    $('#play-caption').textContent = `✓ real journey, real timestamps · ${realTotal}ms end to end, replayed slow enough to read`;
   }, acc + 250));
 }
 
@@ -1714,7 +1724,7 @@ async function followPoll(tx, tries) {
     if (hasNotify && settled) {
       const t0 = new Date(tr.steps[0].ts), t1 = new Date(tr.steps[tr.steps.length - 1].ts);
       fill.style.width = '100%';
-      $('#play-caption').textContent = `✓ settled — ${t1 - t0}ms end to end, every part you just saw really ran`;
+      $('#play-caption').textContent = `✓ settled · ${t1 - t0}ms end to end, every part you just saw really ran`;
       document.querySelectorAll('.trace-step').forEach(el => el.classList.remove('active'));
       following = null;
       gShow('trace', { tr, total: t1 - t0 });
@@ -1722,7 +1732,7 @@ async function followPoll(tx, tries) {
     }
   }
   if (tries > 60) {
-    $('#play-caption').textContent = 'still in flight — the pipe holds it safely (consumers may be rebalancing); it will settle';
+    $('#play-caption').textContent = 'still in flight · the pipe holds it safely (consumers may be rebalancing); it will settle';
     following = null;
     return;
   }
@@ -1812,9 +1822,9 @@ function switchTab(name) { document.querySelector(`.tab-btn[data-tab="${name}"]`
 const SHOW = [
   { cap: 'This is a real bank, running live right now: three customers, two countries, four databases, one Kafka.',
     run: async () => { switchTab('app'); window.scrollTo({ top: 0, behavior: 'smooth' }); await loadAccounts(); }, dwell: 4600 },
-  { cap: 'igor lives in the eu region. coco lives in uk — physically a different database on a different machine. No transaction can span the two.',
+  { cap: 'igor lives in the eu region. coco lives in uk · physically a different database on a different machine. No transaction can span the two.',
     run: () => switchUser(10), dwell: 4800 },
-  { cap: 'Sending €21 from igor to coco — a payment that has to cross countries…',
+  { cap: 'Sending €21 from igor to coco · a payment that has to cross countries…',
     run: async () => {
       const mine = (await api('/api/accounts')).find(a => a.id === 10);
       if (!mine || Number(mine.balance) < 25)
@@ -1823,19 +1833,19 @@ const SHOW = [
       await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: showTx, from: 10, to: 11, amount: '21.00' }) });
       prevStmtSig = ''; await loadStatement(); await loadAccounts();
     }, dwell: 3400 },
-  { cap: 'The app answers instantly — and honestly: PENDING. The money is truly in flight between two machines, and the books say so.',
+  { cap: 'The app answers instantly · and honestly: PENDING. The money is truly in flight between two machines, and the books say so.',
     run: () => {}, dwell: 4600 },
   { cap: 'Now a network retry hits the bank with the SAME transaction id… and bounces off a primary key: “already processed”. Money cannot move twice.',
     run: async () => { await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: showTx, from: 10, to: 11, amount: '21.00' }) }); }, dwell: 5000 },
-  { cap: 'This is the whole system, alive — and this is that payment’s REAL journey, replayed slow enough to see: departed eu → Kafka → arrived uk.',
+  { cap: 'This is the whole system, alive · and this is that payment’s REAL journey, replayed slow enough to see: departed eu → Kafka → arrived uk.',
     run: async () => { switchTab('xray'); window.scrollTo({ top: 0, behavior: 'smooth' }); await xrayTick(); await traceTx(showTx, true); }, dwell: 6200 },
-  { cap: 'Each region keeps double-entry books that sum to zero at every instant. The green lights are live audits — one SQL query each.',
+  { cap: 'Each region keeps double-entry books that sum to zero at every instant. The green lights are live audits · one SQL query each.',
     run: () => gShow('shard0'), dwell: 4800 },
-  { cap: 'Everything explains itself at three depths, down to its actual database rows. This is the routing directory — the real one.',
+  { cap: 'Everything explains itself at three depths, down to its actual database rows. This is the routing directory · the real one.',
     run: () => { gShow('api'); inspect('api'); }, dwell: 4800 },
   { cap: 'And the architecture maps itself to the questions it answers: twelve of them, from lost updates to resharding.',
     run: () => { const q = document.querySelector('.q-item[data-i="9"]'); if (q) { q.click(); q.scrollIntoView({ behavior: 'smooth', block: 'center' }); } }, dwell: 5200 },
-  { cap: 'Raw Java 21 · zero frameworks · 30 executable lessons prove every mechanism · built from first principles — github.com/igorfyago/minibank',
+  { cap: 'Raw Java 21 · zero frameworks · 30 executable lessons prove every mechanism · built from first principles · github.com/igorfyago/minibank',
     run: () => window.scrollTo({ top: 0, behavior: 'smooth' }), dwell: 6500 },
 ];
 
@@ -1889,7 +1899,7 @@ const AGENT_TOOLS = {
       const tx = uuid();
       const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: tx, from: me, to: rec.id, amount: a.amount }) });
       if (r.result === 'ok' && r.crossShard) followTx(tx);
-      return r.result === 'ok' ? `sent ${fmt(a.amount)} to ${rec.owner}` + (r.crossShard ? ' — cross-region, watch it on the map' : '') : r.result || r.error;
+      return r.result === 'ok' ? `sent ${fmt(a.amount)} to ${rec.owner}` + (r.crossShard ? ' · cross-region, watch it on the map' : '') : r.result || r.error;
     } },
   add_money: {
     sum: a => `⬇ Add ${fmt(a.amount)} from the world`,
@@ -1912,19 +1922,19 @@ const AGENT_TOOLS = {
     exec: async a => {
       if (a.action === 'pay_cafe') {
         const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me + 400, to: 7, amount: a.amount || '12.00' }) });
-        return r.result === 'ok' ? 'paid — your card went negative, legally' : r.result === 'insufficient_funds' ? 'the CHECK constraint said no (limit)' : r.result;
+        return r.result === 'ok' ? 'paid · your card went negative, legally' : r.result === 'insufficient_funds' ? 'the CHECK constraint said no (limit)' : r.result;
       }
       if (a.action === 'hold') {
         const tx = uuid();
         const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: 'authorize', customer: me, tx, amount: a.amount || '25.00' }) });
-        if (r.result === 'ok') { lastAuth[me] = tx; return 'held — capture or release when ready'; }
+        if (r.result === 'ok') { lastAuth[me] = tx; return 'held · capture or release when ready'; }
         return r.result || r.error;
       }
       if (a.action === 'capture' || a.action === 'release') {
-        if (!lastAuth[me]) return 'no hold from this session — make one first';
+        if (!lastAuth[me]) return 'no hold from this session · make one first';
         const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: a.action, customer: me, tx: lastAuth[me] }) });
         if (r.result === 'ok') delete lastAuth[me];
-        return r.result === 'ok' ? (a.action === 'capture' ? 'captured — the merchant is paid' : 'released — nothing was spent') : r.result;
+        return r.result === 'ok' ? (a.action === 'capture' ? 'captured · the merchant is paid' : 'released · nothing was spent') : r.result;
       }
       const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me, to: me + 400, amount: a.amount }) });
       return r.result === 'ok' ? 'repaid' : r.result || r.error;
@@ -1940,7 +1950,7 @@ const AGENT_TOOLS = {
     exec: async a => {
       if (a.action === 'apply') {
         const r = await api('/api/mortgage', { method: 'POST', body: JSON.stringify({ txId: uuid(), customer: me, amount: a.amount }) });
-        return r.result === 'ok' ? 'approved and disbursed — your cash rose, your loan account fell, net worth unmoved' : r.result || r.error;
+        return r.result === 'ok' ? 'approved and disbursed · your cash rose, your loan account fell, net worth unmoved' : r.result || r.error;
       }
       const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me, to: me + 500, amount: a.amount }) });
       return r.result === 'ok' ? 'repaid' : r.result || r.error;
@@ -1949,7 +1959,7 @@ const AGENT_TOOLS = {
     sum: a => `✈ Relocate you to ${a.region}`,
     exec: async a => {
       const r = await api('/api/relocate', { method: 'POST', body: JSON.stringify({ customer: me, to: a.region === 'uk' ? 1 : 0 }) });
-      return r.result === 'ok' ? `relocated to ${r.region} — your balance travelled as one saga` : r.error || r.result;
+      return r.result === 'ok' ? `relocated to ${r.region} · your balance travelled as one saga` : r.error || r.result;
     } },
 };
 window.actAllow = async i => {
@@ -1957,7 +1967,7 @@ window.actAllow = async i => {
   if (!m || m.status !== 'pending') return;
   m.status = 'working'; chatPaint();
   let result;
-  try { result = await AGENT_TOOLS[m.tool].exec(m.args); } catch (e) { result = 'that fizzled — try again'; }
+  try { result = await AGENT_TOOLS[m.tool].exec(m.args); } catch (e) { result = 'that fizzled · try again'; }
   m.status = 'done'; m.result = result;
   chatPaint(); refreshAll();
 };
@@ -1974,7 +1984,7 @@ function chatPaint() {
         ? `<div class="act-btns"><button class="act-allow" onclick="actAllow(${i})">✓ Allow</button><button class="act-deny" onclick="actDeny(${i})">✗ Deny</button></div>`
         : m.status === 'working' ? '<div class="act-done">working…</div>'
         : m.status === 'done' ? `<div class="act-done">✓ ${String(m.result).replace(/</g, '&lt;')}</div>`
-        : '<div class="act-denied">✗ denied — nothing happened</div>';
+        : '<div class="act-denied">✗ denied · nothing happened</div>';
       return `<div class="chat-b rita chat-act"><div class="act-sum">${m.summary}</div>${body}</div>`;
     }
     return `<div class="chat-b ${m.role === 'user' ? 'me' : 'rita'}">${m.text.replace(/</g, '&lt;')}</div>`;
@@ -1983,7 +1993,7 @@ function chatPaint() {
 }
 function chatHello() {
   const mine = accounts.find(a => a.id === me);
-  chatLog = [{ role: 'rita', text: `Hi${mine ? ' ' + mine.owner : ''}. I can see your account and act on it — send, trade, borrow, relocate. Every action shows you an Allow card first. Try a suggestion below, or ask me how this bank is built.` }];
+  chatLog = [{ role: 'rita', text: `Hi${mine ? ' ' + mine.owner : ''}. I can see your account and act on it · send, trade, borrow, relocate. Every action shows you an Allow card first. Try a suggestion below, or ask me how this bank is built.` }];
   chatPaint();
 }
 const CHIP_PROMPTS = ['Send €50 to oscar', 'Buy €50 of bitcoin', 'Request a €10,000 loan',
@@ -2006,14 +2016,14 @@ $('#chat-send').onclick = async () => {
   chatLog.push({ role: 'user', text: msg });
   const transcript = chatLog.filter(m => m.role !== 'typing').slice(-10)
     .map(m => m.role === 'action'
-      ? `[rita proposed: ${m.summary} — ${m.status === 'done' ? 'customer ALLOWED, result: ' + m.result : m.status === 'denied' ? 'customer DENIED' : 'awaiting approval'}]`
+      ? `[rita proposed: ${m.summary} · ${m.status === 'done' ? 'customer ALLOWED, result: ' + m.result : m.status === 'denied' ? 'customer DENIED' : 'awaiting approval'}]`
       : (m.role === 'user' ? 'customer: ' : 'rita: ') + m.text).join('\n');
   chatLog.push({ role: 'typing' });
   chatPaint();
   let r = null;
   try {
     r = await api('/api/support', { method: 'POST', body: JSON.stringify({ customer: me, message: msg, transcript }) });
-  } catch (e) { r = { reply: 'I lost my connection mid-sentence — try again?' }; }
+  } catch (e) { r = { reply: 'I lost my connection mid-sentence · try again?' }; }
   chatLog = chatLog.filter(m => m.role !== 'typing');
   if (r.reply) chatLog.push({ role: 'rita', text: r.reply });
   if (r.action && AGENT_TOOLS[r.action.tool]) {
@@ -2046,7 +2056,7 @@ function renderRail() {
   $('#db-rail').innerHTML = catalog.dbs.map(db => `
     <div class="db-name">🗄 ${db.title}</div>
     ${db.queries.map(q => `<button class="db-q ${db.id === studioDb && q.id === studioQ ? 'on' : ''}"
-        onclick="openStudio('${db.id}','${q.id}')">${q.id.startsWith('audit') ? '⚖ ' : q.id === 'in_flight' ? '✈ ' : '𝍖 '}${q.title.split(' — ')[0]}</button>`).join('')}`).join('');
+        onclick="openStudio('${db.id}','${q.id}')">${q.id.startsWith('audit') ? '⚖ ' : q.id === 'in_flight' ? '✈ ' : '𝍖 '}${q.title.split(' · ')[0]}</button>`).join('')}`).join('');
 }
 window.openStudio = (db, q) => { studioDb = db; studioQ = q; renderRail(); runStudio(); };
 window.gotoStudio = (db, q) => { document.querySelector('[data-tab="console"]').click(); openStudio(db, q); };
@@ -2059,7 +2069,7 @@ async function runStudio() {
   $('#ed-grid').innerHTML = `<thead><tr>${d.cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>
     <tbody>${d.rows.map(r => `<tr>${r.map(v =>
       `<td class="${/^-\d/.test(v) ? 'neg' : /^\d+\.\d+$|^\d+$/.test(v) && Number(v) > 0 ? '' : ''}${v === 'PENDING' ? 'neg' : ''}">${String(v).replace(/</g, '&lt;')}</td>`).join('')}</tr>`).join('')
-      || `<tr><td colspan="${d.cols.length}" style="color:var(--green)">∅ no rows — for the audits, that is the PASS state</td></tr>`}</tbody>`;
+      || `<tr><td colspan="${d.cols.length}" style="color:var(--green)">∅ no rows · for the audits, that is the PASS state</td></tr>`}</tbody>`;
 }
 $('#ed-run').onclick = runStudio;
 
@@ -2092,7 +2102,7 @@ const QUIZ = [
     e: 'The lost update: read-then-write is two steps, and two steps from two requests interleave. €30 vanished with no error.' },
   { q: 'For money, the default concurrency answer is…',
     o: ['synchronized in Java', 'SELECT … FOR UPDATE, locks in a fixed order', 'retry loops everywhere', 'MongoDB'], a: 1,
-    e: 'Money is hot and multi-step: lock first, in a global order. Java-side locks only protect one JVM — production runs many.' },
+    e: 'Money is hot and multi-step: lock first, in a global order. Java-side locks only protect one JVM · production runs many.' },
   { q: 'Why does Ledger.transfer lock accounts in ascending id order?',
     o: ['Faster index access', 'Deadlock becomes impossible by construction', 'Postgres requires it', 'Prettier code'], a: 1,
     e: 'If every transaction acquires locks in the same global order, no cycle of waiting can form. No cycle, no deadlock.' },
@@ -2104,7 +2114,7 @@ const QUIZ = [
     e: 'Money moves, never appears: −30 here, +30 there. Auditing the whole bank is one GROUP BY … HAVING SUM ≠ 0.' },
   { q: 'How does money ENTER this bank?',
     o: ['Accounts start with a balance', 'UPDATE balance by hand', 'A transfer from an external account that may go negative', 'Kafka creates it'], a: 2,
-    e: 'The outside world has accounts too. Externals may go negative — that is how value flows in, and it keeps cache == SUM(entries) pure.' },
+    e: 'The outside world has accounts too. Externals may go negative · that is how value flows in, and it keeps cache == SUM(entries) pure.' },
   { q: 'The account balance column is…',
     o: ['The truth', 'A cache of SUM(entries), reconciled by a query', 'Random', 'Updated by Kafka'], a: 1,
     e: 'Truth lives in the ledger. The cache makes reads fast; the reconciliation query catches any code path that breaks the contract.' },
@@ -2113,51 +2123,51 @@ const QUIZ = [
     e: 'Postgres and Kafka cannot share a transaction. So the event goes into the SAME database transaction (the outbox); a relay ships it after.' },
   { q: 'The relay marks an event published AFTER the broker confirms. This gives…',
     o: ['Exactly-once', 'At-least-once: loss impossible, duplicates possible', 'At-most-once', 'No guarantee'], a: 1,
-    e: 'Crash before marking → resend. Never lost, sometimes duplicated — the right trade for money, and why consumers must be idempotent.' },
+    e: 'Crash before marking → resend. Never lost, sometimes duplicated · the right trade for money, and why consumers must be idempotent.' },
   { q: 'The same event is delivered three times. The notifications service…',
     o: ['Sends three pushes', 'Crashes', 'Inserts once: event key is the primary key + ON CONFLICT DO NOTHING', 'Blocks the topic'], a: 2,
     e: 'At-least-once + idempotent consumer = effectively once. One clause does it, and a test delivers the event three times to prove it.' },
   { q: 'Virtual threads (Java 21) matter here because…',
-    o: ['They make SQL faster', 'Blocking code becomes cheap to scale — a parked thread costs ~nothing', 'They replace Kafka', 'They prevent deadlocks'], a: 1,
+    o: ['They make SQL faster', 'Blocking code becomes cheap to scale · a parked thread costs ~nothing', 'They replace Kafka', 'They prevent deadlocks'], a: 1,
     e: 'One virtual thread per request lets us write simple blocking handlers and still serve huge concurrency. Cheap threads, no callback pyramids.' },
   { q: 'Kubernetes pods can scale…',
-    o: ['The stateless app tier — the database needs replicas/shards instead', 'PostgreSQL writes', 'Disk speed', 'ACID'], a: 0,
-    e: 'Clones scale by adding more; databases are territories — reads scale by copying (replicas), writes only by redrawing the map (shards).' },
+    o: ['The stateless app tier · the database needs replicas/shards instead', 'PostgreSQL writes', 'Disk speed', 'ACID'], a: 0,
+    e: 'Clones scale by adding more; databases are territories · reads scale by copying (replicas), writes only by redrawing the map (shards).' },
   { q: 'Why does minibank shard by CUSTOMER id?',
-    o: ['Alphabetical order is prettier', 'The only decision that can fail — does the payer have funds — stays local to one shard', 'Postgres requires it', 'Kafka needs it'], a: 1,
-    e: 'A customer’s whole world lives on one machine, so every debit is checked under a plain local row lock. Credits can’t fail on funds — a missing destination bounces into a compensating refund. No distributed locking anywhere. (Region sharding is the same idea, and also satisfies data-residency law.)' },
+    o: ['Alphabetical order is prettier', 'The only decision that can fail · does the payer have funds · stays local to one shard', 'Postgres requires it', 'Kafka needs it'], a: 1,
+    e: 'A customer’s whole world lives on one machine, so every debit is checked under a plain local row lock. Credits can’t fail on funds · a missing destination bounces into a compensating refund. No distributed locking anywhere. (Region sharding is the same idea, and also satisfies data-residency law.)' },
   { q: 'igor (shard 0) pays coco (shard 1). What actually happens?',
     o: ['One transaction spans both databases', 'A SAGA: depart (ACID on shard 0) → Kafka → arrive (ACID on shard 1), glued by the outbox', 'The router moves coco to shard 0', 'The payment is rejected'], a: 1,
     e: 'A saga = one big move done as a chain of small LOCAL transactions, chained by events, undone by compensations. No BEGIN spans two machines: money leaves igor into the in_transit clearing account and commits WITH the departed event; the applier lands it on shard 1, gated by the same txId.' },
   { q: 'Why not two-phase commit between the shards?',
-    o: ['It is too new', '2PC blocks both shards while a coordinator decides — and the coordinator is a new single point of failure', 'Postgres cannot speak it', 'It loses money'], a: 1,
+    o: ['It is too new', '2PC blocks both shards while a coordinator decides · and the coordinator is a new single point of failure', 'Postgres cannot speak it', 'It loses money'], a: 1,
     e: 'XA/2PC holds locks across a network round-trip and fails badly when the coordinator does. The saga keeps every transaction local and fast, and pays with a visible, honest in-between state.' },
   { q: 'The sum of in_transit balances across ALL shards equals…',
-    o: ['Always zero', 'The money currently in flight — zero when the pipes are drained', 'The bank’s profit', 'Random noise'], a: 1,
+    o: ['Always zero', 'The money currently in flight · zero when the pipes are drained', 'The bank’s profit', 'Random noise'], a: 1,
     e: 'Departures add, arrivals subtract. Each shard balances alone at every instant; the fleet-wide in_transit sum is the one cross-shard reconciliation control, and the X-ray shows it live.' },
   { q: 'Stage 5 routed by id mod 2. Stage 6 routes by a DIRECTORY. Why the change?',
     o: ['Lookups are faster than modulo', 'Regions exist for LAW: residency is a fact about the customer, and a hash cannot compute a fact', 'Postgres added a feature', 'Kafka requires it'], a: 1,
-    e: 'Load can be spread by arithmetic; legal residency must be RECORDED. The router asks a tiny directory service (cached — a customer’s home changes approximately never), and UK data stays on UK machines.' },
+    e: 'Load can be spread by arithmetic; legal residency must be RECORDED. The router asks a tiny directory service (cached · a customer’s home changes approximately never), and UK data stays on UK machines.' },
   { q: 'How does minibank MOVE a customer to another region?',
     o: ['Dump and restore the database', 'pg_dump over SSH', 'The balance travels as ONE standard cross-shard saga, then the directory pointer flips; history stays archived', 'It cannot be done'], a: 2,
-    e: 'A balance is money and money moves by transfer — the machinery already existed. New empty account, write-pause (milliseconds), depart → arrive, flip the pointer. This is also the honest answer to “how do you reshard?”.' },
+    e: 'A balance is money and money moves by transfer · the machinery already existed. New empty account, write-pause (milliseconds), depart → arrive, flip the pointer. This is also the honest answer to “how do you reshard?”.' },
   { q: 'During the relocation write-pause, a transfer request arrives. The bank…',
-    o: ['Loses it', 'Blocks for minutes', 'Refuses with “relocating — retry”, and the pause is measured in milliseconds', 'Routes it to a random region'], a: 2,
+    o: ['Loses it', 'Blocks for minutes', 'Refuses with “relocating · retry”, and the pause is measured in milliseconds', 'Routes it to a random region'], a: 2,
     e: 'The directory answers “moving”; the router turns that into a retriable refusal. Reads keep working. Compare: the 2PC alternative would hold locks across machines instead.' },
   { q: 'The relocation calls arrive() directly, AND Kafka later delivers the same departed event. Why is that safe?',
-    o: ['Kafka deduplicates', 'Luck', 'The arrival gate (txId on the destination’s own transactions table) was already claimed — the echo is a no-op', 'The applier is disabled'], a: 2,
-    e: 'Idempotency is not bolted on for retries — it is what makes bold moves stay simple. The duplicate settles into a closed gate. There is a test that does exactly this, twice.' },
-  { q: 'Consistency vs availability in a bank — the fit-for-purpose answer is…',
-    o: ['Strong everywhere', 'Eventual everywhere', 'Strong where money moves, eventual where echoes ripple — chosen per DATA CLASS', 'Whatever the CTO likes'], a: 2,
+    o: ['Kafka deduplicates', 'Luck', 'The arrival gate (txId on the destination’s own transactions table) was already claimed · the echo is a no-op', 'The applier is disabled'], a: 2,
+    e: 'Idempotency is not bolted on for retries · it is what makes bold moves stay simple. The duplicate settles into a closed gate. There is a test that does exactly this, twice.' },
+  { q: 'Consistency vs availability in a bank · the fit-for-purpose answer is…',
+    o: ['Strong everywhere', 'Eventual everywhere', 'Strong where money moves, eventual where echoes ripple · chosen per DATA CLASS', 'Whatever the CTO likes'], a: 2,
     e: 'Balances refuse writes rather than guess (C over A); notifications and analytics catch up seconds later over Kafka. One system, two deliberate consistency choices.' },
   { q: 'You tap your card in a shop. What did the bank actually do?',
-    o: ['Moved the money instantly', 'AUTHORIZED: reserved it in a holds account — capture pays the merchant later, release undoes it', 'Emailed the merchant', 'Updated a cache'], a: 1,
-    e: 'Auth is one local ACID transfer card→holds (fast, and the limit counts the hold automatically). Capture/release use deterministic ids derived from the auth — redeliveries are no-ops.' },
+    o: ['Moved the money instantly', 'AUTHORIZED: reserved it in a holds account · capture pays the merchant later, release undoes it', 'Emailed the merchant', 'Updated a cache'], a: 1,
+    e: 'Auth is one local ACID transfer card→holds (fast, and the limit counts the hold automatically). Capture/release use deterministic ids derived from the auth · redeliveries are no-ops.' },
   { q: 'A buggy client retries 100×/second. What saves the ledger?',
-    o: ['Bigger database', 'A token bucket at the edge: 429 when the burst allowance empties — refilled at a steady rate', 'Kafka', 'Threads'], a: 1,
+    o: ['Bigger database', 'A token bucket at the edge: 429 when the burst allowance empties · refilled at a steady rate', 'Kafka', 'Threads'], a: 1,
     e: 'Idempotency already made the retries SAFE; the rate limiter makes them CHEAP by refusing at the edge before any lock is touched. This site runs one at 25/s per caller.' },
   { q: 'Can transaction history be edited?',
-    o: ['With admin rights', 'Only on Sundays', 'No: a database trigger refuses UPDATE/DELETE on the ledger — corrections are reversing entries', 'Yes, silently'], a: 2,
+    o: ['With admin rights', 'Only on Sundays', 'No: a database trigger refuses UPDATE/DELETE on the ledger · corrections are reversing entries', 'Yes, silently'], a: 2,
     e: 'Append-only enforced by the schema, not by promises. There is a test that attempts tampering and asserts the database itself says no.' },
 ];
 let qi = 0, score = 0, answered = false;
@@ -2186,7 +2196,7 @@ $('#q-next').onclick = () => {
   qi++;
   if (qi >= QUIZ.length) {
     $('#quiz-card').innerHTML = `<h2>Done</h2><h3 style="margin:12px 0">You scored ${score} / ${QUIZ.length}</h3>
-      <p class="muted">${score === QUIZ.length ? 'Perfect — you understand the bank.' : 'Re-read the X-ray tab and try again.'}</p>
+      <p class="muted">${score === QUIZ.length ? 'Perfect · you understand the bank.' : 'Re-read the X-ray tab and try again.'}</p>
       <button class="primary" onclick="location.reload()">Restart</button>`;
   } else renderQuiz();
 };

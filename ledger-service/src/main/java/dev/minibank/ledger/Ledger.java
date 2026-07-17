@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * STAGE 1 — THE DOUBLE-ENTRY LEDGER (with a cached balance, derived honestly).
+ * STAGE 1 · THE DOUBLE-ENTRY LEDGER (with a cached balance, derived honestly).
  *
  * Money never appears or vanishes; it only MOVES. Every transaction writes
  * entries that sum to exactly zero, inside one ACID database transaction.
@@ -20,24 +20,24 @@ import java.util.UUID;
  *
  * THE CONCURRENCY POINT TO INTERNALIZE (system-design interview gold):
  * correctness does NOT come from Java. `synchronized` or ReentrantLock only
- * protect ONE JVM — production runs many instances against one database, so
+ * protect ONE JVM · production runs many instances against one database, so
  * the database must own the locking. Java's job is throughput (virtual
  * threads, later), not correctness.
  *
  * Two mechanisms carry everything:
  *   1. ORDERED LOCKING: both account rows are locked with SELECT ... FOR
  *      UPDATE in ASCENDING ID ORDER, always. Two transfers touching the same
- *      two accounts can never hold one lock each and wait for the other —
+ *      two accounts can never hold one lock each and wait for the other ·
  *      no deadlock, by construction. (The test suite first provokes a real
  *      deadlock with wrong-order locking so you can see Postgres kill it.)
  *   2. IDEMPOTENCY VIA PRIMARY KEY: the caller supplies the transaction id.
  *      A retry inserts the same id, hits the primary key, and is recognised
- *      as "already done" — money cannot move twice. Retries become safe.
+ *      as "already done" · money cannot move twice. Retries become safe.
  */
 public final class Ledger {
 
     /** Customer accounts can never go below zero. External accounts (the
-     *  outside world: merchants, top-up rails) may go negative — that is
+     *  outside world: merchants, top-up rails) may go negative · that is
      *  exactly how money enters and leaves the bank. */
     public static final String KIND_CUSTOMER = "customer";
     public static final String KIND_EXTERNAL = "external";
@@ -47,7 +47,7 @@ public final class Ledger {
     public record AlreadyProcessed() implements TransferResult {}
     public record InsufficientFunds() implements TransferResult {}
     /** Stage 5: a cross-shard arrival can discover the destination does not
-     *  exist — by then the money already left the source shard, so this is
+     *  exist · by then the money already left the source shard, so this is
      *  not an error to throw but a fact to compensate (see Shard.refund). */
     public record NoSuchAccount() implements TransferResult {}
 
@@ -62,7 +62,7 @@ public final class Ledger {
         }
     }
 
-    /** Stage 5: the same schema must exist on EVERY shard — each shard is a
+    /** Stage 5: the same schema must exist on EVERY shard · each shard is a
      *  complete little bank (accounts, ledger, its own outbox). */
     public static void createSchemaOn(Connection c) throws SQLException {
         try (var st = c.createStatement()) {
@@ -105,7 +105,7 @@ public final class Ledger {
             st.execute("ALTER TABLE entries ALTER COLUMN amount TYPE NUMERIC(20,8)");
             // COMPLIANCE IS SCHEMA TOO: the ledger is append-only, enforced by
             // the database, not by politeness. Corrections are REVERSING
-            // entries — history is never edited, which is what an auditor
+            // entries · history is never edited, which is what an auditor
             // means by "immutable". (TRUNCATE stays possible for the demo
             // reset ritual; row UPDATE/DELETE is what tampering looks like.)
             st.execute("""
@@ -124,7 +124,7 @@ public final class Ledger {
         Outbox.createTableOn(c);
     }
 
-    /** Accounts are born empty. Money only arrives BY TRANSFER — customer
+    /** Accounts are born empty. Money only arrives BY TRANSFER · customer
      *  accounts are funded from an external "world" account. That keeps the
      *  invariant pure: cached balance == SUM(ledger entries), for everyone,
      *  from the very first cent. */
@@ -150,7 +150,7 @@ public final class Ledger {
     }
 
     // ------------------------------------------------------------------
-    // the transfer — the heart of the bank
+    // the transfer · the heart of the bank
     // ------------------------------------------------------------------
     public static TransferResult transfer(UUID txId, long fromId, long toId, BigDecimal amount) throws SQLException {
         try (Connection conn = Db.open()) {
@@ -158,7 +158,7 @@ public final class Ledger {
         }
     }
 
-    /** The same six steps on a caller-supplied connection — stage 5 runs
+    /** The same six steps on a caller-supplied connection · stage 5 runs
      *  this unchanged against whichever SHARD both accounts live on. The
      *  logic did not change when the bank sharded; only the address did. */
     public static TransferResult transferOn(Connection conn, UUID txId, long fromId, long toId, BigDecimal amount) throws SQLException {
@@ -204,8 +204,8 @@ public final class Ledger {
                 // 6. THE ECHO (stage 2). The event that tells the rest of the
                 //    bank "this payment happened" is written INTO THIS SAME
                 //    TRANSACTION. Money and event commit together or not at
-                //    all — the transactional outbox. (Hand-rolled JSON is fine
-                //    here; real fleets use schemas — a later stage.)
+                //    all · the transactional outbox. (Hand-rolled JSON is fine
+                //    here; real fleets use schemas · a later stage.)
                 Outbox.append(conn, "payments", txId.toString(),
                         "{\"type\":\"payment.completed\",\"txId\":\"" + txId +
                         "\",\"from\":" + fromId + ",\"to\":" + toId +
@@ -216,7 +216,7 @@ public final class Ledger {
             } catch (Exception e) {
                 conn.rollback();
                 // a CHECK-constraint veto (23514) is the schema enforcing a
-                // credit limit or loan floor — a business answer, not a bug
+                // credit limit or loan floor · a business answer, not a bug
                 if (e instanceof SQLException se && "23514".equals(se.getSQLState()))
                     return new InsufficientFunds();
                 throw e;
@@ -228,7 +228,7 @@ public final class Ledger {
 
     /** The idempotency gate as a reusable primitive: claim this operation id,
      *  true if we are first, false if it was already done. Stage 5 leans on
-     *  it hard — departure, arrival and refund each gate on their own shard. */
+     *  it hard · departure, arrival and refund each gate on their own shard. */
     static boolean claimTx(Connection conn, UUID txId, String kind) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
                 "INSERT INTO transactions(id, kind) VALUES (?, ?) ON CONFLICT (id) DO NOTHING")) {
@@ -325,7 +325,7 @@ public final class Ledger {
     }
 
     /** Bank-wide invariant #2: every cached balance equals SUM(its entries).
-     *  The reconciliation control — catches any code path that ever breaks the
+     *  The reconciliation control · catches any code path that ever breaks the
      *  cache contract. Works because accounts are born empty and all money
      *  moves by transfer. This is a continuous data-quality check in one query. */
     public static List<Long> driftedAccounts() throws SQLException {

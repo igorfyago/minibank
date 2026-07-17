@@ -25,7 +25,7 @@
       <artifactId>postgresql</artifactId>
       <version>42.7.4</version>
     </dependency>
-    <!-- raw Kafka client: a driver, not a framework — same category as the
+    <!-- raw Kafka client: a driver, not a framework · same category as the
          Postgres driver. The outbox pattern around it is hand-written. -->
     <dependency>
       <groupId>org.apache.kafka</groupId>

@@ -6,22 +6,22 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * STAGE 5 — THE ROUTER. One question, answered in one place:
+ * STAGE 5 · THE ROUTER. One question, answered in one place:
  * "which machine does this customer live on?"
  *
  * DECISION: shard by CUSTOMER id. A customer's accounts, entries and
  * history all live on one shard, so everything about one customer is
  * local and ACID. (Revolut regions are this idea with geography in the
  * key: route by residency and the shard also satisfies data-residency
- * law — UK data on UK machines.)
+ * law · UK data on UK machines.)
  *
  * The demo routes id % 2 so you can see it with your eyes: igor (10) is
- * even -> shard0, coco (11) is odd -> shard1 — every igor->coco payment
+ * even -> shard0, coco (11) is odd -> shard1 · every igor->coco payment
  * exercises the cross-shard saga, live. A real fleet uses
  * hash(customer_id) mod N or a lookup service, same idea, more shards.
  *
  * System accounts (ids below 10: world, in_transit) exist on EVERY shard
- * — so a top-up never crosses shards either. Only customer<->customer
+ * · so a top-up never crosses shards either. Only customer<->customer
  * payments can, and the saga handles those.
  */
 public final class Shards {
@@ -30,7 +30,7 @@ public final class Shards {
     public static final long FIRST_CUSTOMER_ID = 10;
 
     /** STAGE 6: the routing rule became pluggable. Default: arithmetic
-     *  (id mod N — load sharding). Production: the Directory (residency —
+     *  (id mod N · load sharding). Production: the Directory (residency ·
      *  a lookup, because law is a fact about the customer, not a formula). */
     @FunctionalInterface
     public interface Resolver {
@@ -77,7 +77,7 @@ public final class Shards {
 
     /** The routing function. With no resolver set: deterministic arithmetic.
      *  With the Directory plugged in: residency lookup (may throw
-     *  Directory.CustomerMoving during a relocation — retry, briefly). */
+     *  Directory.CustomerMoving during a relocation · retry, briefly). */
     public static Shard forCustomer(long customerId) {
         Resolver r = resolver;
         int idx = r != null ? r.shardIndexOf(customerId) : (int) (customerId % shards.length);
@@ -119,7 +119,7 @@ public final class Shards {
         seedCustomer(10, "igor", "500.00");
         seedCustomer(11, "coco", "500.00");
         // oscar shares igor's region: igor->oscar shows the LOCAL path,
-        // igor->coco the cross-region saga — both stories, one demo cast.
+        // igor->coco the cross-region saga · both stories, one demo cast.
         seedCustomer(12, "oscar", "1000.00");
     }
 
@@ -127,7 +127,7 @@ public final class Shards {
         Shard home = forCustomer(id);
         if (home.hasAccount(id)) return;
         home.createCustomer(id, owner);
-        // funded from the LOCAL world account — same shard, plain ACID
+        // funded from the LOCAL world account · same shard, plain ACID
         home.transferLocal(UUID.randomUUID(), Shard.WORLD, id, new BigDecimal(amount));
         System.out.println("seeded: " + owner + " on " + home.name + " with " + amount);
     }

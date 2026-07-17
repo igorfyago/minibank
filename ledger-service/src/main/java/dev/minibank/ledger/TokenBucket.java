@@ -2,14 +2,14 @@ package dev.minibank.ledger;
 
 /**
  * A token bucket, the deep-dive favorite: `capacity` tokens allow a burst,
- * refilled continuously at `ratePerSec`. Empty bucket = HTTP 429 — the
+ * refilled continuously at `ratePerSec`. Empty bucket = HTTP 429 · the
  * edge slows abusive callers down BEFORE they reach the ledger.
  *
  * Pairs with idempotency, and the pairing is the interview point:
  * idempotency makes retries SAFE, rate limiting makes them CHEAP.
  *
  * This one is per-instance and in-memory; a fleet shares state at the
- * gateway or in Redis — same algorithm, different address. Time comes in
+ * gateway or in Redis · same algorithm, different address. Time comes in
  * as a parameter so the mechanism is testable without sleeping.
  */
 public final class TokenBucket {

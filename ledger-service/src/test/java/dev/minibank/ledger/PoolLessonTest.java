@@ -17,13 +17,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * STAGE 4 — A DATABASE DROWNS IN CONNECTIONS BEFORE IT DROWNS IN DATA.
+ * STAGE 4 · A DATABASE DROWNS IN CONNECTIONS BEFORE IT DROWNS IN DATA.
  *
- *   lesson 1  connection-per-query vs pooled — measured, not asserted by vibes
- *   lesson 2  100 virtual threads share 5 connections — all succeed, none melt
+ *   lesson 1  connection-per-query vs pooled · measured, not asserted by vibes
+ *   lesson 2  100 virtual threads share 5 connections · all succeed, none melt
  *   lesson 3  pool exhaustion = backpressure: the N+1th borrower WAITS (or times out)
  *   lesson 4  returned connections are CLEAN: no transaction state leaks between borrowers
- *   lesson 5  the same workload through PgBouncer (:6432) — the ops-grade pool
+ *   lesson 5  the same workload through PgBouncer (:6432) · the ops-grade pool
  *
  * Requires: docker compose up -d   (postgres 5433, pgbouncer 6432)
  */
@@ -33,7 +33,7 @@ class PoolLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 1: connection-per-query pays a tax on EVERY query — the pool pays it once")
+    @DisplayName("lesson 1: connection-per-query pays a tax on EVERY query · the pool pays it once")
     void lesson1_measureTheTax() throws Exception {
         // warm-up (JIT, driver init) so the measurement is honest
         try (Connection c = Db.openPhysical(); var st = c.createStatement()) { st.execute("SELECT 1"); }
@@ -59,7 +59,7 @@ class PoolLessonTest {
                 }
             });
 
-            System.out.printf("lesson 1: %d queries — connection-per-query %d ms, pooled %d ms (%.0fx)%n",
+            System.out.printf("lesson 1: %d queries · connection-per-query %d ms, pooled %d ms (%.0fx)%n",
                     QUERIES, naiveMs, pooledMs, (double) naiveMs / Math.max(pooledMs, 1));
             assertTrue(naiveMs > pooledMs * 2,
                     "pooling must be at least 2x faster (measured naive=" + naiveMs + "ms pooled=" + pooledMs + "ms)");
@@ -68,7 +68,7 @@ class PoolLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 2: 100 virtual threads share 5 connections — everyone gets served")
+    @DisplayName("lesson 2: 100 virtual threads share 5 connections · everyone gets served")
     void lesson2_manyThreadsFewConnections() throws Exception {
         try (MiniPool pool = new MiniPool(url(), "minibank", "minibank", 5)) {
             AtomicInteger completed = new AtomicInteger();
@@ -94,7 +94,7 @@ class PoolLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 3: pool exhausted — the next borrower waits, then times out. That IS backpressure")
+    @DisplayName("lesson 3: pool exhausted · the next borrower waits, then times out. That IS backpressure")
     void lesson3_exhaustionIsBackpressure() throws Exception {
         try (MiniPool pool = new MiniPool(url(), "minibank", "minibank", 2)) {
             Connection a = pool.borrow(1, TimeUnit.SECONDS);
@@ -117,7 +117,7 @@ class PoolLessonTest {
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 4: a borrower leaves a transaction open — the pool cleans it; state never leaks")
+    @DisplayName("lesson 4: a borrower leaves a transaction open · the pool cleans it; state never leaks")
     void lesson4_noStateLeaksBetweenBorrowers() throws Exception {
         try (MiniPool pool = new MiniPool(url(), "minibank", "minibank", 1)) {   // ONE connection: reuse guaranteed
             try (Connection dirty = pool.borrow(1, TimeUnit.SECONDS)) {
@@ -129,14 +129,14 @@ class PoolLessonTest {
             }
             try (Connection next = pool.borrow(1, TimeUnit.SECONDS)) {
                 assertTrue(next.getAutoCommit(),
-                        "the pool rolled back and reset autocommit — the next borrower gets a clean connection");
+                        "the pool rolled back and reset autocommit · the next borrower gets a clean connection");
             }
         }
     }
 
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 5: the same workload through PgBouncer — the pool as infrastructure")
+    @DisplayName("lesson 5: the same workload through PgBouncer · the pool as infrastructure")
     void lesson5_throughPgBouncer() throws Exception {
         // PgBouncer in TRANSACTION pooling mode: thousands of clients share a
         // handful of real connections, assigned per-transaction. The JDBC
@@ -151,7 +151,7 @@ class PoolLessonTest {
                 assertTrue(rs.next());
             }
         }
-        // it works — and behind the curtain PgBouncer held far fewer real
+        // it works · and behind the curtain PgBouncer held far fewer real
         // connections than we opened. Same trick as MiniPool, ops-grade.
     }
 

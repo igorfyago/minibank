@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * STAGE 0 — THE LOST UPDATE, WATCHED LIVE, THEN KILLED THREE WAYS.
+ * STAGE 0 · THE LOST UPDATE, WATCHED LIVE, THEN KILLED THREE WAYS.
  * Raw Java 21 + raw JDBC. No framework. Every connection, transaction and
  * commit below is explicit, because understanding them IS the lesson.
  *
@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Make others wait, detect-and-retry, or make it one step.
  *
  * KEY DETAIL you must notice: each racing thread opens ITS OWN connection.
- * Two threads sharing one connection wouldn't race — they'd queue on the
+ * Two threads sharing one connection wouldn't race · they'd queue on the
  * driver. Real systems race precisely because every request has its own
  * connection. (This is also why "just share a connection" is not a fix.)
  *
@@ -102,10 +102,10 @@ class LostUpdateLessonTest {
     }
 
     // ------------------------------------------------------------------
-    // LESSON 1 — the bug. Both threads read 100 before either writes 70.
+    // LESSON 1 · the bug. Both threads read 100 before either writes 70.
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 1: naive read-compute-write LOSES 30 — balance ends 70, not 40")
+    @DisplayName("lesson 1: naive read-compute-write LOSES 30 · balance ends 70, not 40")
     void lesson1_naiveReadModifyWrite_losesMoney() throws Exception {
         CountDownLatch bothHaveRead = new CountDownLatch(2);
 
@@ -141,12 +141,12 @@ class LostUpdateLessonTest {
     }
 
     // ------------------------------------------------------------------
-    // LESSON 2 — pessimistic. Lock the row BEFORE reading; second waits.
+    // LESSON 2 · pessimistic. Lock the row BEFORE reading; second waits.
     // Note autoCommit=false: FOR UPDATE only holds the lock inside an open
     // transaction. Frameworks hide this begin/commit; here you own it.
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 2: SELECT ... FOR UPDATE — second writer waits, balance ends 40")
+    @DisplayName("lesson 2: SELECT ... FOR UPDATE · second writer waits, balance ends 40")
     void lesson2_selectForUpdate_isCorrect() throws Exception {
         race(conn -> {
             conn.setAutoCommit(false);            // BEGIN
@@ -177,10 +177,10 @@ class LostUpdateLessonTest {
     }
 
     // ------------------------------------------------------------------
-    // LESSON 3 — optimistic. Write only if version unchanged; retry if beaten.
+    // LESSON 3 · optimistic. Write only if version unchanged; retry if beaten.
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 3: version column + retry — conflict detected, balance ends 40")
+    @DisplayName("lesson 3: version column + retry · conflict detected, balance ends 40")
     void lesson3_optimisticVersion_isCorrect() throws Exception {
         race(conn -> {
             for (int attempt = 0; attempt < 10; attempt++) {
@@ -202,7 +202,7 @@ class LostUpdateLessonTest {
                     ps.setLong(2, ACCOUNT);
                     ps.setLong(3, version);
                     if (ps.executeUpdate() == 1) return;  // our view was still true
-                    // 0 rows: someone beat us — loop, re-read, try again
+                    // 0 rows: someone beat us · loop, re-read, try again
                 }
             }
             throw new IllegalStateException("gave up after 10 attempts");
@@ -212,11 +212,11 @@ class LostUpdateLessonTest {
     }
 
     // ------------------------------------------------------------------
-    // LESSON 4 — atomic. Read+check+write as ONE statement inside the DB.
+    // LESSON 4 · atomic. Read+check+write as ONE statement inside the DB.
     // Two steps can interleave; one step cannot.
     // ------------------------------------------------------------------
     @Test
-    @DisplayName("lesson 4: one atomic UPDATE — no separate read exists, balance ends 40")
+    @DisplayName("lesson 4: one atomic UPDATE · no separate read exists, balance ends 40")
     void lesson4_atomicUpdate_isCorrect() throws Exception {
         race(conn -> {
             try (PreparedStatement ps = conn.prepareStatement(

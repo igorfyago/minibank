@@ -9,22 +9,22 @@ import java.sql.SQLException;
 import java.util.UUID;
 
 /**
- * PRODUCTS — the Revolut shelf, built the honest way: every product is
+ * PRODUCTS · the Revolut shelf, built the honest way: every product is
  * just ACCOUNTS plus DOUBLE-ENTRY TRANSFERS. That is not a demo shortcut;
  * it is how real banks build products.
  *
  *   SAVINGS   a second account. "Move to savings" = a transfer between
- *             your own accounts — same shard, plain ACID, nothing new.
+ *             your own accounts · same shard, plain ACID, nothing new.
  *   CARD      an account whose kind is 'credit': the schema lets it go
  *             negative to a floor (-1000). Spending = card -> café.
  *             The credit limit is a CHECK constraint, not an if-statement.
  *   CRYPTO /  a MULTI-CURRENCY ledger. Your BTC account is denominated in
- *   STOCKS    BTC; a buy is ONE transaction with four entries — EUR legs
- *             (you -> broker) and asset legs (broker -> you) — and each
+ *   STOCKS    BTC; a buy is ONE transaction with four entries · EUR legs
+ *             (you -> broker) and asset legs (broker -> you) · and each
  *             currency's legs sum to zero on their own. The audit becomes
  *             per-currency; the invariant holds in every unit at once.
  *   MORTGAGE  a 'loan' account. Disbursement: loan -A, main +A in one
- *             commit — your net position is unchanged, which is the
+ *             commit · your net position is unchanged, which is the
  *             honest accounting truth of borrowing money.
  *
  * Product accounts live at fixed offsets from the customer id and are
@@ -80,7 +80,7 @@ public final class Products {
     // (card -> holds: the card's balance already carries the hold, so the
     // credit-limit CHECK constraint counts holds automatically). CAPTURE
     // moves the held money on to the merchant; RELEASE gives it back.
-    // Every step is a plain gated transfer — capture and release use
+    // Every step is a plain gated transfer · capture and release use
     // DETERMINISTIC ids derived from the authorization, so each can happen
     // at most once no matter how the card network retries.
 
@@ -105,7 +105,7 @@ public final class Products {
                 .transferLocal(releaseId, customerId + HOLDS, customerId + CARD, amt);
     }
 
-    /** the authorization's own entry says how much was held — the ledger is
+    /** the authorization's own entry says how much was held · the ledger is
      *  the source of truth for the hold, like for everything else */
     private static BigDecimal heldAmount(UUID authTx, long customerId) throws SQLException {
         Shard home = Shards.forCustomer(customerId);
@@ -151,7 +151,7 @@ public final class Products {
                     conn.rollback();
                     return new Ledger.AlreadyProcessed();
                 }
-                // ordered locking across all four rows — same global rule
+                // ordered locking across all four rows · same global rule
                 long[] ids = {Shard.BROKER_EUR, brokerAsset, customerId, assetAcct};
                 java.util.Arrays.sort(ids);
                 Ledger.Account main = null, assetA = null;
@@ -191,7 +191,7 @@ public final class Products {
     }
 
     // ------------------------------------------------------------------
-    // the mortgage: borrowing changes nothing — and the books prove it
+    // the mortgage: borrowing changes nothing · and the books prove it
     // ------------------------------------------------------------------
     public static Ledger.TransferResult mortgage(UUID txId, long customerId, BigDecimal amount) throws SQLException {
         if (amount.signum() <= 0) throw new IllegalArgumentException("amount must be positive");

@@ -1,13 +1,13 @@
 # THE ONLY THING KUBERNETES SCALES HERE IS THIS FILE.
 #
-# The app tier is STATELESS — every fact lives in Postgres, Kafka, or the
+# The app tier is STATELESS · every fact lives in Postgres, Kafka, or the
 # directory. That is why `replicas` is a number you can just… raise. Three
 # copies, thirty copies: identical clones behind one Service, and correctness
 # does not care, because correctness was never in the JVM (no synchronized,
-# no in-memory state — the database owns the locks, stage 1's whole point).
+# no in-memory state · the database owns the locks, stage 1's whole point).
 #
 # The databases are NOT in this file. Pods scale clones; databases are
-# territories — they scale by replicas (reads) and shards/regions (writes),
+# territories · they scale by replicas (reads) and shards/regions (writes),
 # which is a data decision, not a replica count.
 apiVersion: apps/v1
 kind: Deployment
@@ -28,7 +28,7 @@ spec:
           ports:
             - containerPort: 8080
           env:
-            # config is LOCATION, not code — the same image everywhere.
+            # config is LOCATION, not code · the same image everywhere.
             - name: MINIBANK_SHARD0_URL
               value: jdbc:postgresql://pg-eu:5432/minibank
             - name: MINIBANK_SHARD1_URL
@@ -39,7 +39,7 @@ spec:
               value: kafka:9092
             - name: MINIBANK_POOL
               value: "10"       # per shard, per pod: 3 pods x 2 shards x 10 = 60
-                                # server connections ceiling — the pool math you
+                                # server connections ceiling · the pool math you
                                 # must do BEFORE raising replicas (or add PgBouncer)
           readinessProbe:
             httpGet: { path: /api/accounts, port: 8080 }

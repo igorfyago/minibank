@@ -12,7 +12,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * RITA — the support agent, now with HANDS. The design rule Igor set:
+ * RITA · the support agent, now with HANDS. The design rule Igor set:
  * agents and humans have the same power; the human is in the loop.
  *
  *   GROUNDED   every reply starts from the customer's REAL balances,
@@ -23,7 +23,7 @@ import java.util.Map;
  *              She PROPOSES a tool call; she never executes.
  *   APPROVED   the proposal renders as an Allow/Deny card in the chat.
  *              On Allow, the CUSTOMER'S BROWSER makes the same public
- *              API call the buttons make — same idempotency keys, same
+ *              API call the buttons make · same idempotency keys, same
  *              rate limiter, same CHECK constraints. Deny = nothing.
  *              The gate is a click, not a promise.
  *   METERED    her own token buckets sit in front of the model call.
@@ -41,7 +41,7 @@ public final class SupportAgent {
         return KEY != null && !KEY.isBlank();
     }
 
-    /** the same powers as the app's buttons — one tool per verb */
+    /** the same powers as the app's buttons · one tool per verb */
     private static final String TOOLS = """
         [
         {"type":"function","function":{"name":"send_money","description":"Send euros from the customer's main account to another customer (cross-region works: it becomes a saga).","parameters":{"type":"object","properties":{"to":{"type":"string","description":"recipient's name from the CAST list, e.g. oscar"},"amount":{"type":"string","description":"EUR amount, e.g. 50.00"}},"required":["to","amount"]}}},
@@ -50,7 +50,7 @@ public final class SupportAgent {
         {"type":"function","function":{"name":"card_action","description":"Credit card operations. pay_cafe spends at the cafe; hold authorizes (reserves); capture pays the most recent hold to the merchant; release undoes the most recent hold; repay pays the card debt from main.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["pay_cafe","hold","capture","release","repay"]},"amount":{"type":"string","description":"EUR amount for pay_cafe, hold or repay"}},"required":["action"]}}},
         {"type":"function","function":{"name":"trade","description":"Buy or sell bitcoin (btc) or Apple stock (aapl) at the live price, for a EUR amount.","parameters":{"type":"object","properties":{"asset":{"type":"string","enum":["btc","aapl"]},"side":{"type":"string","enum":["buy","sell"]},"eur":{"type":"string","description":"EUR amount, e.g. 50.00"}},"required":["asset","side","eur"]}}},
         {"type":"function","function":{"name":"mortgage","description":"apply for a mortgage (instant decision, up to 20000) or repay part of it from main.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["apply","repay"]},"amount":{"type":"string"}},"required":["action","amount"]}}},
-        {"type":"function","function":{"name":"relocate","description":"Move the customer to the other region — the balance travels as one saga, then the directory pointer flips.","parameters":{"type":"object","properties":{"region":{"type":"string","enum":["eu","uk"]}},"required":["region"]}}}
+        {"type":"function","function":{"name":"relocate","description":"Move the customer to the other region · the balance travels as one saga, then the directory pointer flips.","parameters":{"type":"object","properties":{"region":{"type":"string","enum":["eu","uk"]}},"required":["region"]}}}
         ]""";
 
     /** returns the FULL response body for the endpoint:
@@ -137,12 +137,12 @@ public final class SupportAgent {
         PriceFeed.Px btc = PriceFeed.get("btc"), aapl = PriceFeed.get("aapl");
 
         return """
-            You are Rita, the support agent of minibank — a real, running demo neobank built from first \
+            You are Rita, the support agent of minibank · a real, running demo neobank built from first \
             principles in raw Java 21 (no frameworks) by Igor Yago, live at bank.b4rruf3t.com. Be warm, \
-            concise (under 100 words unless asked to go deep), plain-spoken, lightly playful. Never invent data.
+            concise (under 100 words unless asked to go deep), plain-spoken, lightly playful. Never invent data. Never use em dashes; use commas or periods.
 
             YOU CAN ACT. You have tools with exactly the same powers as the app's buttons. When the customer \
-            asks for an action, CALL the right tool immediately — the app shows them a friendly Allow/Deny \
+            asks for an action, CALL the right tool immediately · the app shows them a friendly Allow/Deny \
             card and NOTHING happens until they press Allow, so do not ask for confirmation yourself and \
             never claim you cannot act. One tool call per message. Resolve recipient names from the CAST \
             list. Amounts are EUR strings like "50.00". The trade tool takes EUR: for "10 AAPL shares", \
@@ -151,9 +151,9 @@ public final class SupportAgent {
             handle an action - either CALL the tool in this very reply, or state you cannot. Announcing \
             an action without a tool call is a failure. If a request needs no action, just answer.
 
-            YOU ALSO EXPLAIN THE SYSTEM — when asked how the bank is built, works, or scales, answer             like the engineer who built it: concrete components, exact technologies, real numbers,             mechanism first, consequence second. No hedging, no filler, no defining jargon unless asked —             state facts until the design is obvious. Up to 250 words for architecture answers.
+            YOU ALSO EXPLAIN THE SYSTEM · when asked how the bank is built, works, or scales, answer             like the engineer who built it: concrete components, exact technologies, real numbers,             mechanism first, consequence second. No hedging, no filler, no defining jargon unless asked ·             state facts until the design is obvious. Up to 250 words for architecture answers.
 
-            THE EXACT STACK (all really running): Edge: Caddy 2 (TLS, Let's Encrypt) -> per-caller token             bucket (60 burst, refill 25/s, 429 when empty) -> raw JDK HttpServer, one Java 21 virtual             thread per request, zero frameworks. Routing: a directory service with its own Postgres             database (minibank_directory) maps customer -> region plus a moving flag, cached in-process.             Two regions, eu and uk: PostgreSQL 16 each, hand-rolled connection pool (10 conns; close()             returns to pool; bounded borrow = backpressure). Schema: accounts (kinds             customer/external/credit/loan; a currency per account; NUMERIC(20,8); CHECK constraints             enforce card floor -1000, loan floor -100000), transactions (txId primary key = idempotency             gate), entries (double-entry, sums to zero per currency per transaction, append-only by             trigger), outbox. In-region payment: ONE ACID transaction, ordered FOR UPDATE locks             (ascending id — deadlock impossible by construction). Cross-region: depart (payer ->             in_transit clearing account + outbox event, same commit) -> relay (virtual thread, producer             acks=all, marked published only after broker ack = at-least-once) -> Kafka 3.8 KRaft, topic             payments -> applier (group shard-applier) arrives idempotently, gated by the same txId on             the destination's own transactions table; missing destination -> deterministic refund.             Fleet-wide SUM(in_transit) = money in flight, zero when drained. Notifications: its own             consumer group and own database, event_key primary key dedupe. Trades: one transaction, four             entries, two currencies, against per-region broker accounts; prices CoinGecko and Yahoo x             live EURUSD, 60s cache, locked at execution. Relocation: new account in the target region,             moving flag pauses writes for milliseconds, the balance travels as one standard cross-region             payment, then the directory pointer flips. One Docker image; k8s manifests scale ONLY the             stateless app tier and pin each region's database to its geography. 38 executable tests             prove each mechanism. Products: savings, credit card (limit 1000; hold/capture/release is             real card authorization), bitcoin and Apple stock, personal loan (to 20000; disbursement             leaves net worth unchanged).
+            THE EXACT STACK (all really running): Edge: Caddy 2 (TLS, Let's Encrypt) -> per-caller token             bucket (60 burst, refill 25/s, 429 when empty) -> raw JDK HttpServer, one Java 21 virtual             thread per request, zero frameworks. Routing: a directory service with its own Postgres             database (minibank_directory) maps customer -> region plus a moving flag, cached in-process.             Two regions, eu and uk: PostgreSQL 16 each, hand-rolled connection pool (10 conns; close()             returns to pool; bounded borrow = backpressure). Schema: accounts (kinds             customer/external/credit/loan; a currency per account; NUMERIC(20,8); CHECK constraints             enforce card floor -1000, loan floor -100000), transactions (txId primary key = idempotency             gate), entries (double-entry, sums to zero per currency per transaction, append-only by             trigger), outbox. In-region payment: ONE ACID transaction, ordered FOR UPDATE locks             (ascending id · deadlock impossible by construction). Cross-region: depart (payer ->             in_transit clearing account + outbox event, same commit) -> relay (virtual thread, producer             acks=all, marked published only after broker ack = at-least-once) -> Kafka 3.8 KRaft, topic             payments -> applier (group shard-applier) arrives idempotently, gated by the same txId on             the destination's own transactions table; missing destination -> deterministic refund.             Fleet-wide SUM(in_transit) = money in flight, zero when drained. Notifications: its own             consumer group and own database, event_key primary key dedupe. Trades: one transaction, four             entries, two currencies, against per-region broker accounts; prices CoinGecko and Yahoo x             live EURUSD, 60s cache, locked at execution. Relocation: new account in the target region,             moving flag pauses writes for milliseconds, the balance travels as one standard cross-region             payment, then the directory pointer flips. One Docker image; k8s manifests scale ONLY the             stateless app tier and pin each region's database to its geography. 38 executable tests             prove each mechanism. Products: savings, credit card (limit 1000; hold/capture/release is             real card authorization), bitcoin and Apple stock, personal loan (to 20000; disbursement             leaves net worth unchanged).
 
             CAST (name=id (region)): %s
             THIS CUSTOMER: %s, id %s, region %s. Balances: main €%s, savings €%s, card €%s (held €%s), \
@@ -175,7 +175,7 @@ public final class SupportAgent {
         return v == null ? "0" : v.stripTrailingZeros().toPlainString();
     }
 
-    /** find `"key":` and walk the JSON STRING that follows, unescaping —
+    /** find `"key":` and walk the JSON STRING that follows, unescaping ·
      *  a tiny honest parser instead of a JSON library. Returns null when
      *  the value is not a string (e.g. "content":null on tool calls). */
     static String extractString(String json, String key) {

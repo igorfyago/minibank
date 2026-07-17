@@ -14,13 +14,13 @@ import java.util.UUID;
 import java.util.concurrent.Executors;
 
 /**
- * STAGE 3 — THE BANK GETS A FACE. Raw JDK HttpServer, no framework.
+ * STAGE 3 · THE BANK GETS A FACE. Raw JDK HttpServer, no framework.
  *
  * THE JAVA 21 POINT: the server runs one VIRTUAL THREAD per request.
- * Virtual threads make blocking code cheap — a thread waiting on JDBC or
+ * Virtual threads make blocking code cheap · a thread waiting on JDBC or
  * Kafka costs almost nothing, so we write simple blocking handlers and
  * still scale. This is the modern answer to "how do you handle 10K
- * concurrent requests in Java" — not callback spaghetti, not reactive
+ * concurrent requests in Java" · not callback spaghetti, not reactive
  * frameworks: cheap threads.
  */
 public final class HttpApi {
@@ -60,7 +60,7 @@ public final class HttpApi {
 
     // ------------------------------------------------------------------ app
 
-    /** Customers only, each from its HOME region — reads route through the
+    /** Customers only, each from its HOME region · reads route through the
      *  directory exactly like writes do. After a relocation the emptied
      *  account still exists on the old region as an archive; it is not the
      *  customer's account anymore, so it does not appear here. */
@@ -127,14 +127,14 @@ public final class HttpApi {
             return Response.json(200, "{\"result\":\"" + kind +
                     "\",\"crossShard\":" + plan.crossShard() + "}");
         } catch (Directory.CustomerMoving e) {
-            // not a failure — an instruction. The write-pause of a relocation.
+            // not a failure · an instruction. The write-pause of a relocation.
             return Response.json(409, "{\"result\":\"relocating\",\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
         } catch (IllegalArgumentException e) {
             return Response.json(400, "{\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
         }
     }
 
-    /** STAGE 6: move a customer to another region — the balance travels
+    /** STAGE 6: move a customer to another region · the balance travels
      *  through the standard saga, then the directory pointer flips. */
     private static Response relocate(HttpExchange ex) throws Exception {
         if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
@@ -175,7 +175,7 @@ public final class HttpApi {
      *  into a human story. Each row = one entry on THEIR account, joined to
      *  the tx's OTHER entry for the counterparty, plus a running balance
      *  (a window SUM over the very entries the balance is a cache of).
-     *  Saga legs name in_transit locally — the human counterparty comes from
+     *  Saga legs name in_transit locally · the human counterparty comes from
      *  the departed event's payload (on the destination side that means one
      *  lookup on the other region: a read-model shortcut; a real fleet
      *  projects statements from the Kafka events instead). */
@@ -289,7 +289,7 @@ public final class HttpApi {
                 }
             }
         } catch (Exception e) {
-            return false;   // cannot check right now — don't alarm the user
+            return false;   // cannot check right now · don't alarm the user
         }
     }
 
@@ -303,7 +303,7 @@ public final class HttpApi {
         }
     }
 
-    /** the arrival leg has no local event — ask the other regions' outboxes */
+    /** the arrival leg has no local event · ask the other regions' outboxes */
     private static String departedFieldElsewhere(Shard home, UUID tx, String field) throws Exception {
         for (Shard s : Shards.all()) {
             if (s == home) continue;
@@ -372,7 +372,7 @@ public final class HttpApi {
     }
 
     /** The live activity stream: every commit, publish and delivery across
-     *  the whole bank, merged and timestamped — the observability the tables
+     *  the whole bank, merged and timestamped · the observability the tables
      *  already contained, finally asked for. Powers the map animations. */
     private static Response xrayEvents(HttpExchange ex) throws Exception {
         record Ev(java.time.Instant ts, String type, int shard, String region,
@@ -445,7 +445,7 @@ public final class HttpApi {
         return Response.json(200, b.append(']').toString());
     }
 
-    /** Click a component on the map, see ITS actual database rows — the
+    /** Click a component on the map, see ITS actual database rows · the
      *  inspector serves each node's own truth: a shard's accounts/entries/
      *  outbox, the directory's routing table, the notifications table, the
      *  clearing accounts, the applier's commits. Nothing summarized:
@@ -461,15 +461,15 @@ public final class HttpApi {
             case "shard0", "shard1" -> {
                 Shard s = Shards.s("shard1".equals(node) ? 1 : 0);
                 try (Connection c = s.open()) {
-                    tables.add(tableJson(c, "accounts — every account on this machine",
+                    tables.add(tableJson(c, "accounts · every account on this machine",
                             "SELECT id, owner, kind, currency, trim_scale(balance) AS balance FROM accounts ORDER BY id",
                             "id", "owner", "kind", "ccy", "balance"));
-                    tables.add(tableJson(c, "entries — the double-entry truth (latest 8)",
+                    tables.add(tableJson(c, "entries · the double-entry truth (latest 8)",
                             """
                             SELECT substr(e.tx_id::text,1,8) AS tx, a.owner, trim_scale(e.amount) AS amount, to_char(e.created_at,'HH24:MI:SS') AS at
                             FROM entries e JOIN accounts a ON a.id = e.account_id ORDER BY e.id DESC LIMIT 8""",
                             "tx", "account", "amount", "at"));
-                    tables.add(tableJson(c, "outbox — events born inside money commits (latest 5)",
+                    tables.add(tableJson(c, "outbox · events born inside money commits (latest 5)",
                             """
                             SELECT substr(key,1,17) AS key, CASE WHEN published_at IS NULL THEN 'pending' ELSE 'published' END AS state,
                                    to_char(created_at,'HH24:MI:SS') AS at
@@ -479,7 +479,7 @@ public final class HttpApi {
             }
             case "api" -> {
                 try (Connection c = Directory.openForRead()) {
-                    tables.add(tableJson(c, "the routing directory — which region owns each customer",
+                    tables.add(tableJson(c, "the routing directory · which region owns each customer",
                             "SELECT customer_id, owner, CASE WHEN shard = 0 THEN 'eu' ELSE 'uk' END AS region, moving FROM customers ORDER BY customer_id",
                             "customer", "owner", "region", "moving"));
                 }
@@ -519,7 +519,7 @@ public final class HttpApi {
             }
             case "notif" -> {
                 try (Connection c = Notifications.openForRead()) {
-                    tables.add(tableJson(c, "notifications — its own database, fed only by Kafka (latest 6)",
+                    tables.add(tableJson(c, "notifications · its own database, fed only by Kafka (latest 6)",
                             "SELECT substr(event_key,1,17) AS key, to_char(created_at,'HH24:MI:SS') AS at FROM notifications ORDER BY created_at DESC LIMIT 6",
                             "event key", "stored at"));
                 }
@@ -529,7 +529,7 @@ public final class HttpApi {
         return Response.json(200, "{\"node\":\"" + Json.esc(node) + "\",\"tables\":[" + String.join(",", tables) + "]}");
     }
 
-    /** run a query, emit {title, cols, rows} — the generic inspector table */
+    /** run a query, emit {title, cols, rows} · the generic inspector table */
     private static String tableJson(Connection c, String title, String sql, String... cols) throws Exception {
         StringBuilder b = new StringBuilder("{\"title\":\"").append(Json.esc(title)).append("\",\"cols\":[");
         for (int i = 0; i < cols.length; i++) {
@@ -557,7 +557,7 @@ public final class HttpApi {
     /** One transaction's whole journey, assembled from the timestamps the
      *  system already wrote: commits on each region, the relay's publish,
      *  the notification's insert. Distributed tracing from first principles
-     *  — no agent injected anything; the ledger IS the trace. */
+     *  · no agent injected anything; the ledger IS the trace. */
     private static Response xrayTrace(HttpExchange ex) throws Exception {
         String q = ex.getRequestURI().getQuery();
         String tx = null;
@@ -590,9 +590,9 @@ public final class HttpApi {
                             String kind = rs.getString(2);
                             String label = switch (kind) {
                                 case "transfer" -> "committed (local ACID)";
-                                case "depart" -> "departed — money into the pipe";
-                                case "arrive" -> "arrived — money out of the pipe";
-                                case "refund" -> "refunded — the compensating transaction";
+                                case "depart" -> "departed · money into the pipe";
+                                case "arrive" -> "arrived · money out of the pipe";
+                                case "refund" -> "refunded · the compensating transaction";
                                 default -> kind;
                             };
                             steps.add(new Step(rs.getTimestamp(3).toInstant(), kind, region, label));
@@ -739,7 +739,7 @@ public final class HttpApi {
 
     // the edge: a token bucket per caller. Generous for humans, a wall for
     // retry storms. Per-instance by design (a fleet shares state at the
-    // gateway or in Redis); the map grows with caller cardinality — a real
+    // gateway or in Redis); the map grows with caller cardinality · a real
     // deployment expires idle buckets.
     private static final java.util.Map<String, TokenBucket> buckets = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -754,7 +754,7 @@ public final class HttpApi {
         Response r;
         try {
             if (ex.getRequestURI().getPath().startsWith("/api/") && !allowed(ex)) {
-                r = Response.json(429, "{\"error\":\"rate limited — the token bucket is empty; it refills at 25/s. " +
+                r = Response.json(429, "{\"error\":\"rate limited · the token bucket is empty; it refills at 25/s. " +
                         "Idempotency makes retries safe, this makes them cheap.\"}");
             } else
             r = h.run(ex);
@@ -804,7 +804,7 @@ public final class HttpApi {
                 "\",\"priceSource\":\"" + btc.source() + "\"}");
     }
 
-    /** buy or sell an asset at the live price — one 4-entry, 2-currency tx */
+    /** buy or sell an asset at the live price · one 4-entry, 2-currency tx */
     private static Response trade(HttpExchange ex) throws Exception {
         if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
         String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
@@ -853,21 +853,21 @@ public final class HttpApi {
     }
 
     // Rita's own meters: the model call costs real money, so it gets its
-    // own buckets IN FRONT of it — a few questions per caller, a daily
+    // own buckets IN FRONT of it · a few questions per caller, a daily
     // global allowance, 429 with grace beyond that.
     private static final java.util.Map<String, TokenBucket> supportBuckets = new java.util.concurrent.ConcurrentHashMap<>();
     private static final TokenBucket supportGlobal = new TokenBucket(300, 300.0 / 86400, System.nanoTime());
 
-    /** Rita, the support agent — grounded in live account data, read-only */
+    /** Rita, the support agent · grounded in live account data, read-only */
     private static Response support(HttpExchange ex) throws Exception {
         if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
         if (!SupportAgent.enabled())
-            return Response.json(200, "{\"reply\":\"Rita is offline in this environment (no model key configured) — but the Guide on the X-ray tab explains everything I would have, at three depths.\"}");
+            return Response.json(200, "{\"reply\":\"Rita is offline in this environment (no model key configured) · but the Guide on the X-ray tab explains everything I would have, at three depths.\"}");
         String ip = ex.getRequestHeaders().getFirst("X-Forwarded-For");
         ip = ip != null ? ip.split(",")[0].trim() : ex.getRemoteAddress().getAddress().getHostAddress();
         if (!supportBuckets.computeIfAbsent(ip, k -> new TokenBucket(4, 1.0 / 15, System.nanoTime())).take(System.nanoTime())
                 || !supportGlobal.take(System.nanoTime()))
-            return Response.json(429, "{\"reply\":\"I need a tiny breather — ask me again in a moment. (My own token bucket: even support is rate-limited here.)\"}");
+            return Response.json(429, "{\"reply\":\"I need a tiny breather · ask me again in a moment. (My own token bucket: even support is rate-limited here.)\"}");
 
         String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         String customer = Json.num(body, "customer"), message = Json.str(body, "message"), transcript = Json.str(body, "transcript");
@@ -878,11 +878,11 @@ public final class HttpApi {
             return Response.json(200, SupportAgent.replyJson(Long.parseLong(customer), message, transcript));
         } catch (Exception e) {
             System.err.println("support: " + e);
-            return Response.json(200, "{\"reply\":\"Sorry — I hiccuped mid-thought. Try once more? (If this keeps happening the model behind me is having a day.)\"}");
+            return Response.json(200, "{\"reply\":\"Sorry · I hiccuped mid-thought. Try once more? (If this keeps happening the model behind me is having a day.)\"}");
         }
     }
 
-    /** self-serve onboarding: pick a name and a REGION — residency is a
+    /** self-serve onboarding: pick a name and a REGION · residency is a
      *  choice you make at signup, exactly like the real product. The new
      *  customer gets an account on their region's shard, 500 from the
      *  world, and the full product shelf. */
@@ -901,7 +901,7 @@ public final class HttpApi {
             try (ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM customers WHERE customer_id < 100")) {
                 rs.next();
                 if (rs.getLong(1) >= 25)
-                    return Response.json(409, "{\"error\":\"the demo cast is full (25 customers) — relocate someone instead\"}");
+                    return Response.json(409, "{\"error\":\"the demo cast is full (25 customers) · relocate someone instead\"}");
             }
             try (var ps = c.prepareStatement("SELECT 1 FROM customers WHERE owner = ? AND customer_id < 100")) {
                 ps.setString(1, name);
@@ -917,7 +917,7 @@ public final class HttpApi {
         // first-write-wins in the directory settles races on the id
         Directory.register(id, name, shard);
         if (!name.equals(Directory.owner(id)))
-            return Response.json(409, "{\"error\":\"two signups collided — try again\"}");
+            return Response.json(409, "{\"error\":\"two signups collided · try again\"}");
         Shard home = Shards.s(shard);
         home.createCustomer(id, name);
         home.transferLocal(UUID.randomUUID(), Shard.WORLD, id, new BigDecimal("500.00"));

@@ -9,12 +9,12 @@ import java.util.List;
 import java.util.Properties;
 
 /**
- * The relay: moves outbox rows to Kafka. Deliberately boring — poll, send,
+ * The relay: moves outbox rows to Kafka. Deliberately boring · poll, send,
  * mark, repeat. Boring is the point: all the cleverness already happened
  * when the event was committed atomically with the money.
  *
  * publishPending() is one deterministic pass (tests call it directly);
- * runLoop() wraps it for production, on a virtual thread — Java 21's cheap
+ * runLoop() wraps it for production, on a virtual thread · Java 21's cheap
  * threads make "a thread that mostly sleeps" cost almost nothing.
  */
 public final class OutboxRelay implements AutoCloseable {
@@ -27,7 +27,7 @@ public final class OutboxRelay implements AutoCloseable {
     }
 
     /** Stage 5: every shard has its own outbox, so every shard gets its own
-     *  relay — same code, pointed at a different database. */
+     *  relay · same code, pointed at a different database. */
     public OutboxRelay(String bootstrapServers, ConnectionSource db) {
         this.db = db;
         Properties p = new Properties();
@@ -65,7 +65,7 @@ public final class OutboxRelay implements AutoCloseable {
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                 } catch (Exception e) {
-                    // transient failure: log and keep trying — the outbox holds the truth
+                    // transient failure: log and keep trying · the outbox holds the truth
                     System.err.println("relay: " + e.getMessage());
                     try { Thread.sleep(pollMillis); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
                 }

@@ -1,4 +1,4 @@
-# THE TERRITORIES. One StatefulSet per REGION — and the nodeSelector is the
+# THE TERRITORIES. One StatefulSet per REGION · and the nodeSelector is the
 # law made executable: pg-uk schedules only onto nodes physically in the UK,
 # pg-eu only onto EU nodes. Data residency is not a policy document here;
 # it is a scheduling constraint the cluster cannot violate.
@@ -7,7 +7,7 @@
 # must survive it. Clones are interchangeable; territories are not.
 #
 # (In production each region would be a managed Postgres with streaming-
-# replication standbys for failover + read replicas for heavy queries —
+# replication standbys for failover + read replicas for heavy queries ·
 # WAL shipping is built into Postgres, no Kafka involved. Kafka's job is
 # BETWEEN services, never inside one database's replication.)
 apiVersion: apps/v1

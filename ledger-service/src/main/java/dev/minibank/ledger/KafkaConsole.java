@@ -14,12 +14,12 @@ import java.util.Map;
 import java.util.Properties;
 
 /**
- * KAFKA CONSOLE — the broker itself, not a mirror of it.
+ * KAFKA CONSOLE · the broker itself, not a mirror of it.
  *
  * The records come from a real KafkaConsumer that assigns the payments
  * topic's partitions, seeks near the end and polls: real offsets, real
  * timestamps, the exact bytes. The consumer-group table comes from the
- * ADMIN API: committed offsets per group vs the end offset = LAG — the
+ * ADMIN API: committed offsets per group vs the end offset = LAG · the
  * number every Kafka operator watches. Cached a few seconds; the page
  * polls politely.
  */
@@ -105,7 +105,7 @@ public final class KafkaConsole {
                                 ",\"lag\":" + Math.max(0, end - e.getValue()) + "}");
                     }
                 } catch (Exception ignored) {
-                    // group not yet formed — nothing to report
+                    // group not yet formed · nothing to report
                 }
             }
         }
