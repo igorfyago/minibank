@@ -236,6 +236,15 @@
   .chat-b { max-width:85%; padding:8px 12px; border-radius:14px; font-size:13px; line-height:1.5; white-space:pre-wrap; }
   .chat-b.me { align-self:flex-end; background:var(--violet); color:#fff; border-bottom-right-radius:4px; }
   .chat-b.rita { align-self:flex-start; background:#20283a; border-bottom-left-radius:4px; }
+  .chat-act { border:1px solid var(--violet); background:rgba(122,92,255,.1) !important; width:85%; }
+  .chat-act .act-sum { font-weight:650; margin-bottom:8px; }
+  .act-btns { display:flex; gap:8px; }
+  .act-allow { flex:1; background:var(--green); border:none; color:#04260f; font:700 12.5px system-ui;
+    padding:7px 0; border-radius:9px; cursor:pointer; }
+  .act-deny { flex:1; background:none; border:1px solid var(--line); color:var(--text);
+    font:600 12.5px system-ui; padding:7px 0; border-radius:9px; cursor:pointer; }
+  .act-done { color:var(--green); font-size:12px; margin-top:6px; }
+  .act-denied { color:var(--dim); font-size:12px; margin-top:6px; }
   .chat-row { display:flex; gap:8px; padding:10px; border-top:1px solid var(--line); }
   .chat-row input { flex:1; min-width:0; }
   @keyframes dots { 50% { opacity:.25; } }
@@ -486,7 +495,7 @@
 <button id="chat-fab" title="Rita — minibank support">💬</button>
 <div id="chat-panel" class="hidden">
   <div class="chat-head">🧑‍💼 Rita · support
-    <span class="muted">sees your account · cannot move money — by design</span>
+    <span class="muted">same powers as you · every action needs your Allow</span>
     <button class="ghost" style="padding:1px 9px" id="chat-close">✕</button></div>
   <div id="chat-msgs"></div>
   <div class="chat-row">
@@ -1426,15 +1435,110 @@ if (location.hash === '#show') {
 
 /* ---------------- Rita: the support agent ---------------- */
 let chatLog = [];
+const AGENT_TOOLS = {
+  send_money: {
+    sum: a => `💸 Send ${fmt(a.amount)} to ${a.to}`,
+    exec: async a => {
+      const rec = accounts.find(x => x.owner === String(a.to).toLowerCase()) || accounts.find(x => x.id === Number(a.to));
+      if (!rec) return 'I could not find "' + a.to + '" in the cast';
+      const tx = uuid();
+      const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: tx, from: me, to: rec.id, amount: a.amount }) });
+      if (r.result === 'ok' && r.crossShard) followTx(tx);
+      return r.result === 'ok' ? `sent ${fmt(a.amount)} to ${rec.owner}` + (r.crossShard ? ' — cross-region, watch it on the map' : '') : r.result || r.error;
+    } },
+  add_money: {
+    sum: a => `⬇ Add ${fmt(a.amount)} from the world`,
+    exec: async a => {
+      if (Number(a.amount) > 500) return 'top-ups cap at €500';
+      const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: 1, to: me, amount: a.amount }) });
+      return r.result === 'ok' ? `added ${fmt(a.amount)}` : r.result || r.error;
+    } },
+  savings_move: {
+    sum: a => `💰 Move ${fmt(a.amount)} ${a.direction === 'to_savings' ? 'into savings' : 'back to main'}`,
+    exec: async a => {
+      const from = a.direction === 'to_savings' ? me : me + 100, to = a.direction === 'to_savings' ? me + 100 : me;
+      const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from, to, amount: a.amount }) });
+      return r.result === 'ok' ? 'moved' : r.result || r.error;
+    } },
+  card_action: {
+    sum: a => ({ pay_cafe: `💳 Pay ${fmt(a.amount || 12)} at the café`, hold: `💳 Authorize a ${fmt(a.amount || 25)} hold`,
+                 capture: '💳 Capture the recent hold', release: '💳 Release the recent hold',
+                 repay: `💳 Repay ${fmt(a.amount || 0)} of card debt` })[a.action] || 'card action',
+    exec: async a => {
+      if (a.action === 'pay_cafe') {
+        const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me + 400, to: 7, amount: a.amount || '12.00' }) });
+        return r.result === 'ok' ? 'paid — your card went negative, legally' : r.result === 'insufficient_funds' ? 'the CHECK constraint said no (limit)' : r.result;
+      }
+      if (a.action === 'hold') {
+        const tx = uuid();
+        const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: 'authorize', customer: me, tx, amount: a.amount || '25.00' }) });
+        if (r.result === 'ok') { lastAuth[me] = tx; return 'held — capture or release when ready'; }
+        return r.result || r.error;
+      }
+      if (a.action === 'capture' || a.action === 'release') {
+        if (!lastAuth[me]) return 'no hold from this session — make one first';
+        const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: a.action, customer: me, tx: lastAuth[me] }) });
+        if (r.result === 'ok') delete lastAuth[me];
+        return r.result === 'ok' ? (a.action === 'capture' ? 'captured — the merchant is paid' : 'released — nothing was spent') : r.result;
+      }
+      const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me, to: me + 400, amount: a.amount }) });
+      return r.result === 'ok' ? 'repaid' : r.result || r.error;
+    } },
+  trade: {
+    sum: a => `${a.asset === 'btc' ? '₿' : '🍏'} ${a.side === 'buy' ? 'Buy' : 'Sell'} ${fmt(a.eur)} of ${a.asset === 'btc' ? 'Bitcoin' : 'Apple stock'} at the live price`,
+    exec: async a => {
+      const r = await api('/api/trade', { method: 'POST', body: JSON.stringify({ txId: uuid(), customer: me, asset: a.asset, side: a.side, eur: a.eur }) });
+      return r.result === 'ok' ? `${a.side === 'buy' ? 'bought' : 'sold'} @ ${fmt(r.price)} (${r.source})` : r.result || r.error;
+    } },
+  mortgage: {
+    sum: a => a.action === 'apply' ? `🏠 Apply for a ${fmt(a.amount)} mortgage` : `🏠 Repay ${fmt(a.amount)} of the mortgage`,
+    exec: async a => {
+      if (a.action === 'apply') {
+        const r = await api('/api/mortgage', { method: 'POST', body: JSON.stringify({ txId: uuid(), customer: me, amount: a.amount }) });
+        return r.result === 'ok' ? 'approved and disbursed — check Total wealth: it did not move' : r.result || r.error;
+      }
+      const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me, to: me + 500, amount: a.amount }) });
+      return r.result === 'ok' ? 'repaid' : r.result || r.error;
+    } },
+  relocate: {
+    sum: a => `✈ Relocate you to ${a.region}`,
+    exec: async a => {
+      const r = await api('/api/relocate', { method: 'POST', body: JSON.stringify({ customer: me, to: a.region === 'uk' ? 1 : 0 }) });
+      return r.result === 'ok' ? `relocated to ${r.region} — your balance travelled as one saga` : r.error || r.result;
+    } },
+};
+window.actAllow = async i => {
+  const m = chatLog[i];
+  if (!m || m.status !== 'pending') return;
+  m.status = 'working'; chatPaint();
+  let result;
+  try { result = await AGENT_TOOLS[m.tool].exec(m.args); } catch (e) { result = 'that fizzled — try again'; }
+  m.status = 'done'; m.result = result;
+  chatPaint(); refreshAll();
+};
+window.actDeny = i => {
+  const m = chatLog[i];
+  if (!m || m.status !== 'pending') return;
+  m.status = 'denied'; chatPaint();
+};
 function chatPaint() {
-  $('#chat-msgs').innerHTML = chatLog.map(m =>
-    m.role === 'typing' ? '<div class="chat-b rita chat-typing"><span>●</span><span>●</span><span>●</span></div>'
-    : `<div class="chat-b ${m.role === 'user' ? 'me' : 'rita'}">${m.text.replace(/</g, '&lt;')}</div>`).join('');
+  $('#chat-msgs').innerHTML = chatLog.map((m, i) => {
+    if (m.role === 'typing') return '<div class="chat-b rita chat-typing"><span>●</span><span>●</span><span>●</span></div>';
+    if (m.role === 'action') {
+      const body = m.status === 'pending'
+        ? `<div class="act-btns"><button class="act-allow" onclick="actAllow(${i})">✓ Allow</button><button class="act-deny" onclick="actDeny(${i})">✗ Deny</button></div>`
+        : m.status === 'working' ? '<div class="act-done">working…</div>'
+        : m.status === 'done' ? `<div class="act-done">✓ ${String(m.result).replace(/</g, '&lt;')}</div>`
+        : '<div class="act-denied">✗ denied — nothing happened</div>';
+      return `<div class="chat-b rita chat-act"><div class="act-sum">${m.summary}</div>${body}</div>`;
+    }
+    return `<div class="chat-b ${m.role === 'user' ? 'me' : 'rita'}">${m.text.replace(/</g, '&lt;')}</div>`;
+  }).join('');
   $('#chat-msgs').scrollTop = 1e9;
 }
 function chatHello() {
   const mine = accounts.find(a => a.id === me);
-  chatLog = [{ role: 'rita', text: `Hi${mine ? ' ' + mine.owner : ''}! I'm Rita — I can see your live balances and recent activity (read-only), and I know how every part of this bank works. Ask me anything: "why is my payment pending?", "how does the mortgage work?", "what's a saga?"` }];
+  chatLog = [{ role: 'rita', text: `Hi${mine ? ' ' + mine.owner : ''}! I'm Rita — I can see your live account, and I can DO things: send money, trade, savings, card, mortgage, even relocate you. I have exactly the powers you have — but every action shows you an Allow/Deny card first. Try: "send €50 to oscar" or "buy €50 of bitcoin".` }];
   chatPaint();
 }
 $('#chat-fab').onclick = () => {
@@ -1448,17 +1552,26 @@ $('#chat-send').onclick = async () => {
   if (!msg) return;
   $('#chat-in').value = '';
   chatLog.push({ role: 'user', text: msg });
-  const transcript = chatLog.filter(m => m.role !== 'typing').slice(-8)
-    .map(m => (m.role === 'user' ? 'customer: ' : 'rita: ') + m.text).join('\n');
+  const transcript = chatLog.filter(m => m.role !== 'typing').slice(-10)
+    .map(m => m.role === 'action'
+      ? `[rita proposed: ${m.summary} — ${m.status === 'done' ? 'customer ALLOWED, result: ' + m.result : m.status === 'denied' ? 'customer DENIED' : 'awaiting approval'}]`
+      : (m.role === 'user' ? 'customer: ' : 'rita: ') + m.text).join('\n');
   chatLog.push({ role: 'typing' });
   chatPaint();
-  let reply;
+  let r = null;
   try {
-    const r = await api('/api/support', { method: 'POST', body: JSON.stringify({ customer: me, message: msg, transcript }) });
-    reply = r.reply || ('✗ ' + (r.error || 'no answer'));
-  } catch (e) { reply = 'I lost my connection mid-sentence — try again?'; }
+    r = await api('/api/support', { method: 'POST', body: JSON.stringify({ customer: me, message: msg, transcript }) });
+  } catch (e) { r = { reply: 'I lost my connection mid-sentence — try again?' }; }
   chatLog = chatLog.filter(m => m.role !== 'typing');
-  chatLog.push({ role: 'rita', text: reply });
+  if (r.reply) chatLog.push({ role: 'rita', text: r.reply });
+  if (r.action && AGENT_TOOLS[r.action.tool]) {
+    let args = {};
+    try { args = JSON.parse(r.action.args); } catch (e) {}
+    chatLog.push({ role: 'action', tool: r.action.tool, args,
+      summary: AGENT_TOOLS[r.action.tool].sum(args), status: 'pending' });
+  } else if (!r.reply) {
+    chatLog.push({ role: 'rita', text: '✗ ' + (r.error || 'no answer') });
+  }
   chatPaint();
 };
 

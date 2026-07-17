@@ -868,9 +868,9 @@ public final class HttpApi {
         if (message.length() > 400) message = message.substring(0, 400);
         if (transcript != null && transcript.length() > 1600) transcript = transcript.substring(transcript.length() - 1600);
         try {
-            String reply = SupportAgent.reply(Long.parseLong(customer), message, transcript);
-            return Response.json(200, "{\"reply\":\"" + Json.esc(reply) + "\"}");
+            return Response.json(200, SupportAgent.replyJson(Long.parseLong(customer), message, transcript));
         } catch (Exception e) {
+            System.err.println("support: " + e);
             return Response.json(200, "{\"reply\":\"Sorry — I hiccuped mid-thought. Try once more? (If this keeps happening the model behind me is having a day.)\"}");
         }
     }
