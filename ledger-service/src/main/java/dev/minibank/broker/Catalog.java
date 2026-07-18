@@ -5,7 +5,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * WHAT CAN BE TRADED, and how it maps onto the ledger.
@@ -21,39 +23,87 @@ import java.util.List;
  */
 public final class Catalog {
 
-    public record Instrument(String symbol, String kind, String assetCode, String settleCcy) {}
+    public record Instrument(String symbol, String kind, String assetCode, String settleCcy,
+                            String displayName, String exchange) {}
 
     private Catalog() {}
 
-    /** Idempotent, safe on every boot · the same habit as the system accounts. */
+    /**
+     * Idempotent, safe on every boot · the same habit as the system accounts.
+     *
+     * WHY EXACTLY TWO. It is tempting to fill this table out so the portfolio
+     * screen looks like a real brokerage, and the price feed would cooperate:
+     * Yahoo resolves any ticker you hand it. The SETTLEMENT path does not.
+     * Products.settleFill maps a symbol onto a ledger account with
+     *
+     *     assetAcct = customerId + ("btc".equals(asset) ? BTC : AAPL)
+     *
+     * so every symbol that is not bitcoin settles into the customer's APPLE
+     * account. Seeding MSFT here would produce a tradable instrument whose
+     * fills credit the wrong holding · the books would still sum to zero,
+     * which is exactly what makes it dangerous: a wrong number that passes
+     * every check the bank runs. Listing an instrument means the whole stack
+     * can price it AND settle it, and today that is BTC and AAPL.
+     *
+     * The third instrument is a ledger change (asset account numbering), not
+     * a row in this table.
+     */
     public static void seed() throws SQLException {
         try (Connection c = BrokerDb.open()) {
-            put(c, "BTC", "crypto", "BTC");
-            put(c, "AAPL", "equity", "AAPL");
+            // no venue: bitcoin has no exchange, and naming one we do not use
+            // would be a lie told in a column heading
+            put(c, "BTC", "crypto", "BTC", "Bitcoin", "CRYPTO");
+            put(c, "AAPL", "equity", "AAPL", "Apple Inc.", "NASDAQ.NMS");
         }
     }
 
-    private static void put(Connection c, String symbol, String kind, String assetCode) throws SQLException {
+    /**
+     * Upsert the display fields, insert the rest.
+     *
+     * DO NOTHING would leave the name and exchange NULL forever on any
+     * database that already has these rows · which is every database this
+     * service has ever run against.
+     */
+    private static void put(Connection c, String symbol, String kind, String assetCode,
+                            String displayName, String exchange) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("""
-                INSERT INTO instruments(symbol, kind, asset_code, settle_ccy)
-                VALUES (?,?,?, 'EUR') ON CONFLICT (symbol) DO NOTHING""")) {
+                INSERT INTO instruments(symbol, kind, asset_code, settle_ccy, display_name, exchange)
+                VALUES (?,?,?, 'EUR', ?,?)
+                ON CONFLICT (symbol) DO UPDATE
+                   SET display_name = EXCLUDED.display_name,
+                       exchange     = EXCLUDED.exchange""")) {
             ps.setString(1, symbol);
             ps.setString(2, kind);
             ps.setString(3, assetCode);
+            ps.setString(4, displayName);
+            ps.setString(5, exchange);
             ps.executeUpdate();
         }
     }
 
+    private static final String COLUMNS =
+            "SELECT symbol, kind, asset_code, settle_ccy, display_name, exchange FROM instruments";
+
     public static List<Instrument> all() throws SQLException {
         List<Instrument> out = new ArrayList<>();
         try (Connection c = BrokerDb.open();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT symbol, kind, asset_code, settle_ccy FROM instruments ORDER BY symbol");
+             PreparedStatement ps = c.prepareStatement(COLUMNS + " ORDER BY symbol");
              ResultSet rs = ps.executeQuery()) {
-            while (rs.next())
-                out.add(new Instrument(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4)));
+            while (rs.next()) out.add(read(rs));
         }
         return out;
+    }
+
+    /** Symbol -> instrument, for a screen that has to label every row it draws. */
+    public static Map<String, Instrument> bySymbol() throws SQLException {
+        Map<String, Instrument> out = new LinkedHashMap<>();
+        for (Instrument i : all()) out.put(i.symbol(), i);
+        return out;
+    }
+
+    private static Instrument read(ResultSet rs) throws SQLException {
+        return new Instrument(rs.getString(1), rs.getString(2), rs.getString(3),
+                rs.getString(4), rs.getString(5), rs.getString(6));
     }
 
     public static boolean exists(String symbol) throws SQLException {

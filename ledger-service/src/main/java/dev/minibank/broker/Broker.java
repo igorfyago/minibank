@@ -6,8 +6,13 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -354,6 +359,55 @@ public final class Broker {
                 while (rs.next())
                     out.add(new Position(customerId, rs.getString(1), rs.getBigDecimal(2),
                             rs.getBigDecimal(3), rs.getBigDecimal(4)));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * WHAT TRADED SINCE A MOMENT · signed by direction, per symbol.
+     *
+     * This exists because the obvious day-P&L formula is wrong:
+     *
+     *     todayPnl = qty_now * (price - prevClose)
+     *
+     * qty_now is the CURRENT quantity. A position opened this morning gets
+     * credited with a full day's move it was never exposed to, and the number
+     * looks entirely reasonable while being nonsense. The fix needs to know
+     * what moved during the window, so the fills that happened inside it can
+     * be marked from their own price instead of from the prior close:
+     *
+     *     todayPnl = qty_at_prior_close * (price - prevClose)
+     *              + (qty_traded * price - notional_traded)
+     *
+     * The second term telescopes: sum over today's fills of
+     * sign*qty*(price - fillPrice) is price*net_qty - net_notional.
+     *
+     * A compensation reverses its order's side · the same sign rule as
+     * audit(), and for the same reason. A reversal is not a trade, and
+     * counting it as one would put a fill in the book that nobody made.
+     */
+    public record DayFlow(BigDecimal qty, BigDecimal notional) {
+        public static final DayFlow NONE = new DayFlow(BigDecimal.ZERO, BigDecimal.ZERO);
+    }
+
+    public static Map<String, DayFlow> flowsSince(long customerId, Instant since) throws SQLException {
+        Map<String, DayFlow> out = new HashMap<>();
+        try (Connection c = BrokerDb.open();
+             PreparedStatement ps = c.prepareStatement("""
+                     SELECT o.symbol,
+                            SUM(CASE WHEN (o.side = 'buy') <> (f.kind = 'compensation')
+                                     THEN f.qty ELSE -f.qty END) AS net_qty,
+                            SUM(CASE WHEN (o.side = 'buy') <> (f.kind = 'compensation')
+                                     THEN f.qty * f.price ELSE -(f.qty * f.price) END) AS net_notional
+                     FROM fills f JOIN orders o ON o.id = f.order_id
+                     WHERE o.customer_id = ? AND f.executed_at >= ?
+                     GROUP BY o.symbol""")) {
+            ps.setLong(1, customerId);
+            ps.setObject(2, OffsetDateTime.ofInstant(since, ZoneOffset.UTC));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next())
+                    out.put(rs.getString(1), new DayFlow(rs.getBigDecimal(2), rs.getBigDecimal(3)));
             }
         }
         return out;
