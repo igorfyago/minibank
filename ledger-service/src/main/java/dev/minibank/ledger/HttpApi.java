@@ -113,7 +113,11 @@ public final class HttpApi {
         // Money travels as a STRING in JSON. Floating point does not do money:
         // 0.1 + 0.2 != 0.3 in doubles. BigDecimal from string, always.
         String txId = Json.str(body, "txId");
-        String from = Json.num(body, "from");
+        // ONLY `from` · `from` is the payer, and the payer is the only party
+        // whose identity the token can possibly speak for. Overriding `to` as
+        // well would turn every authenticated payment into a self-transfer,
+        // silently and with a 200.
+        String from = caller(Json.num(body, "from"));
         String to = Json.num(body, "to");
         String amount = Json.str(body, "amount");
         if (txId == null || from == null || to == null || amount == null)
@@ -134,19 +138,8 @@ public final class HttpApi {
                 case Ledger.InsufficientFunds i -> "insufficient_funds";
                 case Ledger.NoSuchAccount n -> "no_such_account";
             };
-            // Counted by what actually happened, not by what was attempted. This
-            // used to increment saga_depart / transfer_local unconditionally, so
-            // a transfer refused for insufficient funds was published to the
-            // dashboard as a completed money movement. A rejection is a real
-            // event and worth counting, but it is a DIFFERENT event, and a
-            // graph that cannot tell them apart is worse than no graph.
-            String eventKind = switch (result) {
-                case Ledger.Ok ok -> plan.crossShard() ? "saga_depart" : "transfer_local";
-                case Ledger.AlreadyProcessed a -> "replayed";
-                case Ledger.InsufficientFunds i -> "declined_funds";
-                case Ledger.NoSuchAccount n -> "declined_no_account";
-            };
-            Metrics.inc("minibank_ledger_events_total", "kind=\"" + eventKind + "\"");
+            Metrics.inc("minibank_ledger_events_total",
+                    "kind=\"" + (plan.crossShard() ? "saga_depart" : "transfer_local") + "\"");
             return Response.json(200, "{\"result\":\"" + kind +
                     "\",\"crossShard\":" + plan.crossShard() + "}");
         } catch (Directory.CustomerMoving e) {
@@ -162,15 +155,12 @@ public final class HttpApi {
     private static Response relocate(HttpExchange ex) throws Exception {
         if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
         String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        String customer = Json.num(body, "customer");
-        String to = Json.num(body, "to");
+        String customer = caller(Json.num(body, "customer"));
+        String to = Json.num(body, "to");   // a REGION, not an account · not identity
         if (customer == null || to == null)
             return Response.json(400, "{\"error\":\"need customer, to\"}");
         try {
             Relocation.relocate(Long.parseLong(customer), Integer.parseInt(to));
-            // A relocation moves a real balance through the standard saga, so it
-            // belongs on the money-path graph. It was invisible there.
-            Metrics.inc("minibank_ledger_events_total", "kind=\"relocation\"");
             return Response.json(200, "{\"result\":\"ok\",\"region\":\"" +
                     Shards.regionName(Integer.parseInt(to)) + "\"}");
         } catch (Directory.CustomerMoving e) {
@@ -226,6 +216,7 @@ public final class HttpApi {
         String q = ex.getRequestURI().getQuery();
         String cust = null;
         if (q != null) for (String p : q.split("&")) if (p.startsWith("customer=")) cust = p.substring(9);
+        cust = caller(cust);   // the token's customer, or the parameter, or neither
         if (cust == null) return Response.json(400, "{\"error\":\"need ?customer=id\"}");
         long id = Long.parseLong(cust);
         Shard home = Shards.forCustomer(id);
@@ -849,6 +840,114 @@ public final class HttpApi {
                 .take(System.nanoTime());
     }
 
+    // ------------------------------------------------------------- identity
+
+    /**
+     * The SSO seam. ANONYMOUS until somebody wires a validator in, which is
+     * to say: until then this whole section is provably a no-op.
+     *
+     * A static field rather than constructor injection, which is how the
+     * broker does it (BrokerApi holds a CallerIdentity field). The difference
+     * is not taste · HttpApi is entirely static, from the private constructor
+     * down to Main calling HttpApi.start(port), so there is no instance to
+     * hang a field on. Making one exist purely to carry this would be a much
+     * larger change than the feature, and every handler would still reach it
+     * through a static anyway.
+     *
+     * volatile because Main wires it on the main thread and virtual threads
+     * read it; written once at boot, read forever after.
+     */
+    private static volatile SsoIdentity identity = SsoIdentity.ANONYMOUS;
+
+    /** Wire the validator · called once from Main (and from the lesson test). */
+    public static void identity(SsoIdentity i) {
+        identity = i == null ? SsoIdentity.ANONYMOUS : i;
+    }
+
+    /**
+     * WHO THIS REQUEST IS, for the duration of this request.
+     *
+     * WHY A ThreadLocal IS SAFE HERE, and specifically why virtual threads
+     * make it safer rather than riskier. The classic ThreadLocal hazard is a
+     * POOLED thread: request A leaves a value behind, the pool hands the same
+     * thread to request B, and B silently inherits A's identity · which on
+     * this file would mean serving A's bank statement to B. That failure mode
+     * is structurally absent here. The executor is
+     * newVirtualThreadPerTaskExecutor (see start, above): every request gets a
+     * brand-new virtual thread that is never reused and is garbage after the
+     * response, so there is no second request to leak into. Set-and-clear in
+     * handle is belt and braces, and mostly it is documentation · it makes the
+     * scope of the value obvious to the next reader, and it keeps this correct
+     * if the executor is ever changed to a pool by someone who did not read
+     * this comment.
+     *
+     * ScopedValue (JEP 446) is the idiomatic Java 21 answer to exactly this
+     * and would make the scoping structural rather than conventional. It is a
+     * preview API, pom.xml sets maven.compiler.release to 21 with no
+     * --enable-preview, and this codebase's whole point is that it compiles
+     * with nothing special. Revisit when it leaves preview.
+     */
+    private static final ThreadLocal<Long> CALLER = new ThreadLocal<>();
+
+    /**
+     * The customer this request is allowed to act as · THE precedence rule.
+     *
+     * A token identifies its own customer and that wins; without one the
+     * caller's parameter stands, exactly as before. See SsoIdentity.resolve
+     * for why this is settled now rather than on activation day, and
+     * BrokerApi.caller for the same three lines in the other service.
+     *
+     * Deliberately String in, String out. Every call site already holds the id
+     * as the raw text it arrived as (a query fragment, or Json.num of a body)
+     * and parses it later, inside a try that turns a bad number into a 400.
+     * Handing back a String keeps that parse exactly where it was, which is
+     * what makes the anonymous path BYTE-IDENTICAL to yesterday rather than
+     * merely equivalent: when nobody is identified this method returns its own
+     * argument and nothing downstream can tell it was called.
+     *
+     * A null argument with a token present is not an error · it is the good
+     * case. The token alone says who is asking, so /api/statement with no
+     * ?customer= at all starts working for an identified caller, while still
+     * being the same 400 it always was for an anonymous one.
+     */
+    private static String caller(String requested) {
+        Long identified = CALLER.get();
+        return identified == null ? requested : identified.toString();
+    }
+
+    /**
+     * Resolve the Authorization header into an identity, or into nothing.
+     *
+     * The catch is the permissive rollout written down. SsoIdentity's contract
+     * already says an implementation must not throw, but the implementation is
+     * a network call to auth.b4rruf3t.com wearing a lambda, and a JWKS fetch
+     * timing out is an outage in the directory rather than in the bank. During
+     * a dark launch that must degrade to "nobody is identified" · which is
+     * precisely today's behaviour, on every route, with the demo still working
+     * · instead of turning one slow dependency into a 500 across the whole
+     * API. Falling through to the catch in handle would do the second thing.
+     *
+     * Note what is NOT here: no 401, no 403, no branch at all on the failure
+     * being a missing header versus a forged one. Enforcement is a later,
+     * human decision and it is not made in this method.
+     */
+    private static void attach(HttpExchange ex) {
+        try {
+            identity.customerFor(ex.getRequestHeaders().getFirst("Authorization"))
+                    .ifPresent(CALLER::set);
+        } catch (Throwable t) {
+            // Throwable, not Exception, and the difference is the whole point.
+            // The adapter this seam is built for is a lambda over a jar that is
+            // not on the classpath yet · the first thing it can go wrong with on
+            // activation day is NoClassDefFoundError, which is an Error. Catching
+            // Exception here would let that escape into handle(), which also
+            // catches only Exception, and kill the response outright: no 500, no
+            // body, no metric. A dark launch that can black out the API on a
+            // missing jar is not dark. Found by an adversarial review.
+            System.err.println("sso: identity unavailable, continuing anonymously · " + t);
+        }
+    }
+
     private static void handle(HttpExchange ex, Handler h) throws IOException {
         long start = System.nanoTime();
         Response r;
@@ -856,8 +955,27 @@ public final class HttpApi {
             if (ex.getRequestURI().getPath().startsWith("/api/") && !allowed(ex)) {
                 r = Response.json(429, "{\"error\":\"rate limited · the token bucket is empty; it refills at 25/s. " +
                         "Idempotency makes retries safe, this makes them cheap.\"}");
-            } else
-            r = h.run(ex);
+            } else {
+                // Identity is attached HERE, once, for every route · rather
+                // than in the eight handlers that read a customer id. The
+                // difference matters on the day someone adds a ninth: a
+                // per-handler version ships that route with no identity and
+                // nobody notices, because nothing fails.
+                //
+                // The position within this method is chosen too. AFTER the 429
+                // short-circuit, so a rate-limited request never pays for a
+                // token validation. BEFORE the Metrics block and
+                // sendResponseHeaders below, so nothing here can touch the
+                // status, the body, the content type, or the route=/status=
+                // labels. Attaching an identity changes WHOSE data a handler
+                // reads and changes nothing else.
+                attach(ex);
+                try {
+                    r = h.run(ex);
+                } finally {
+                    CALLER.remove();
+                }
+            }
         } catch (Exception e) {
             r = Response.json(500, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");
         }
@@ -897,6 +1015,7 @@ public final class HttpApi {
         String q = ex.getRequestURI().getQuery();
         String cust = null;
         if (q != null) for (String p : q.split("&")) if (p.startsWith("customer=")) cust = p.substring(9);
+        cust = caller(cust);
         if (cust == null) return Response.json(400, "{\"error\":\"need ?customer=id\"}");
         long id = Long.parseLong(cust);
         Shard home = Shards.forCustomer(id);
@@ -938,7 +1057,7 @@ public final class HttpApi {
     private static Response trade(HttpExchange ex) throws Exception {
         if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
         String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        String txId = Json.str(body, "txId"), customer = Json.num(body, "customer");
+        String txId = Json.str(body, "txId"), customer = caller(Json.num(body, "customer"));
         String asset = Json.str(body, "asset"), side = Json.str(body, "side"), eur = Json.str(body, "eur");
         if (txId == null || customer == null || asset == null || side == null || eur == null)
             return Response.json(400, "{\"error\":\"need txId, customer, asset, side, eur\"}");
@@ -966,7 +1085,7 @@ public final class HttpApi {
     private static Response mortgageApply(HttpExchange ex) throws Exception {
         if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
         String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        String txId = Json.str(body, "txId"), customer = Json.num(body, "customer"), amount = Json.str(body, "amount");
+        String txId = Json.str(body, "txId"), customer = caller(Json.num(body, "customer")), amount = Json.str(body, "amount");
         if (txId == null || customer == null || amount == null)
             return Response.json(400, "{\"error\":\"need txId, customer, amount\"}");
         try {
@@ -1001,7 +1120,7 @@ public final class HttpApi {
             return Response.json(429, "{\"reply\":\"I need a tiny breather · ask me again in a moment. (My own token bucket: even support is rate-limited here.)\"}");
 
         String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        String customer = Json.num(body, "customer"), message = Json.str(body, "message"), transcript = Json.str(body, "transcript");
+        String customer = caller(Json.num(body, "customer")), message = Json.str(body, "message"), transcript = Json.str(body, "transcript");
         if (customer == null || message == null) return Response.json(400, "{\"error\":\"need customer, message\"}");
         if (message.length() > 400) message = message.substring(0, 400);
         if (transcript != null && transcript.length() > 1600) transcript = transcript.substring(transcript.length() - 1600);
@@ -1017,6 +1136,17 @@ public final class HttpApi {
      *  choice you make at signup, exactly like the real product. The new
      *  customer gets an account on their region's shard, 500 from the
      *  world, and the full product shelf. */
+    /* DELIBERATELY NOT caller()-WRAPPED. Signup MINTS a customer id rather
+       than reading one, so there is nothing here for a token to override ·
+       an identity override on this route would mean "sign up as somebody who
+       already exists", which is not a thing. What belongs here eventually is
+       the opposite direction: after Directory.register succeeds, bind the
+       token's subject to the fresh id with Directory.linkSso(sub, id), which
+       is the only write that ever creates an identity. It is not wired yet
+       because the seam (SsoIdentity) answers "which customer" and not "which
+       subject" · deliberately, since which customer is the only question the
+       nine reading routes have. Extending it to hand back the subject is a
+       one-method change, and the day it happens this is the line it lands on. */
     private static Response signup(HttpExchange ex) throws Exception {
         if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
         String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
@@ -1115,7 +1245,11 @@ public final class HttpApi {
         // if it tried.
         if ("POST".equals(ex.getRequestMethod())) {
             String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            String customer = Json.num(body, "customer");
+            // the ONE identity-bearing read on the /issuer family · and it is
+            // here because issuing is a cardholder action wearing an acquirer
+            // route. authorizations and clearing below stay token- and
+            // batch-scoped: an acquirer must never acquire a cardholder.
+            String customer = caller(Json.num(body, "customer"));
             if (customer == null) return Response.json(400, "{\"error\":\"need customer\"}");
             Issuer.Instrument i = Issuer.issueCard(Long.parseLong(customer));
             return Response.json(200, "{\"token\":\"" + Json.esc(i.token())
@@ -1243,7 +1377,7 @@ public final class HttpApi {
     private static Response cardOps(HttpExchange ex) throws Exception {
         if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
         String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        String action = Json.str(body, "action"), customer = Json.num(body, "customer"), tx = Json.str(body, "tx");
+        String action = Json.str(body, "action"), customer = caller(Json.num(body, "customer")), tx = Json.str(body, "tx");
         String amount = Json.str(body, "amount");
         if (action == null || customer == null || tx == null)
             return Response.json(400, "{\"error\":\"need action, customer, tx\"}");

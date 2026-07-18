@@ -6,6 +6,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -111,6 +112,83 @@ public final class Directory {
                 if (!rs.next()) throw new IllegalArgumentException("unknown customer: " + customerId);
                 return rs.getString(1);
             }
+        }
+    }
+
+    /**
+     * The SSO subject → customer id lookup · null when the subject is not
+     * linked to anyone.
+     *
+     * NULL, NOT AN EXCEPTION, and that is the one place this method
+     * deliberately parts company with owner() and load() above. Those throw
+     * IllegalArgumentException("unknown customer") because being asked to
+     * route an id that does not exist is a bug in the caller. Being handed a
+     * subject nobody has linked is the ordinary case during a permissive
+     * rollout · every one of the 25 demo customers is in exactly that state ·
+     * and it must be indistinguishable from every other reason the caller
+     * ends up anonymous. See SsoIdentity.customerFor: a service that answers
+     * differently for "no token" and "a token for someone I don't know" is an
+     * oracle for enumerating which humans hold accounts here.
+     *
+     * Cached, in its own map. The routing cache above is
+     * Map&lt;customerId, Home&gt; and cannot serve a reverse lookup, so this
+     * needs a second one · see the comment in the body for why it is not
+     * optional, and why linkSso is its only invalidator.
+     */
+    public static Long customerForSso(String sub) throws SQLException {
+        if (sub == null || sub.isBlank()) return null;
+        // CACHED, and it has to be. openOwnDb() is a bare DriverManager
+        // connection · a fresh TCP connect and auth handshake, no pool. This
+        // runs once per AUTHENTICATED request, so uncached it would open a
+        // connection per request on the exact day enforcement is switched on
+        // and traffic starts carrying tokens: the directory would run out of
+        // connections and anonymous requests would start failing beside the
+        // authenticated ones. Found by an adversarial review before it could
+        // be discovered in production.
+        //
+        // Cacheable for the same reason routing is: a subject's customer id is
+        // written once at link time and never changes. Misses are cached too,
+        // because during a dark launch almost nobody is linked and a miss is
+        // the common path · linkSso evicts, so a new link is seen at once.
+        Optional<Long> hit = SSO_CACHE.get(sub);
+        if (hit != null) return hit.orElse(null);
+        try (Connection c = openOwnDb();
+             PreparedStatement ps = c.prepareStatement("SELECT customer_id FROM sso_customers WHERE sso_sub = ?")) {
+            ps.setString(1, sub);
+            try (ResultSet rs = ps.executeQuery()) {
+                Long found = rs.next() ? rs.getLong(1) : null;
+                SSO_CACHE.put(sub, Optional.ofNullable(found));
+                return found;
+            }
+        }
+    }
+
+    /** sso_sub -> customer id. Absence is cached as an empty Optional, so a
+     *  ConcurrentHashMap (which cannot hold nulls) can still remember a miss. */
+    private static final Map<String, Optional<Long>> SSO_CACHE = new ConcurrentHashMap<>();
+
+    /**
+     * Bind an SSO subject to a customer · idempotent, first link wins.
+     *
+     * ON CONFLICT DO NOTHING with no target on purpose: the table has TWO
+     * unique constraints (the subject, and the customer) and this must be a
+     * no-op for both. Naming (sso_sub) would swallow the replay of the same
+     * link and still throw on "this customer is already linked to a different
+     * subject" · which is the interesting collision, and the one a retrying
+     * signup is most likely to hit.
+     *
+     * Same shape as register() one screen up, for the same reason: a restart,
+     * a double-submitted signup form and a retried request must all land on
+     * the state the first one wrote, rather than fighting over it.
+     */
+    public static void linkSso(String sub, long customerId) throws SQLException {
+        SSO_CACHE.remove(sub);   // a new link must be visible immediately
+        try (Connection c = openOwnDb();
+             PreparedStatement ps = c.prepareStatement(
+                     "INSERT INTO sso_customers(sso_sub, customer_id) VALUES (?,?) ON CONFLICT DO NOTHING")) {
+            ps.setString(1, sub);
+            ps.setLong(2, customerId);
+            ps.executeUpdate();
         }
     }
 
