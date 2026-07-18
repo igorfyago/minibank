@@ -42,6 +42,33 @@ data:
             regex: "8080"
           - source_labels: [__meta_kubernetes_pod_name]
             target_label: pod
+
+      # The OTHER services · fx on 8090, broker on 8091.
+      #
+      # These were invisible until now, and the reason is worth keeping: the
+      # job above keeps pods whose label is exactly "minibank" AND whose
+      # container port is exactly 8080, so every sibling service failed both
+      # halves of the rule and silently never appeared. A monitoring config
+      # that silently drops a target is worse than one that noisily fails,
+      # because the graph still looks fine.
+      #
+      # Opt-in by annotation instead: a service says it wants scraping and on
+      # which port, and adding the next service needs no change here at all.
+      - job_name: minibank-services
+        kubernetes_sd_configs: [{ role: pod }]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: "([^:]+)(?::\\d+)?;(\\d+)"
+            replacement: "$1:$2"
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: service
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
 ---
 apiVersion: apps/v1
 kind: Deployment

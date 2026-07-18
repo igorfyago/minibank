@@ -29,7 +29,10 @@ public final class BrokerService {
 
     public static void main(String[] args) throws Exception {
         int port = Integer.parseInt(System.getenv().getOrDefault("BROKER_PORT", "8091"));
-        String kafka = System.getenv().getOrDefault("KAFKA_BOOTSTRAP", "localhost:9092");
+        // MINIBANK_KAFKA, not a name of its own · every service in this bank
+        // reads the same variable, and a second spelling for the same address
+        // is a configuration bug waiting for a deployment to find it
+        String kafka = System.getenv().getOrDefault("MINIBANK_KAFKA", "localhost:9092");
 
         BrokerDb.createOwnDatabase();
         Catalog.seed();

@@ -1,0 +1,67 @@
+# THE BROKER SERVICE · orders, fills, cost basis and the watchlist.
+#
+# Same image as the bank, different entrypoint · the FX service precedent.
+# One replica on purpose: it is stateless per request, but it consumes a
+# Kafka topic in a group, and adding replicas is a partitioning decision
+# rather than a number to raise. The app tier scales by replicas because it
+# holds no state and no subscription; this does.
+#
+# Note what it is NOT given: any address for pg-eu or pg-uk. The boundary
+# between this service and the ledger is not a code review, it is the
+# absence of a connection string.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minibank-broker
+  labels: { app: minibank-broker }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: minibank-broker }
+  template:
+    metadata:
+      labels: { app: minibank-broker }
+      annotations:
+        # opt in to scraping, and say where · see monitoring.yaml
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8091"
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: broker
+          image: minibank:local
+          imagePullPolicy: IfNotPresent
+          command: ["java", "-cp", "classes:deps/*", "dev.minibank.broker.BrokerService"]
+          ports:
+            - containerPort: 8091
+          env:
+            - name: BROKER_PORT
+              value: "8091"
+            # the control-plane Postgres · the broker derives minibank_broker
+            # from this the same way the directory derives its own database
+            - name: MINIBANK_DB_URL
+              value: jdbc:postgresql://pg-control:5432/minibank
+            - name: MINIBANK_KAFKA
+              value: kafka-0.kafka:9092
+            - name: FX_URL
+              value: http://minibank-fx:8090
+            # simulated is the default and stays the default · routing real
+            # orders should take a deliberate act, not a deployment
+            - name: BROKER_VENUE
+              value: simulated
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Xmx96m"
+          readinessProbe:
+            httpGet: { path: /health, port: 8091 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minibank-broker
+spec:
+  selector: { app: minibank-broker }
+  ports:
+    - port: 8091
+      targetPort: 8091
