@@ -10,6 +10,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.ResultSet;
+import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 
@@ -39,6 +40,12 @@ public final class HttpApi {
         server.createContext("/api/trade", ex -> handle(ex, HttpApi::trade));
         server.createContext("/api/mortgage", ex -> handle(ex, HttpApi::mortgageApply));
         server.createContext("/api/card", ex -> handle(ex, HttpApi::cardOps));
+        // THE ISSUER FACE. A different route family from /api/* on purpose:
+        // /api is the cardholder's own bank, /issuer is what an acquirer may
+        // reach, and keeping them apart is what stops a merchant's processor
+        // quietly acquiring the cardholder's powers.
+        server.createContext("/issuer/v1/instruments", ex -> handle(ex, HttpApi::issuerInstrument));
+        server.createContext("/issuer/v1/authorizations", ex -> handle(ex, HttpApi::issuerAuthorize));
         server.createContext("/api/signup", ex -> handle(ex, HttpApi::signup));
         server.createContext("/api/support", ex -> handle(ex, HttpApi::support));
         server.createContext("/api/prices/history", ex -> handle(ex, HttpApi::priceHistory));
@@ -1071,6 +1078,90 @@ public final class HttpApi {
     }
 
     /** the card network's three verbs: authorize (hold), capture, release */
+
+    // ------------------------------------------------------------- the issuer
+
+    /**
+     * What an acquirer may know about an instrument, which is deliberately
+     * almost nothing: whether it is usable, and what a receipt may say.
+     *
+     * There is no availability here and there never will be. An acquirer that
+     * could ask "how much is left" would eventually check before authorising,
+     * and a check before a decision is a race by construction: the answer is
+     * stale the moment it is given. Authorisation is the only honest question,
+     * because it is the one whose answer is taken under the lock that makes it
+     * true.
+     */
+    private static Response issuerInstrument(HttpExchange ex) throws Exception {
+        String path = ex.getRequestURI().getPath();
+        String token = path.substring(path.lastIndexOf('/') + 1);
+        if (token.isBlank() || token.equals("instruments"))
+            return Response.json(400, "{\"error\":\"GET /issuer/v1/instruments/{token}\"}");
+        try {
+            Issuer.Instrument i = Issuer.describe(token);
+            return Response.json(200, "{\"token\":\"" + Json.esc(i.token())
+                    + "\",\"brand_label\":\"" + Json.esc(i.brandLabel())
+                    + "\",\"last4\":\"" + Json.esc(i.last4())
+                    + "\",\"status\":\"" + Json.esc(i.status()) + "\"}");
+        } catch (Issuer.UnknownInstrument e) {
+            return Response.json(404, "{\"error\":\"unknown instrument\"}");
+        }
+    }
+
+    /**
+     * Authorise, capture or void, from the acquirer.
+     *
+     * The authorisation id is MINTED BY THE CALLER and is the idempotency key.
+     * A card network retries, and a bank that holds a customer's money twice
+     * because the network was uncertain is worse than one that occasionally
+     * answers late.
+     */
+    private static Response issuerAuthorize(HttpExchange ex) throws Exception {
+        if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
+        String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String path = ex.getRequestURI().getPath();
+        String action = path.endsWith("/capture") ? "capture" : path.endsWith("/void") ? "void" : "authorize";
+
+        try {
+            Instant at = businessTime(Json.str(body, "business_at"));
+            if (!"authorize".equals(action)) {
+                String idText = path.substring(path.lastIndexOf("/authorizations/") + 16);
+                idText = idText.substring(0, idText.indexOf('/'));
+                UUID id = UUID.fromString(idText);
+                boolean ok = "capture".equals(action) ? Issuer.capture(id, at) : Issuer.voidAuthorization(id, at);
+                return Response.json(ok ? 200 : 409,
+                        "{\"authorization\":\"" + id + "\",\"" + action + "d\":" + ok + "}");
+            }
+
+            String token = Json.str(body, "instrument");
+            String idem = Json.str(body, "authorization_id");
+            String amount = Json.str(body, "amount");
+            String currency = Json.str(body, "currency");
+            if (token == null || idem == null || amount == null)
+                return Response.json(400, "{\"error\":\"need instrument, authorization_id, amount\"}");
+
+            Issuer.Decision d = Issuer.authorize(UUID.fromString(idem), token,
+                    new java.math.BigDecimal(amount), currency, at);
+            // An APPROVED and a DECLINED are both successful answers to the
+            // question asked, so both are 200. A decline is not an error: it is
+            // the bank doing its job, and a 4xx would tempt the acquirer to
+            // retry it as though it were a fault.
+            return Response.json(200, "{\"authorization\":\"" + d.authorizationId()
+                    + "\",\"approved\":" + d.approved()
+                    + (d.reason() == null ? "" : ",\"reason\":\"" + Json.esc(d.reason()) + "\"") + "}");
+        } catch (IllegalArgumentException e) {
+            return Response.json(400, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");
+        }
+    }
+
+    /** Absent means now, because a browser has no business time. Unreadable is
+     *  a caller bug and is said so, never silently replaced with the clock. */
+    private static Instant businessTime(String raw) {
+        if (raw == null || raw.isBlank()) return Instant.now();
+        try { return Instant.parse(raw); }
+        catch (Exception e) { throw new IllegalArgumentException("business_at is not an ISO-8601 instant: " + raw); }
+    }
+
     private static Response cardOps(HttpExchange ex) throws Exception {
         if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
         String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
