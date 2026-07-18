@@ -19,6 +19,21 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
 
+  <!-- align every junit-platform artifact (Spock brings its own) to the
+       version JUnit 5.10.3 expects · avoids a TestDescriptor.getAncestors
+       NoSuchMethodError when surefire forks the mixed JUnit + Spock run -->
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.junit</groupId>
+        <artifactId>junit-bom</artifactId>
+        <version>5.10.3</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
     <dependency>
       <groupId>org.postgresql</groupId>
@@ -58,6 +73,20 @@
       <version>5.10.3</version>
       <scope>test</scope>
     </dependency>
+    <!-- Spock + Groovy: a second, more expressive test voice (given/when/then,
+         data tables) alongside JUnit · both run under one `mvn test`. -->
+    <dependency>
+      <groupId>org.spockframework</groupId>
+      <artifactId>spock-core</artifactId>
+      <version>2.3-groovy-4.0</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.groovy</groupId>
+      <artifactId>groovy</artifactId>
+      <version>4.0.22</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
@@ -67,6 +96,24 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.2.5</version>
+        <configuration>
+          <!-- run JUnit *Test and Spock *Spec classes together -->
+          <includes>
+            <include>**/*Test.java</include>
+            <include>**/*Spec.java</include>
+          </includes>
+        </configuration>
+      </plugin>
+      <!-- compiles the Groovy Spock specs under src/test/groovy -->
+      <plugin>
+        <groupId>org.codehaus.gmavenplus</groupId>
+        <artifactId>gmavenplus-plugin</artifactId>
+        <version>3.0.2</version>
+        <executions>
+          <execution>
+            <goals><goal>compileTests</goal></goals>
+          </execution>
+        </executions>
       </plugin>
       <!-- build tooling, not a framework: lets `mvn exec:java` run the bank -->
       <plugin>
