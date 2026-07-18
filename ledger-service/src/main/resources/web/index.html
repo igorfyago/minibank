@@ -303,6 +303,13 @@
   .dp-leg { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
   .dp-sw { width:10px; height:3px; border-radius:2px; flex:none; }
   .dp-leg b { color:var(--text); font-weight:600; font-variant-numeric:tabular-nums; }
+  .stack-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(270px,100%),1fr)); gap:12px; margin-top:14px; }
+  .tech { background:#0b0f16; border:1px solid var(--line); border-radius:12px; padding:13px 15px; min-width:0;
+    transition:border-color .15s; }
+  .tech:hover { border-color:var(--violet); }
+  .tech-name { display:flex; align-items:center; gap:9px; font-size:14px; font-weight:700; color:var(--text); }
+  .tech-ic { font-size:17px; flex:none; }
+  .tech-role { font-size:11.5px; color:var(--dim); line-height:1.55; margin-top:6px; }
   header h1 { cursor:pointer; }
   
   
@@ -688,12 +695,44 @@
     </div>
 
     <div class="card" style="margin-top:14px">
+      <h2>The stack · every technology, and its job in this bank</h2>
+      <div class="muted" style="font-size:12.5px;margin-bottom:2px">Not a checklist. Every one of these is really running
+        and provably used · the same stack a modern neobank is built on. Click through the X-ray and Console to watch each do its job.</div>
+      <div class="stack-grid">
+        <div class="tech"><div class="tech-name"><span class="tech-ic">☕</span>Java 21</div>
+          <div class="tech-role">The entire bank, raw: JDBC and a JDK HttpServer, a virtual thread per request. No Spring, no framework.</div></div>
+        <div class="tech"><div class="tech-name"><span class="tech-ic">🐘</span>PostgreSQL 16</div>
+          <div class="tech-role">The double-entry ledger, and a separate database per service. ACID transactions where money moves, with row locks and CHECK constraints.</div></div>
+        <div class="tech"><div class="tech-name"><span class="tech-ic">📨</span>Apache Kafka</div>
+          <div class="tech-role">The event backbone: the transactional outbox, cross-region payment sagas, and the notifications stream. At-least-once, consumers idempotent.</div></div>
+        <div class="tech"><div class="tech-name"><span class="tech-ic">⚡</span>Redis</div>
+          <div class="tech-role">A read-through cache for live prices and market history. Two levels (in-process + shared), and it fails open: the bank is correct without it.</div></div>
+        <div class="tech"><div class="tech-name"><span class="tech-ic">☸</span>Kubernetes</div>
+          <div class="tech-role">Orchestration on k3s. The stateless app scales by replicas; data residency is a nodeSelector the scheduler cannot violate.</div></div>
+        <div class="tech"><div class="tech-name"><span class="tech-ic">🔥</span>Prometheus</div>
+          <div class="tech-role">Scrapes the hand-written /metrics endpoint on every app pod and stores the time series. The source behind the live dashboard below.</div></div>
+        <div class="tech"><div class="tech-name"><span class="tech-ic">📊</span>Grafana</div>
+          <div class="tech-role">Dashboards over Prometheus, provisioned as code, running on the cluster. The same series this page renders live.</div></div>
+        <div class="tech"><div class="tech-name"><span class="tech-ic">🦋</span>Flyway</div>
+          <div class="tech-role">Versioned SQL migrations: the schema is code, applied per database, baselined over live data. Browse the history in SQL Studio.</div></div>
+        <div class="tech"><div class="tech-name"><span class="tech-ic">🧪</span>Spock + JUnit</div>
+          <div class="tech-role">Two test voices: JUnit for the concurrency lessons, Spock specifications for the units. 46 executable proofs run on every build.</div></div>
+        <div class="tech"><div class="tech-name"><span class="tech-ic">🐳</span>Docker + Compose</div>
+          <div class="tech-role">One image, packaged once, run anywhere: on a laptop, in Compose (the live public site), or on the Kubernetes cluster.</div></div>
+        <div class="tech"><div class="tech-name"><span class="tech-ic">🔒</span>Caddy</div>
+          <div class="tech-role">The edge: automatic TLS from Let's Encrypt, HTTP redirected to HTTPS, reverse-proxied to the app by service name.</div></div>
+        <div class="tech"><div class="tech-name"><span class="tech-ic">🤖</span>OpenAI</div>
+          <div class="tech-role">Rita, the support agent: grounded in your live balances, proposes actions with the same powers as the buttons, human-in-the-loop on each.</div></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
       <div class="dash-head">
         <div>
           <h2 style="margin:0">Live operations dashboard</h2>
-          <div class="dash-sub"><span class="lm-dot"></span>parsed from this deployment's
-            <a href="/metrics" target="_blank">/metrics</a> in your browser, every 3s · the same series Prometheus
-            scrapes and Grafana graphs on the Kubernetes cluster</div>
+          <div class="dash-sub"><span class="lm-dot"></span>The app exposes <a href="/metrics" target="_blank">/metrics</a>
+            (Prometheus text, hand-written). <b>Prometheus</b> scrapes it from every pod and stores the series;
+            <b>Grafana</b> graphs it on the Kubernetes cluster. This panel reads the same /metrics live in your browser, every 3s.</div>
         </div>
         <div class="dash-clock" id="dash-clock">connecting…</div>
       </div>
