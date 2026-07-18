@@ -40,17 +40,33 @@ public final class PriceFeed {
     private PriceFeed() {}
 
     public static Px get(String symbol) {
+        // L1: in-process (a single pod serving the same price for 60s).
         Object[] hit = cache.get(symbol);
         if (hit != null && System.currentTimeMillis() - (long) hit[1] < 60_000) return (Px) hit[0];
-        Px px;
-        try {
-            px = fetch(symbol);
-        } catch (Exception e) {
-            px = hit != null ? new Px(((Px) hit[0]).price(), ((Px) hit[0]).usd(), "cached")
-                             : new Px(FALLBACK.get(symbol), FALLBACK_USD.get(symbol), "fallback");
-        }
+        // L2: Redis · SHARED across every pod, so one call to CoinGecko/Yahoo
+        // warms the price for the whole fleet, not once per pod.
+        String enc = Cache.getOrLoad("prices:live", symbol, 60, () -> {
+            try {
+                Px f = fetch(symbol);
+                return f.price().toPlainString() + '|' + f.usd().toPlainString() + "|live";
+            } catch (Exception e) {
+                Object[] h = cache.get(symbol);
+                if (h != null) return ((Px) h[0]).price().toPlainString() + '|' + ((Px) h[0]).usd().toPlainString() + "|cached";
+                return FALLBACK.get(symbol).toPlainString() + '|' + FALLBACK_USD.get(symbol).toPlainString() + "|fallback";
+            }
+        });
+        Px px = decode(enc, symbol);
         cache.put(symbol, new Object[]{px, System.currentTimeMillis()});
         return px;
+    }
+
+    private static Px decode(String enc, String symbol) {
+        try {
+            String[] p = enc.split("\\|");
+            return new Px(new BigDecimal(p[0]), new BigDecimal(p[1]), p[2]);
+        } catch (Exception e) {
+            return new Px(FALLBACK.get(symbol), FALLBACK_USD.get(symbol), "fallback");
+        }
     }
 
     private static Px fetch(String symbol) throws Exception {
@@ -71,17 +87,22 @@ public final class PriceFeed {
     /** ~30 days of real prices as [[ms,eur],...] JSON · cached 10 min,
      *  thinned to ≤120 points, empty array when the feed is down. */
     public static String historyJson(String symbol) {
-        Object[] hit = histCache.get(symbol);
-        if (hit != null && System.currentTimeMillis() - (long) hit[1] < 600_000) return (String) hit[0];
-        String out;
-        try {
-            out = "btc".equals(symbol) ? btcHistory() : aaplHistory();
-        } catch (Exception e) {
-            System.err.println("pricefeed history " + symbol + ": " + e);
-            out = hit != null ? (String) hit[0] : "[]";
-        }
-        histCache.put(symbol, new Object[]{out, System.currentTimeMillis()});
-        return out;
+        // read-through Redis: 30 days of prices is a heavy upstream call and
+        // perfectly stale-tolerant · the textbook thing to cache. Falls back
+        // to the in-process cache when Redis is absent.
+        return Cache.getOrLoad("prices:history", symbol, 600, () -> {
+            Object[] hit = histCache.get(symbol);
+            if (hit != null && System.currentTimeMillis() - (long) hit[1] < 600_000) return (String) hit[0];
+            String out;
+            try {
+                out = "btc".equals(symbol) ? btcHistory() : aaplHistory();
+            } catch (Exception e) {
+                System.err.println("pricefeed history " + symbol + ": " + e);
+                out = hit != null ? (String) hit[0] : "[]";
+            }
+            histCache.put(symbol, new Object[]{out, System.currentTimeMillis()});
+            return out;
+        });
     }
 
     private static String btcHistory() throws Exception {

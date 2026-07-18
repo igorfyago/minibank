@@ -32,6 +32,14 @@
       <artifactId>kafka-clients</artifactId>
       <version>3.8.0</version>
     </dependency>
+    <!-- Redis client: a driver, not a framework · the read-through cache
+         (Cache.java) is hand-written around it, same as the outbox is
+         hand-written around the Kafka client. -->
+    <dependency>
+      <groupId>redis.clients</groupId>
+      <artifactId>jedis</artifactId>
+      <version>5.1.5</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

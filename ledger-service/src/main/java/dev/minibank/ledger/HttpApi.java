@@ -42,6 +42,8 @@ public final class HttpApi {
         server.createContext("/api/signup", ex -> handle(ex, HttpApi::signup));
         server.createContext("/api/support", ex -> handle(ex, HttpApi::support));
         server.createContext("/api/prices/history", ex -> handle(ex, HttpApi::priceHistory));
+        // Prometheus scrapes this · plain text exposition, no client library
+        server.createContext("/metrics", ex -> handle(ex, e -> Response.text(200, Metrics.scrape())));
         server.createContext("/api/explorer/catalog", ex -> handle(ex, HttpApi::explorerCatalog));
         server.createContext("/api/explorer/run", ex -> handle(ex, HttpApi::explorerRun));
         server.createContext("/api/kafka/console", ex -> handle(ex, HttpApi::kafkaConsole));
@@ -124,6 +126,8 @@ public final class HttpApi {
                 case Ledger.InsufficientFunds i -> "insufficient_funds";
                 case Ledger.NoSuchAccount n -> "no_such_account";
             };
+            Metrics.inc("minibank_ledger_events_total",
+                    "kind=\"" + (plan.crossShard() ? "saga_depart" : "transfer_local") + "\"");
             return Response.json(200, "{\"result\":\"" + kind +
                     "\",\"crossShard\":" + plan.crossShard() + "}");
         } catch (Directory.CustomerMoving e) {
@@ -360,15 +364,27 @@ public final class HttpApi {
                     .append(",\"inTransit\":\"").append(inTransit)
                     .append("\",\"poolBusy\":").append(s.pool().borrowedCount())
                     .append(",\"poolSize\":").append(s.pool().size()).append('}');
+            // feed the Prometheus gauges from the same numbers · one scrape
+            // reads them lock-free, Grafana graphs them
+            Metrics.gauge("minibank_pool_busy", "region=\"" + Shards.regionName(s.index) + "\"", s.pool().borrowedCount());
+            Metrics.gauge("minibank_outbox_pending", "region=\"" + Shards.regionName(s.index) + "\"", pending);
         }
         shardsJson.append(']');
+        Metrics.gauge("minibank_inflight_eur", "", Shards.inFlight().longValue());
         return Response.json(200,
                 "{\"accounts\":" + tAccounts + ",\"transactions\":" + tTransactions +
                 ",\"entries\":" + tEntries + ",\"outboxPending\":" + tPending +
                 ",\"outboxPublished\":" + tPublished + ",\"notifications\":" + Notifications.count() +
                 ",\"sumZeroViolations\":" + tViolations + ",\"driftedAccounts\":" + tDrifted +
                 ",\"inFlight\":\"" + Shards.inFlight().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString() +
-                "\",\"shards\":" + shardsJson + "}");
+                "\",\"cache\":" + cacheJson() +
+                ",\"shards\":" + shardsJson + "}");
+    }
+
+    /** Redis + metrics snapshot for the X-ray Redis and Prometheus nodes. */
+    private static String cacheJson() {
+        String m = Metrics.uiJson();
+        return m.substring(0, m.length() - 1) + ",\"redis\":" + Cache.enabled() + "}";
     }
 
     /** The live activity stream: every commit, publish and delivery across
@@ -730,6 +746,9 @@ public final class HttpApi {
         static Response json(int status, String json) {
             return new Response(status, "application/json; charset=utf-8", json.getBytes(StandardCharsets.UTF_8));
         }
+        static Response text(int status, String txt) {
+            return new Response(status, "text/plain; version=0.0.4; charset=utf-8", txt.getBytes(StandardCharsets.UTF_8));
+        }
     }
 
     @FunctionalInterface
@@ -751,6 +770,7 @@ public final class HttpApi {
     }
 
     private static void handle(HttpExchange ex, Handler h) throws IOException {
+        long start = System.nanoTime();
         Response r;
         try {
             if (ex.getRequestURI().getPath().startsWith("/api/") && !allowed(ex)) {
@@ -761,10 +781,23 @@ public final class HttpApi {
         } catch (Exception e) {
             r = Response.json(500, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");
         }
+        // every request is one Prometheus observation: a labeled counter and
+        // a latency histogram · this is what /metrics exposes and Grafana graphs
+        double seconds = (System.nanoTime() - start) / 1e9;
+        Metrics.observeHttp(seconds);
+        Metrics.inc("minibank_http_requests_total",
+                "route=\"" + routeClass(ex.getRequestURI().getPath()) + "\",status=\"" + r.status() + "\"");
         ex.getResponseHeaders().set("Content-Type", r.contentType());
         ex.sendResponseHeaders(r.status(), r.body().length);
         ex.getResponseBody().write(r.body());
         ex.close();
+    }
+
+    /** Collapse a path to a low-cardinality label · /api/xray/summary -> /api/xray. */
+    private static String routeClass(String path) {
+        String[] p = path.split("/");
+        if (p.length >= 3 && "api".equals(p[1])) return "/api/" + p[2];
+        return path.isEmpty() || "/".equals(path) ? "/" : "/static";
     }
 
     /** The customer's product shelf, valued at live prices. */
@@ -823,6 +856,7 @@ public final class HttpApi {
             PriceFeed.Px px = PriceFeed.get(asset);
             var result = Products.trade(UUID.fromString(txId), Long.parseLong(customer),
                     asset, "buy".equals(side), new BigDecimal(eur), px.price());
+            Metrics.inc("minibank_ledger_events_total", "kind=\"trade\"");
             String kind = switch (result) {
                 case Ledger.Ok ok -> "ok";
                 case Ledger.AlreadyProcessed a -> "already_processed";

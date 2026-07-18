@@ -23,6 +23,10 @@ public final class Main {
         int port = Integer.parseInt(System.getenv().getOrDefault("MINIBANK_PORT", "8080"));
         int poolSize = Integer.parseInt(System.getenv().getOrDefault("MINIBANK_POOL", "10"));
 
+        // Redis · a read-through cache in front of prices and market history.
+        // Absent or down? The bank runs identically, just without the cache.
+        Cache.init(System.getenv().getOrDefault("REDIS_URL", "redis://localhost:6379"));
+
         Shards.boot(
                 System.getenv().getOrDefault("MINIBANK_SHARD0_URL", "jdbc:postgresql://localhost:5434/minibank"),
                 System.getenv().getOrDefault("MINIBANK_SHARD1_URL", "jdbc:postgresql://localhost:5435/minibank"),

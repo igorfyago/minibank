@@ -516,7 +516,7 @@
       <div class="xcol">
         <div class="card">
           <h2>The living map · click anything</h2>
-          <svg viewBox="0 0 720 560" width="100%" id="xsvg">
+          <svg viewBox="0 0 720 600" width="100%" id="xsvg">
             <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
               <path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker></defs>
             <line class="edge" data-edge="browser_api"   x1="96"  y1="40"  x2="112" y2="40"/>
@@ -573,10 +573,19 @@
             <g class="node" data-node="fx" transform="translate(610,470)">
               <rect width="104" height="52" rx="9"/><text x="52" y="22" text-anchor="middle">FX</text>
               <text x="52" y="38" text-anchor="middle" class="sub">own process :8090</text></g>
+            <g class="node" data-node="redis" transform="translate(300,470)">
+              <rect width="122" height="52" rx="9"/><text x="61" y="22" text-anchor="middle">Redis</text>
+              <text x="61" y="38" text-anchor="middle" class="sub" id="redis-sub">cache · warming</text></g>
+            <g class="node" data-node="prometheus" transform="translate(8,548)">
+              <rect width="348" height="44" rx="9"/><text x="120" y="19" text-anchor="middle">Prometheus</text>
+              <text x="120" y="33" text-anchor="middle" class="sub">scrapes GET /metrics · every counter live</text></g>
+            <g class="node" data-node="grafana" transform="translate(372,548)">
+              <rect width="342" height="44" rx="9"/><text x="171" y="19" text-anchor="middle">Grafana</text>
+              <text x="171" y="33" text-anchor="middle" class="sub">dashboards on the Kubernetes cluster</text></g>
             <g id="pulse-layer"></g>
           </svg>
           <div class="muted" style="text-align:center; font-size:11.5px; margin-top:6px">
-            every box is a real running process · raw Java 21, zero frameworks · PostgreSQL ×4 · Kafka ·
+            every box is a real running process · raw Java 21, zero frameworks · PostgreSQL ×4 · Kafka · Redis · Prometheus ·
             38 executable proofs in the repo</div>
         </div>
         <div class="card" id="trace-card" hidden>
@@ -609,7 +618,8 @@
               <div class="eco-head">☸ Kubernetes</div>
               <div class="eco-body">app <b>×3</b> replicas (the ONLY thing that scales)<br>
                 pg-eu → <b>eu-west-1</b> · pg-uk → <b>eu-west-2</b><br>residency = a scheduling constraint</div>
-              <div class="eco-sub">manifests in k8s/ · the cluster shape of this exact system</div>
+              <div class="eco-sub">manifests in k8s/ · the cluster shape of this exact system ·
+                <a href="/metrics" target="_blank" style="color:var(--accent)">live /metrics ▸</a></div>
             </div>
           </div>
         </div>
@@ -1237,6 +1247,18 @@ const GUIDE = {
     plain: () => [`gpt-4o-mini behind a raw JDK HttpClient call (no SDK). Grounded per request: your live balances, recent ledger rows and the cast list are queried and injected into her context. Seven tools · exactly the app's buttons.`],
     how: () => [`She PROPOSES tool calls; your browser executes on Allow via the same public API as the buttons · same idempotency keys, limiter, constraints. Metered by her own token buckets (4-burst per caller, 300/day global).`],
     win: () => [`Agents and humans get the same power; the human's click is the gate. Least privilege beats prompt engineering: an injection can render a card you decline · never move money.`] },
+  redis: { t: 'Redis · the read-through cache',
+    plain: s => [`A real Redis container. It caches what tolerates staleness · live market prices and 30-day price history · and NEVER a balance the money path is about to lock. Live right now: ${(s && s.cache) ? (s.cache.cacheHitRate + '% hit rate, ' + s.cache.cacheHits + ' hits / ' + (s.cache.cacheHits + s.cache.cacheMisses) + ' lookups') : 'warming up'}.`],
+    how: () => [`Two levels: L1 is in-process per pod (60s), L2 is this shared Redis. One call to CoinGecko warms the price for the WHOLE fleet, not once per pod · that is the reason a cache is shared, not per-instance. Every lookup is counted into Prometheus, so the hit rate is a graph, not a guess.`],
+    win: () => [`Cache what is stale-tolerant and expensive to fetch; never the funds check. And a cache must fail open · pull the Redis plug and the bank runs identically, just slower. The routing directory is cached too, but in-process, because it is already a lookup, not a network round-trip.`] },
+  prometheus: { t: 'Prometheus · the metrics it scrapes',
+    plain: () => [`The app exposes GET /metrics in Prometheus text format · open it, it is real: request counts by route and status, a latency histogram, cache hit/miss, FX source, and gauges for money-in-flight, pool usage and outbox backlog. Hand-written exposition, no client library · the same doctrine as the rest of the bank.`],
+    how: () => [`A counter is a monotonic number, a gauge moves, a histogram is cumulative buckets plus _sum and _count. Prometheus scrapes this endpoint on an interval and stores the time series; alerts fire off queries against it (p99 latency, consumer lag, drift != 0).`],
+    win: () => [`The four golden signals · latency, traffic, errors, saturation · are all here as real series. You cannot operate what you cannot measure, and you cannot alert on what you did not expose.`] },
+  grafana: { t: 'Grafana · the dashboards',
+    plain: () => [`Grafana runs on the Kubernetes cluster, querying Prometheus, drawing the live dashboards: request rate and p99, cache hit rate, money in flight, outbox backlog, consumer lag. The public demo runs on Docker Compose; the k8s deployment adds the full Prometheus + Grafana stack.`],
+    how: () => [`Grafana is stateless glass over Prometheus · dashboards are JSON, provisioned with the cluster. Panels are just PromQL queries (rate(minibank_http_requests_total[1m]), histogram_quantile on the latency buckets, and so on).`],
+    win: () => [`Metrics without dashboards are logs nobody reads. The value is one screen where latency, saturation and correctness invariants are visible at a glance, so a regression is seen in seconds.`] },
   fx: { t: 'FX · the first true microservice',
     plain: () => [`Its own process on :8090 (its own container in production): one responsibility, exchange rates. USD→EUR from frankfurter.app, cached 60s, no database, no ledger access · the only contract between it and the bank is HTTP. Asset prices display in dollars; the ledger settles euros through this rate.`],
     how: () => [`The bank calls it with a HARD ~500ms deadline and a fallback: FX slow or down → the last good rate, honestly labeled, and the payment path never stalls. Deadline + fallback is the circuit-breaker pattern at demo scale · there is a test that kills the service and proves the client survives.`],
@@ -1368,7 +1390,7 @@ document.querySelectorAll('.node').forEach(n => n.onclick = () => {
 let inspectNode = null, prevInspSig = '';
 async function inspect(node) {
   node = ({ directory: 'api' })[node] || node;
-  if (['browser', 'caddy', 'rita', 'pricefeed', 'fx'].includes(node)) { closeInspect(); return; }
+  if (['browser', 'caddy', 'rita', 'pricefeed', 'fx', 'redis', 'prometheus', 'grafana'].includes(node)) { closeInspect(); return; }
   inspectNode = node; prevInspSig = '';
   await refreshInspect();
 }
@@ -1591,6 +1613,10 @@ async function xrayTick() {
   const s1 = `:5435 · pool ${s.shards[1].poolBusy}/${s.shards[1].poolSize} · outbox ${s.shards[1].outboxPending}`;
   if ($('#shard0-sub').textContent !== s0) $('#shard0-sub').textContent = s0;
   if ($('#shard1-sub').textContent !== s1) $('#shard1-sub').textContent = s1;
+  const rc = s.cache || {};
+  const rsub = !rc.redis ? 'passthrough (no Redis)'
+    : 'cache · ' + (rc.cacheHitRate || 0) + '% hits · ' + (rc.cacheHits || 0) + '/' + ((rc.cacheHits||0)+(rc.cacheMisses||0));
+  if ($('#redis-sub') && $('#redis-sub').textContent !== rsub) $('#redis-sub').textContent = rsub;
 
   const fresh = evs.filter(e => !seen.has(e.type + e.tx + e.ts));
   evs.forEach(e => seen.add(e.type + e.tx + e.ts));

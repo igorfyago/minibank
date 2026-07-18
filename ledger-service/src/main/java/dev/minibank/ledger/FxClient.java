@@ -53,8 +53,10 @@ public final class FxClient {
             if (!m.find()) throw new IllegalStateException("no rate");
             Rate r = new Rate(new BigDecimal(m.group(1)), s.find() ? s.group(1) : "live");
             lastGood = r;
+            Metrics.inc("minibank_fx_lookups_total", "source=\"" + r.source() + "\"");
             return r;
         } catch (Exception e) {
+            Metrics.inc("minibank_fx_lookups_total", "source=\"down\"");
             Rate lg = lastGood;
             return lg != null ? new Rate(lg.rate(), "fx down · last good")
                               : new Rate(STATIC_FALLBACK, "fx down · fallback");
