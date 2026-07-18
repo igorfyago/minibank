@@ -440,9 +440,14 @@
     border-radius:18px; display:flex; flex-direction:column; box-shadow:0 12px 48px rgba(0,0,0,.5);
     animation:slidein .2s ease; }
 
-  /* the scrim only exists on a phone, where the sheet is modal */
-  #chat-scrim { position:fixed; inset:0; z-index:55; background:rgba(0,0,0,.5);
-    backdrop-filter:blur(2px); display:none; animation:fadein .2s ease; }
+  /* The scrim only exists on a phone, where the sheet is modal.
+     Deliberately NOT backdrop-filter. A blur over the full viewport makes the
+     compositor re-snapshot and re-blur everything behind it on every frame, and
+     what is behind here is a bank that polls and repaints while you read. It
+     stalled the renderer outright in testing. A flat scrim reads the same and
+     costs one paint. */
+  #chat-scrim { position:fixed; inset:0; z-index:55; background:rgba(0,0,0,.58);
+    display:none; animation:fadein .2s ease; }
   @keyframes fadein { from { opacity:0; } }
 
   /* ------------------------------------------------------------------------
@@ -460,11 +465,27 @@
       border-radius:20px 20px 0 0;
       border-bottom:none;
       box-shadow:0 -10px 40px rgba(0,0,0,.55);
-      animation:sheetup .22s cubic-bezier(.2,.8,.3,1);
       /* the home indicator is not screen we may draw under */
       padding-bottom:env(safe-area-inset-bottom, 0px);
+
+      /* The slide is a TRANSITION off a class, not a keyframe animation, and
+         that is a correctness choice rather than a stylistic one. With
+         `animation: sheetup` the resting position was whatever the keyframes
+         left behind, so a timeline that stalls at frame zero, a backgrounded
+         tab, a janky first paint, strands the sheet one full height below the
+         screen with the scrim up and the page locked: a dead end the user
+         cannot see their way out of. Here the resting state is plain CSS and is
+         correct with no animation running at all. .sheet-in displaces it, and
+         is removed on a timer, so the worst case is that the sheet appears
+         instantly instead of sliding. */
+      transition:transform .22s cubic-bezier(.2,.8,.3,1);
     }
-    @keyframes sheetup { from { transform:translateY(100%); } }
+    #chat-panel.sheet-in { transform:translateY(100%); }
+    /* anyone who asked their phone for less motion gets it already in place */
+    @media (prefers-reduced-motion: reduce) {
+      #chat-panel { transition:none; }
+      #chat-scrim { animation:none; }
+    }
     /* the grab handle: the one affordance that says "this is a sheet" */
     #chat-panel::before {
       content:""; position:absolute; top:8px; left:50%; transform:translateX(-50%);
@@ -2431,11 +2452,20 @@ const _phone = matchMedia('(max-width:700px)');
 
 function ritaOpen(open) {
   const panel = $('#chat-panel'), scrim = $('#chat-scrim');
+  // Displace it BEFORE it is shown, so the first frame it is ever painted in is
+  // off the bottom edge and the transition has somewhere to travel from.
+  if (open && _phone.matches) panel.classList.add('sheet-in');
   panel.classList.toggle('hidden', !open);
   scrim.classList.toggle('on', open && _phone.matches);
   // the bank behind must not scroll under the sheet
   document.body.style.overflow = (open && _phone.matches) ? 'hidden' : '';
   if (open) {
+    // A timer, not requestAnimationFrame. rAF is the natural choice and is
+    // exactly wrong here: it is what stops firing when the page is not being
+    // painted, which is the one case this is guarding against. A timer still
+    // fires, so the sheet always ends up in place, sliding if it can and
+    // arriving instantly if it cannot.
+    setTimeout(() => panel.classList.remove('sheet-in'), 20);
     if (!chatLog.length) chatHello();
     ritaStickToBottom();
     // focus opens the keyboard, so only do it where that is wanted: on a phone
