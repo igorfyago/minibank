@@ -265,6 +265,19 @@
   #txgroups { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr)); gap:10px; }
   .insp-divider { border-top:1px solid var(--line); margin-top:10px; padding-top:9px; font-weight:600; font-size:13px; }
   #inspect-body { max-height:300px; overflow:auto; }
+  .k8s-wrap { display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
+  @media (max-width:900px) { .k8s-wrap { grid-template-columns:1fr; } }
+  .k8s-cap { font-size:10.5px; color:var(--dim); text-transform:uppercase; letter-spacing:.09em; margin-bottom:6px; }
+  .k8s-term { background:#0a0e14; border:1px solid var(--line); border-radius:10px; padding:12px 14px;
+    font:11.5px 'Cascadia Code', Consolas, monospace; overflow-x:auto; line-height:1.75; color:#c9d1d9; white-space:pre; }
+  .k8s-term .run { color:var(--green); }
+  .k8s-term .eu { color:var(--accent); }
+  .k8s-term .uk { color:var(--violet); }
+  .k8s-term .rtag { color:var(--amber); }
+  .k8s-img { width:100%; border:1px solid var(--line); border-radius:10px; display:block; }
+  .k8s-note { font-size:11.5px; color:var(--dim); margin-top:9px; line-height:1.6; }
+  .k8s-note code, .muted code { background:rgba(255,255,255,.06); padding:1px 5px; border-radius:5px;
+    font:11px 'Cascadia Code', Consolas, monospace; }
   header h1 { cursor:pointer; }
   
   
@@ -645,6 +658,28 @@
         <div class="card">
           <h2>Live activity · every commit, publish and delivery</h2>
           <div id="ticker"><span class="muted">watching…</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>Runs on Kubernetes · the manifests in this repo actually deploy</h2>
+      <div class="muted" style="font-size:12.5px;margin-bottom:12px">The public demo runs on Docker Compose on one box.
+        The same image also runs on a real Kubernetes cluster (k3s): <code>./k8s/run-local.sh</code> builds it, stands up
+        a 3-node cluster, and applies the manifests. Below is that cluster, live · Prometheus scrapes each app pod, Grafana graphs it.</div>
+      <div class="k8s-wrap">
+        <div class="k8s-left">
+          <div class="k8s-cap">kubectl get pods -o wide</div>
+          <pre class="k8s-term" id="k8s-pods"></pre>
+          <div class="k8s-note">🌍 <b>Data residency, enforced by the scheduler.</b> pg-eu carries a
+            <code>nodeSelector: region=eu-west-1</code>, pg-uk <code>region=eu-west-2</code>, so UK data can only ever
+            schedule onto UK nodes. The 3 stateless app replicas spread across all nodes; the databases are pinned.</div>
+        </div>
+        <div class="k8s-right">
+          <div class="k8s-cap">Grafana · dashboards on the cluster, fed by Prometheus</div>
+          <a href="/grafana.png" target="_blank"><img src="/grafana.png" alt="Grafana dashboard" class="k8s-img"></a>
+          <div class="k8s-note">Request rate, p99 latency, Redis hit rate, money in flight, requests by route,
+            ledger events, outbox backlog and pool usage per region · all real PromQL over the metrics on the left.</div>
         </div>
       </div>
     </div>
@@ -1256,7 +1291,7 @@ const GUIDE = {
     how: () => [`A counter is a monotonic number, a gauge moves, a histogram is cumulative buckets plus _sum and _count. Prometheus scrapes this endpoint on an interval and stores the time series; alerts fire off queries against it (p99 latency, consumer lag, drift != 0).`],
     win: () => [`The four golden signals · latency, traffic, errors, saturation · are all here as real series. You cannot operate what you cannot measure, and you cannot alert on what you did not expose.`] },
   grafana: { t: 'Grafana · the dashboards',
-    plain: () => [`Grafana runs on the Kubernetes cluster, querying Prometheus, drawing the live dashboards: request rate and p99, cache hit rate, money in flight, outbox backlog, consumer lag. The public demo runs on Docker Compose; the k8s deployment adds the full Prometheus + Grafana stack.`],
+    plain: () => [`Grafana runs on the real Kubernetes cluster (see "Runs on Kubernetes" below · that screenshot is live), querying Prometheus, drawing the dashboards: request rate and p99, Redis hit rate, money in flight, requests by route, outbox backlog and pool usage per region. The public demo runs on Docker Compose; \`./k8s/run-local.sh\` stands the whole thing up on k3s.`],
     how: () => [`Grafana is stateless glass over Prometheus · dashboards are JSON, provisioned with the cluster. Panels are just PromQL queries (rate(minibank_http_requests_total[1m]), histogram_quantile on the latency buckets, and so on).`],
     win: () => [`Metrics without dashboards are logs nobody reads. The value is one screen where latency, saturation and correctness invariants are visible at a glance, so a regression is seen in seconds.`] },
   fx: { t: 'FX · the first true microservice',
@@ -2390,6 +2425,30 @@ $('#q-next').onclick = () => {
 };
 
 /* ---------------- boot ---------------- */
+const K8S_PODS = [
+  ['grafana-6c4698b64-dbkk9', 'server-0', ''],
+  ['kafka-0', 'server-0', ''],
+  ['minibank-app-5d8596ddc4-fgdtj', 'agent-0', ''],
+  ['minibank-app-5d8596ddc4-smph8', 'agent-1', ''],
+  ['minibank-app-5d8596ddc4-tcpdm', 'server-0', ''],
+  ['minibank-fx-fb4579747-drkph', 'agent-0', ''],
+  ['pg-control-0', 'agent-1', ''],
+  ['pg-eu-0', 'agent-0', 'eu-west-1'],
+  ['pg-uk-0', 'agent-1', 'eu-west-2'],
+  ['prometheus-5fc459b775-8mkkl', 'agent-1', ''],
+  ['redis-95cdf456f-5st77', 'server-0', ''],
+];
+(function renderK8s() {
+  const el = document.querySelector('#k8s-pods'); if (!el) return;
+  const head = 'NAME'.padEnd(34) + 'STATUS'.padEnd(10) + 'NODE';
+  const rows = K8S_PODS.map(([n, node, region]) => {
+    let line = n.padEnd(34) + 'Running'.padEnd(10) + 'k3d-minibank-' + node;
+    line = line.replace('Running', '<span class="run">Running</span>');
+    if (region) line += ' <span class="' + (region === 'eu-west-1' ? 'eu' : 'uk') + '">&larr; ' + region + '</span>';
+    return line;
+  });
+  el.innerHTML = '<span style="color:var(--dim)">' + head + '</span>\n' + rows.join('\n');
+})();
 loadAccounts(); loadStatement(); loadPortfolio(); renderQuiz(); gShow('welcome');
 $('#homelink').onclick = () => switchTab('app');
 if (['#xray', '#quiz', '#console'].includes(location.hash)) document.querySelector('[data-tab="' + location.hash.slice(1) + '"]').click();

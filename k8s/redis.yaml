@@ -1,0 +1,31 @@
+# Redis · the read-through cache. Stateless from the bank's point of view
+# (it fails open), so a plain Deployment · one replica is plenty for a cache
+# whose miss is a fast reload.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels: { app: redis }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: redis }
+  template:
+    metadata:
+      labels: { app: redis }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["--maxmemory", "32mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+          ports: [{ containerPort: 6379 }]
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits: { memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: redis }
+spec:
+  selector: { app: redis }
+  ports: [{ port: 6379 }]

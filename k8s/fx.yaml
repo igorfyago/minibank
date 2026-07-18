@@ -1,0 +1,39 @@
+# The FX microservice · its own Deployment and Service. Same image as the
+# app, a different entrypoint (dev.minibank.fx.FxService). Stateless, so it
+# scales by replicas like any other stateless tier.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minibank-fx
+  labels: { app: minibank-fx }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: minibank-fx }
+  template:
+    metadata:
+      labels: { app: minibank-fx }
+    spec:
+      containers:
+        - name: fx
+          image: minibank:local
+          imagePullPolicy: IfNotPresent
+          command: ["java", "-cp", "classes:deps/*", "dev.minibank.fx.FxService"]
+          ports: [{ containerPort: 8090 }]
+          env:
+            - name: FX_PORT
+              value: "8090"
+          readinessProbe:
+            httpGet: { path: /health, port: 8090 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: minibank-fx }
+spec:
+  selector: { app: minibank-fx }
+  ports: [{ port: 8090 }]

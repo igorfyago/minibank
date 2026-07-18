@@ -22,9 +22,14 @@ spec:
     metadata:
       labels: { app: minibank }
     spec:
+      # k8s otherwise injects <SVCNAME>_PORT env vars for every Service; the
+      # 'minibank' Service would set MINIBANK_PORT=tcp://... and collide with
+      # the app's own MINIBANK_PORT. Config comes from OUR env, not link vars.
+      enableServiceLinks: false
       containers:
         - name: app
-          image: minibank:latest  # built by ledger-service/Dockerfile
+          image: minibank:local  # built by ledger-service/Dockerfile, imported into k3d
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           env:
@@ -35,19 +40,26 @@ spec:
               value: jdbc:postgresql://pg-uk:5432/minibank
             - name: MINIBANK_DB_URL          # control plane: directory + notifications
               value: jdbc:postgresql://pg-control:5432/minibank
+            - name: MINIBANK_DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: minibank-db, key: password }
             - name: MINIBANK_KAFKA
-              value: kafka:9092
+              value: kafka-0.kafka:9092      # the broker's advertised listener
+            - name: REDIS_URL
+              value: redis://redis:6379      # the read-through cache
+            - name: FX_URL
+              value: http://minibank-fx:8090 # the FX microservice
             - name: MINIBANK_POOL
               value: "10"       # per shard, per pod: 3 pods x 2 shards x 10 = 60
                                 # server connections ceiling · the pool math you
                                 # must do BEFORE raising replicas (or add PgBouncer)
           readinessProbe:
             httpGet: { path: /api/accounts, port: 8080 }
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 5
           resources:
-            requests: { cpu: 250m, memory: 512Mi }
-            limits: { memory: 1Gi }
+            requests: { cpu: 250m, memory: 384Mi }
+            limits: { memory: 768Mi }
 ---
 apiVersion: v1
 kind: Service

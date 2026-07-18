@@ -735,6 +735,7 @@ public final class HttpApi {
                     : path.endsWith(".js") ? "application/javascript"
                     : path.endsWith(".css") ? "text/css"
                     : path.endsWith(".svg") ? "image/svg+xml"
+                    : path.endsWith(".png") ? "image/png"
                     : path.endsWith(".json") ? "application/manifest+json" : "application/octet-stream";
             return new Response(200, type, in.readAllBytes());
         }
