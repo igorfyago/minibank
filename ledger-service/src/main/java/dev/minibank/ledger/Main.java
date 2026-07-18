@@ -49,6 +49,11 @@ public final class Main {
 
         Shards.createAndSeed();
         for (long id : new long[]{10, 11, 12}) Products.ensureFor(id);   // the product shelf
+        // reconciliation: earlier builds relocated the main account only,
+        // stranding product balances on the customer's old region. No-op
+        // once every shelf is home.
+        int repaired = Relocation.repairShelves();
+        if (repaired > 0) System.out.println("shelf repair: " + repaired + " account(s) brought home");
         Notifications.createOwnDatabase();
 
         for (Shard s : Shards.all()) {

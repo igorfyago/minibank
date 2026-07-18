@@ -183,6 +183,23 @@ public final class HttpApi {
      *  the departed event's payload (on the destination side that means one
      *  lookup on the other region: a read-model shortcut; a real fleet
      *  projects statements from the Kafka events instead). */
+    /** The statement page's one query. Package-private so the test can EXPLAIN
+     *  exactly what ships: its plan must stay a bounded index scan and must
+     *  never grow a WindowAgg over the account's whole history again. */
+    static final String STATEMENT_SQL = """
+            SELECT e.tx_id, e.amount, e.created_at, t.kind,
+                   o.owner AS other_owner, o.kind AS other_kind
+            FROM entries e
+            JOIN transactions t ON t.id = e.tx_id
+            LEFT JOIN LATERAL (
+                SELECT oa.owner, oa.kind FROM entries o2
+                JOIN accounts oa ON oa.id = o2.account_id
+                WHERE o2.tx_id = e.tx_id AND o2.id <> e.id
+                ORDER BY o2.id LIMIT 1) o ON true
+            WHERE e.account_id = ?
+            ORDER BY e.id DESC
+            LIMIT 40""";
+
     private static Response statement(HttpExchange ex) throws Exception {
         String q = ex.getRequestURI().getQuery();
         String cust = null;
@@ -192,21 +209,22 @@ public final class HttpApi {
         Shard home = Shards.forCustomer(id);
 
         StringBuilder b = new StringBuilder("[");
-        try (Connection c = home.open();
-             var ps = c.prepareStatement("""
-                     SELECT e.tx_id, e.amount, e.created_at, t.kind,
-                            o.owner AS other_owner, o.kind AS other_kind,
-                            SUM(e.amount) OVER (ORDER BY e.id) AS balance_after
-                     FROM entries e
-                     JOIN transactions t ON t.id = e.tx_id
-                     LEFT JOIN LATERAL (
-                         SELECT oa.owner, oa.kind FROM entries o2
-                         JOIN accounts oa ON oa.id = o2.account_id
-                         WHERE o2.tx_id = e.tx_id AND o2.id <> e.id
-                         ORDER BY o2.id LIMIT 1) o ON true
-                     WHERE e.account_id = ?
-                     ORDER BY e.id DESC
-                     LIMIT 40""")) {
+        try (Connection c = home.open()) {
+            /* THE RUNNING BALANCE, WITHOUT READING THE WHOLE LEDGER.
+               This used to be SUM(e.amount) OVER (ORDER BY e.id) · a window
+               over EVERY entry the account ever had, computed in full before
+               ORDER BY ... LIMIT 40 could throw almost all of it away. The
+               page shows 40 rows; the query grew with the account's whole
+               history, and the customers with the most history waited the
+               longest for it.
+               The bank already maintains the answer: the cached balance,
+               reconciled against the entries by the drift audit on every
+               refresh. So anchor on it and walk BACKWARDS through the 40 rows
+               we actually fetched · balance_after(row) = balance_after(newer)
+               − amount(newer). Same numbers, O(40) instead of O(history), and
+               it reuses the projection rather than recomputing the truth. */
+            BigDecimal running = Ledger.cachedBalanceOn(c, id);
+            try (var ps = c.prepareStatement(STATEMENT_SQL)) {
             ps.setLong(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 boolean first = true;
@@ -217,7 +235,9 @@ public final class HttpApi {
                     String kind = rs.getString(4);
                     String otherOwner = rs.getString(5);
                     String otherKind = rs.getString(6);
-                    var after = rs.getBigDecimal(7);
+                    // newest row first: its "after" IS the current balance
+                    var after = running;
+                    running = running.subtract(amount);
                     boolean in = amount.signum() > 0;
 
                     String label, tag;
@@ -266,6 +286,7 @@ public final class HttpApi {
                      .append(",\"cross\":").append(cross)
                      .append(",\"pending\":").append(pending).append('}');
                 }
+            }
             }
         }
         return Response.json(200, b.append(']').toString());

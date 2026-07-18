@@ -5,7 +5,7 @@ package dev.minibank.ledger;
  * refilled continuously at `ratePerSec`. Empty bucket = HTTP 429 · the
  * edge slows abusive callers down BEFORE they reach the ledger.
  *
- * Pairs with idempotency, and the pairing is the interview point:
+ * Pairs with idempotency, and the pairing is the whole point:
  * idempotency makes retries SAFE, rate limiting makes them CHEAP.
  *
  * This one is per-instance and in-memory; a fleet shares state at the

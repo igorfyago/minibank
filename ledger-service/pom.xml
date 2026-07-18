@@ -17,6 +17,8 @@
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- set true on a machine without node · the JS unit tests are then skipped -->
+    <skip.js.tests>false</skip.js.tests>
   </properties>
 
   <!-- align every junit-platform artifact (Spock brings its own) to the
@@ -123,6 +125,25 @@
         <configuration>
           <mainClass>dev.minibank.ledger.Main</mainClass>
         </configuration>
+        <executions>
+          <!-- The browser code that is arithmetic (web/lib.js) has unit tests
+               too · node's own test runner, no npm, no package.json, nothing
+               to install. Skip with -Dskip.js.tests (the Docker build already
+               passes -DskipTests, so the image never needs node). -->
+          <execution>
+            <id>js-tests</id>
+            <phase>test</phase>
+            <goals><goal>exec</goal></goals>
+            <configuration>
+              <executable>node</executable>
+              <arguments>
+                <argument>--test</argument>
+                <argument>${project.basedir}/src/test/js/lib.test.js</argument>
+              </arguments>
+              <skip>${skip.js.tests}</skip>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>

@@ -51,10 +51,12 @@
   #tk-belt { position:relative; flex:1; height:100%; overflow:hidden;
     -webkit-mask:linear-gradient(90deg, transparent, #000 26px, #000 calc(100% - 26px), transparent);
     mask:linear-gradient(90deg, transparent, #000 26px, #000 calc(100% - 26px), transparent); }
-  #tk-track { position:absolute; left:0; top:0; height:100%; width:max-content;
-    display:flex; align-items:center; white-space:nowrap; will-change:transform; }
-  .tape-train { flex:none; display:inline-flex; align-items:center; gap:8px; margin-right:76px;
-    cursor:pointer; animation:tapeflash 1.6s ease-out; }
+  #tk-track { position:absolute; left:0; top:0; height:100%; white-space:nowrap;
+    will-change:transform; contain:layout style; }
+  /* absolutely placed at a track offset computed in JS · a train that retires
+     cannot reflow the ones behind it, so the frame loop never measures */
+  .tape-train { position:absolute; top:0; height:100%; display:inline-flex; align-items:center;
+    gap:8px; cursor:pointer; animation:tapeflash 1.6s ease-out; }
   @keyframes tapeflash { from { filter:brightness(2.3) saturate(1.7); } }
   .tp-h { font-size:13px; }
   .tp-s { color:#5da878; }
@@ -958,6 +960,7 @@
   <div id="show-foot"><span id="show-dots"></span><button class="ghost" id="show-skip">skip ✕</button></div>
 </div>
 
+<script src="lib.js"></script>
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
@@ -1143,13 +1146,18 @@ async function loadChart(key, asset) {
 async function loadProdHist(key, acct) {
   const el = document.querySelector('#ph-' + key);
   if (!el) return;
-  const items = await api('/api/statement?customer=' + acct);
+  const items = await statementOf(acct);
   el.innerHTML = items.slice(0, 5).map(x =>
     `<div class="ph-row"><span>${new Date(x.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${x.label}</span>
      <b class="${x.in ? 'amount-pos' : ''}">${x.in ? '+' : '−'}${Number(x.amount.replace('-', '')).toLocaleString('en-US', { maximumFractionDigits: 8 })}</b></div>`).join('')
     || '<div class="ph-row"><span class="muted">no activity on this account yet</span></div>';
 }
-async function prodRun(fn) { const out = await fn(); say(typeof out === 'string' ? '✓ ' + out : '✓ done', 'var(--green)'); refreshAll(); }
+async function prodRun(fn) {
+  const out = await fn();
+  if (out && out.err) say('✗ ' + out.err, 'var(--red)');
+  else say(typeof out === 'string' ? '✓ ' + out : '✓ done', 'var(--green)');
+  refreshAll();
+}
 window.pSav = dir => prodRun(() => AGENT_TOOLS.savings_move.exec({ direction: dir, amount: String(sliderVals.sv) + '.00' }));
 window.pCard = act => prodRun(() => AGENT_TOOLS.card_action.exec({ action: act, amount: String(sliderVals.cd) + '.00' }));
 window.pTrade = (asset, side, all) => {
@@ -1230,11 +1238,32 @@ async function loadPortfolio() {
   if (openProd === 'bt') loadChart('bt', 'btc');
   if (openProd === 'ap') loadChart('ap', 'aapl');
 }
-function refreshAll() { loadAccounts(); prevStmtSig = ''; loadStatement(); prevPortSig = ''; loadPortfolio(); }
+/* THE STATEMENT CACHE.
+   Statements are the heaviest read in the app: the ledger page wants one,
+   every open product card wants one for its own account, and the 2s poll
+   asks for all of them again. Uncached that is a query per card per poll,
+   and the UI waits on every one of them.
+
+   So they go through a stale-while-revalidate cache with single flight:
+     FRESH  render from memory · no request at all
+     STALE  render the old rows IMMEDIATELY, refresh behind the paint
+     MISS   one request no matter how many callers ask at once
+   A money action invalidates it, so the cache can never hide a change the
+   customer just made. Serving slightly-stale rows beats blocking a repaint,
+   and a failed refresh keeps the last good rows instead of blanking them ·
+   the same "fails open" rule the price cache follows server-side.
+   MB.swrCache · unit-tested in src/test/js/lib.test.js */
+const stmtCache = MB.swrCache({ ttl: 4000 });
+const statementOf = acct => stmtCache.get(String(acct), () => api('/api/statement?customer=' + acct));
+
+function refreshAll() {
+  stmtCache.invalidate();     // money moved · the cache must not out-vote it
+  loadAccounts(); prevStmtSig = ''; loadStatement(); prevPortSig = ''; loadPortfolio();
+}
 /* the statement · the double-entry ledger, told the way a bank app tells it */
 async function loadStatement() {
   if (me === null) return;
-  const items = await api('/api/statement?customer=' + me);
+  const items = await statementOf(me);
   const today = new Date().toDateString(), yest = new Date(Date.now() - 864e5).toDateString();
   const dayOf = ts => { const d = new Date(ts);
     return d.toDateString() === today ? 'Today' : d.toDateString() === yest ? 'Yesterday'
@@ -2000,16 +2029,19 @@ $('#trace-clear').onclick = () => { stopPlay(); activeTrace = null; $('#trace-ca
    in the exact order the backend took the steps, ending in the balance deltas.
    A train crosses the screen once, then it is gone. Quiet bank = empty tape. */
 const tapeSeen = new Set();
-let tapeFirst = true, tapeX = 0, tapePaused = false, tapePrev = 0;
+let tapeFirst = true, tapePrev = 0;
 const tapeTrack = $('#tk-track'), tapeBelt = $('#tk-belt');
+/* The tape's geometry is kept in JS (MB.tapeLayout, unit-tested), never read
+   back from the DOM. The old loop asked for offsetLeft/offsetWidth/
+   getBoundingClientRect once per train per frame, and each of those forces a
+   synchronous layout · that is what made the tape stutter. A train is now
+   measured exactly once, when it is built, and the frame loop is arithmetic
+   plus one transform write. It also never pauses: a market tape that stops
+   when the cursor grazes it is a tape that lies about the market. */
+const tape = MB.tapeLayout({ beltWidth: tapeBelt.clientWidth, gap: 76, speed: 0.104, maxFrame: 120 });
 const tapeEsc = s => String(s == null ? '' : s).replace(/</g, '&lt;');
 const tapeEur = a => '€' + Number(a).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const tapeSys = s => !s || s === 'world' || s === 'in_transit' || s === 'cafe' || s.startsWith('broker');
-if (matchMedia('(hover: hover)').matches) {
-  $('#ticker-bar').addEventListener('mouseenter', () => { tapePaused = true; });
-  $('#ticker-bar').addEventListener('mouseleave', () => { tapePaused = false; });
-}
-
 function tapeTrain(e) {
   const A = e.amount ? tapeEur(e.amount) : '';
   const P = tapeEsc(e.payer), Y = tapeEsc(e.payee), R = e.region, t = e.type;
@@ -2081,29 +2113,26 @@ function tapePush(tr, tx) {
   if (tx) bits.push('<span class="tp-x">' + tx.slice(0, 8) + '</span>');
   el.innerHTML = bits.join(' ');
   if (tx) el.onclick = () => { switchTab('xray'); traceTx(tx, true); };
-  const enterAt = tapeBelt.clientWidth - tapeX;   // track coordinate at the belt's right edge
-  const end = tapeTrack.scrollWidth;
-  if (end < enterAt) el.style.marginLeft = (enterAt - end) + 'px';
+  // measure ONCE, here, off the animation path · then place it absolutely so
+  // retiring the train ahead of it can never shift it. The belt is measured
+  // here too (a few times a second at most, never per frame): at parse time
+  // the bar has no layout yet, so a cached zero would launch trains from the
+  // left edge instead of sliding them in from the right.
   tapeTrack.appendChild(el);
+  tape.beltWidth = tapeBelt.clientWidth || tape.beltWidth;
+  el.style.left = tape.place(el.offsetWidth) + 'px';
   $('#ticker-bar').classList.add('on');
 }
 
 function tapeFrame(now) {
-  const dt = Math.min(120, now - (tapePrev || now));
+  const dt = now - (tapePrev || now);
   tapePrev = now;
-  if (!tapePaused && tapeTrack.firstChild) {
-    tapeX -= dt * 0.104;
-    let head = tapeTrack.firstChild;
-    while (head && head.offsetLeft + head.offsetWidth + tapeX < -10) {
-      const next = head.nextSibling;
-      if (!next) { tapeTrack.innerHTML = ''; tapeX = 0; head = null;
-        $('#ticker-bar').classList.remove('on'); break; }
-      const before = next.getBoundingClientRect().left;
-      head.remove();
-      tapeX += before - next.getBoundingClientRect().left;
-      head = tapeTrack.firstChild;
-    }
-    tapeTrack.style.transform = 'translate3d(' + tapeX.toFixed(1) + 'px,0,0)';
+  if (tape.count) {
+    tape.advance(dt);
+    // pure arithmetic decides what left the screen · no DOM measurement
+    for (let i = tape.retire().length; i > 0; i--) tapeTrack.firstChild.remove();
+    if (!tape.count) $('#ticker-bar').classList.remove('on');
+    tapeTrack.style.transform = 'translate3d(' + tape.x.toFixed(1) + 'px,0,0)';
   }
   requestAnimationFrame(tapeFrame);
 }
@@ -2220,30 +2249,35 @@ if (location.hash === '#show') {
 
 /* ---------------- Rita: the support agent ---------------- */
 let chatLog = [];
+/* A tool result that is a FAILURE. Execs used to return the error text as
+   a bare string, indistinguishable from a success message · which is how
+   "no such account: 314" got rendered as a green ✓. Wrap failures. */
+const fail = m => ({ err: String(m) });
+
 const AGENT_TOOLS = {
   send_money: {
     sum: a => `💸 Send ${fmt(a.amount)} to ${a.to}`,
     exec: async a => {
       const rec = accounts.find(x => x.owner === String(a.to).toLowerCase()) || accounts.find(x => x.id === Number(a.to));
-      if (!rec) return 'I could not find "' + a.to + '" in the cast';
+      if (!rec) return fail('I could not find "' + a.to + '" in the cast');
       const tx = uuid();
       const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: tx, from: me, to: rec.id, amount: a.amount }) });
       if (r.result === 'ok' && r.crossShard) followTx(tx);
-      return r.result === 'ok' ? `sent ${fmt(a.amount)} to ${rec.owner}` + (r.crossShard ? ' · cross-region, watch it on the map' : '') : r.result || r.error;
+      return r.result === 'ok' ? `sent ${fmt(a.amount)} to ${rec.owner}` + (r.crossShard ? ' · cross-region, watch it on the map' : '') : fail(r.result || r.error);
     } },
   add_money: {
     sum: a => `⬇ Add ${fmt(a.amount)} from the world`,
     exec: async a => {
-      if (Number(a.amount) > 500) return 'top-ups cap at €500';
+      if (Number(a.amount) > 500) return fail('top-ups cap at €500');
       const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: 1, to: me, amount: a.amount }) });
-      return r.result === 'ok' ? `added ${fmt(a.amount)}` : r.result || r.error;
+      return r.result === 'ok' ? `added ${fmt(a.amount)}` : fail(r.result || r.error);
     } },
   savings_move: {
     sum: a => `💰 Move ${fmt(a.amount)} ${a.direction === 'to_savings' ? 'into savings' : 'back to main'}`,
     exec: async a => {
       const from = a.direction === 'to_savings' ? me : me + 100, to = a.direction === 'to_savings' ? me + 100 : me;
       const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from, to, amount: a.amount }) });
-      return r.result === 'ok' ? 'moved' : r.result || r.error;
+      return r.result === 'ok' ? 'moved' : fail(r.result || r.error);
     } },
   card_action: {
     sum: a => ({ pay_cafe: `💳 Pay ${fmt(a.amount || 12)} at the café`, hold: `💳 Authorize a ${fmt(a.amount || 25)} hold`,
@@ -2252,44 +2286,45 @@ const AGENT_TOOLS = {
     exec: async a => {
       if (a.action === 'pay_cafe') {
         const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me + 400, to: 7, amount: a.amount || '12.00' }) });
-        return r.result === 'ok' ? 'paid · your card went negative, legally' : r.result === 'insufficient_funds' ? 'the CHECK constraint said no (limit)' : r.result;
+        return r.result === 'ok' ? 'paid · your card went negative, legally'
+          : fail(r.result === 'insufficient_funds' ? 'the CHECK constraint said no (limit)' : r.result);
       }
       if (a.action === 'hold') {
         const tx = uuid();
         const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: 'authorize', customer: me, tx, amount: a.amount || '25.00' }) });
         if (r.result === 'ok') { lastAuth[me] = tx; return 'held · capture or release when ready'; }
-        return r.result || r.error;
+        return fail(r.result || r.error);
       }
       if (a.action === 'capture' || a.action === 'release') {
-        if (!lastAuth[me]) return 'no hold from this session · make one first';
+        if (!lastAuth[me]) return fail('no hold from this session · make one first');
         const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: a.action, customer: me, tx: lastAuth[me] }) });
         if (r.result === 'ok') delete lastAuth[me];
-        return r.result === 'ok' ? (a.action === 'capture' ? 'captured · the merchant is paid' : 'released · nothing was spent') : r.result;
+        return r.result === 'ok' ? (a.action === 'capture' ? 'captured · the merchant is paid' : 'released · nothing was spent') : fail(r.result);
       }
       const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me, to: me + 400, amount: a.amount }) });
-      return r.result === 'ok' ? 'repaid' : r.result || r.error;
+      return r.result === 'ok' ? 'repaid' : fail(r.result || r.error);
     } },
   trade: {
     sum: a => `${a.asset === 'btc' ? '₿' : '🍏'} ${a.side === 'buy' ? 'Buy' : 'Sell'} ${fmt(a.eur)} of ${a.asset === 'btc' ? 'Bitcoin' : 'Apple stock'} at the live price`,
     exec: async a => {
       const r = await api('/api/trade', { method: 'POST', body: JSON.stringify({ txId: uuid(), customer: me, asset: a.asset, side: a.side, eur: a.eur }) });
-      return r.result === 'ok' ? `${a.side === 'buy' ? 'bought' : 'sold'} @ ${fmt(r.price)} (${r.source})` : r.result || r.error;
+      return r.result === 'ok' ? `${a.side === 'buy' ? 'bought' : 'sold'} @ ${fmt(r.price)} (${r.source})` : fail(r.result || r.error);
     } },
   loan: {
     sum: a => a.action === 'apply' ? `🏦 Take a ${fmt(a.amount)} loan` : `🏦 Repay ${fmt(a.amount)} of the loan`,
     exec: async a => {
       if (a.action === 'apply') {
         const r = await api('/api/mortgage', { method: 'POST', body: JSON.stringify({ txId: uuid(), customer: me, amount: a.amount }) });
-        return r.result === 'ok' ? 'approved and disbursed · your cash rose, your loan account fell, net worth unmoved' : r.result || r.error;
+        return r.result === 'ok' ? 'approved and disbursed · your cash rose, your loan account fell, net worth unmoved' : fail(r.result || r.error);
       }
       const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me, to: me + 500, amount: a.amount }) });
-      return r.result === 'ok' ? 'repaid' : r.result || r.error;
+      return r.result === 'ok' ? 'repaid' : fail(r.result || r.error);
     } },
   relocate: {
     sum: a => `✈ Relocate you to ${a.region}`,
     exec: async a => {
       const r = await api('/api/relocate', { method: 'POST', body: JSON.stringify({ customer: me, to: a.region === 'uk' ? 1 : 0 }) });
-      return r.result === 'ok' ? `relocated to ${r.region} · your balance travelled as one saga` : r.error || r.result;
+      return r.result === 'ok' ? `relocated to ${r.region} · your balance travelled as one saga` : fail(r.error || r.result);
     } },
 };
 window.actAllow = async i => {
@@ -2297,8 +2332,11 @@ window.actAllow = async i => {
   if (!m || m.status !== 'pending') return;
   m.status = 'working'; chatPaint();
   let result;
-  try { result = await AGENT_TOOLS[m.tool].exec(m.args); } catch (e) { result = 'that fizzled · try again'; }
-  m.status = 'done'; m.result = result;
+  try { result = await AGENT_TOOLS[m.tool].exec(m.args); } catch (e) { result = fail('that fizzled · try again'); }
+  m.status = 'done';
+  // a failed tool call is reported as a failure, to the user AND to Rita
+  m.failed = !!(result && result.err);
+  m.result = m.failed ? result.err : result;
   chatPaint(); refreshAll();
 };
 window.actDeny = i => {
@@ -2313,7 +2351,9 @@ function chatPaint() {
       const body = m.status === 'pending'
         ? `<div class="act-btns"><button class="act-allow" onclick="actAllow(${i})">✓ Allow</button><button class="act-deny" onclick="actDeny(${i})">✗ Deny</button></div>`
         : m.status === 'working' ? '<div class="act-done">working…</div>'
-        : m.status === 'done' ? `<div class="act-done">✓ ${String(m.result).replace(/</g, '&lt;')}</div>`
+        : m.status === 'done' ? (m.failed
+            ? `<div class="act-denied">✗ ${String(m.result).replace(/</g, '&lt;')}</div>`
+            : `<div class="act-done">✓ ${String(m.result).replace(/</g, '&lt;')}</div>`)
         : '<div class="act-denied">✗ denied · nothing happened</div>';
       return `<div class="chat-b rita chat-act"><div class="act-sum">${m.summary}</div>${body}</div>`;
     }
@@ -2590,17 +2630,11 @@ const K8S_PODS = [
   ['redis-95cdf456f-5st77', 'server-0', ''],
 ];
 /* ---- live operations dashboard: parse THIS deployment's /metrics ---- */
-function parseProm(text) {
-  const m = {};
-  for (const ln of text.split('\n')) {
-    if (!ln || ln[0] === '#') continue;
-    const sp = ln.lastIndexOf(' ');
-    if (sp < 0) continue;
-    const v = parseFloat(ln.slice(sp + 1));
-    if (!isNaN(v)) m[ln.slice(0, sp)] = v;
-  }
-  return m;
-}
+/* Metric parsing, series windowing and chart scaling live in lib.js, where
+   `node --test src/test/js/lib.test.js` can reach them without a browser.
+   They are pure arithmetic, and this panel has been wrong twice · see
+   lib.test.js for what each of them is required to do. */
+const parseProm = MB.parseProm;
 const promSum = (m, prefix) => Object.keys(m).reduce((a, k) =>
   (k === prefix || k.startsWith(prefix + '{')) ? a + m[k] : a, 0);
 function p99(m) {
@@ -2645,52 +2679,34 @@ function drawSpark(id, key, color) {
   const pts = a.map((v, i) => `${(i / (a.length - 1) * W).toFixed(1)},${(H - (v / max) * (H - 4) - 2).toFixed(1)}`).join(' ');
   svg.innerHTML = `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.6" opacity=".95"/>`;
 }
-// per-label RATE of a counter family, seeding prevCounters even on the first tick
-function rateByLabel(m, prefix, labelKey, dtSec) {
-  const out = {};
-  const re = new RegExp(labelKey + '="([^"]+)"');
-  for (const k of Object.keys(m)) {
-    if (!(k === prefix || k.startsWith(prefix + '{'))) continue;
-    const lm = k.match(re), label = lm ? lm[1] : 'all';
-    const prev = DASH.prevCounters[k];
-    DASH.prevCounters[k] = m[k];
-    if (prev != null && dtSec > 0) out[label] = (out[label] || 0) + Math.max(0, (m[k] - prev) / dtSec);
-  }
-  return out;
-}
-// per-label current VALUE of a gauge family
-function gaugeByLabel(m, prefix, labelKey) {
-  const out = {}, re = new RegExp(labelKey + '="([^"]+)"');
-  for (const k of Object.keys(m)) {
-    if (!(k === prefix || k.startsWith(prefix + '{'))) continue;
-    const lm = k.match(re);
-    out[lm ? lm[1] : 'all'] = m[k];
-  }
-  return out;
-}
+const rateByLabel = (m, prefix, labelKey, dtSec) => MB.rateByLabel(m, prefix, labelKey, dtSec, DASH.prevCounters);
+const gaugeByLabel = MB.gaugeByLabel;
 function pushSeries(panel, map, cap = 40) {
-  const s = DASH.series[panel] = DASH.series[panel] || {};
-  const names = new Set([...Object.keys(s), ...Object.keys(map)]);
-  for (const n of names) { (s[n] = s[n] || []).push(map[n] || 0); if (s[n].length > cap) s[n].shift(); }
+  MB.pushSeries(DASH.series[panel] = DASH.series[panel] || {}, map, cap);
 }
-function drawChart(svgId, legId, panelKey, fmt) {
+/* opts.gauge: this panel plots a LEVEL, not a rate · so zero is a real reading
+   (a drained outbox, an idle pool) and the series must still be drawn. For a
+   rate, an all-zero series really does mean "nothing happened", and dropping it
+   keeps the legend honest. opts.floor pins the y-scale so a flat healthy zero
+   stays on the baseline instead of the first single pending row filling the panel.
+   The selection and scaling are MB.chartSeries · unit-tested in lib.test.js. */
+function drawChart(svgId, legId, panelKey, fmt, opts = {}) {
   const svg = document.querySelector('#' + svgId); if (!svg) return;
   const s = DASH.series[panelKey] || {};
-  const names = Object.keys(s).filter(n => s[n].some(v => v > 0)).sort();
   const W = 400, H = 118;
-  let max = 0.001, len = 1;
-  for (const n of names) { len = Math.max(len, s[n].length); for (const v of s[n]) if (v > max) max = v; }
+  const { names, max, len } = MB.chartSeries(s, opts);
   let paths = '';
   for (const n of names) {
     const a = s[n]; if (a.length < 2) continue;
-    const pts = a.map((v, i) => `${(i / (len - 1) * W).toFixed(1)},${(H - (v / max) * (H - 8) - 4).toFixed(1)}`).join(' ');
+    const pts = MB.chartPoints(a, max, W, H, len)
+      .map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
     paths += `<polyline points="${pts}" fill="none" stroke="${dashColor(n)}" stroke-width="1.5" opacity=".92"/>`;
   }
   svg.innerHTML = `<line x1="0" y1="${H - 0.5}" x2="${W}" y2="${H - 0.5}" stroke="var(--line)" stroke-width="1"/>` + paths;
   const leg = document.querySelector('#' + legId);
   if (leg) leg.innerHTML = names.length
     ? names.map(n => `<span class="dp-leg"><span class="dp-sw" style="background:${dashColor(n)}"></span>${n.replace(/</g, '&lt;')} <b>${fmt(s[n][s[n].length - 1] || 0)}</b></span>`).join('')
-    : '<span style="color:#4a5568">quiet · no activity in this window</span>';
+    : `<span style="color:#4a5568">${opts.quiet || 'quiet · no activity in this window'}</span>`;
 }
 
 async function dashTick() {
@@ -2728,8 +2744,8 @@ async function dashTick() {
   const f2 = v => v.toFixed(v < 10 ? 1 : 0), f0 = v => Math.round(v).toString();
   drawChart('d-routes', 'd-routes-leg', 'routes', f2);
   drawChart('d-events', 'd-events-leg', 'events', f2);
-  drawChart('d-outbox', 'd-outbox-leg', 'outbox', f0);
-  drawChart('d-pool', 'd-pool-leg', 'pool', f0);
+  drawChart('d-outbox', 'd-outbox-leg', 'outbox', f0, { gauge: true, floor: 1, quiet: 'waiting for the first scrape…' });
+  drawChart('d-pool', 'd-pool-leg', 'pool', f0, { gauge: true, floor: 1, quiet: 'waiting for the first scrape…' });
 
   const c = document.querySelector('#dash-clock'); if (c) c.textContent = 'updated ' + new Date(now).toLocaleTimeString();
 }

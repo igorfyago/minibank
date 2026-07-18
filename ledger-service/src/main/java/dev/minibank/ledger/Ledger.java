@@ -18,7 +18,7 @@ import java.util.UUID;
  * the ledger remains the truth, the cache is a projection, and a
  * reconciliation query can always prove they agree.
  *
- * THE CONCURRENCY POINT TO INTERNALIZE (system-design interview gold):
+ * THE CONCURRENCY POINT TO INTERNALIZE (the crux of the whole design):
  * correctness does NOT come from Java. `synchronized` or ReentrantLock only
  * protect ONE JVM · production runs many instances against one database, so
  * the database must own the locking. Java's job is throughput (virtual
@@ -283,7 +283,10 @@ public final class Ledger {
         try (PreparedStatement ps = c.prepareStatement("SELECT balance FROM accounts WHERE id = ?")) {
             ps.setLong(1, accountId);
             try (ResultSet rs = ps.executeQuery()) {
-                rs.next();
+                // an absent account is NOT a zero balance · reading it as one
+                // is how a shelf stranded on another shard shows up in the
+                // app as "€0.00" instead of as the error it is
+                if (!rs.next()) throw new IllegalArgumentException("no such account: " + accountId);
                 return rs.getBigDecimal(1);
             }
         }

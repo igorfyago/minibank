@@ -13,7 +13,7 @@ A neobank built from first principles, one lesson at a time. **Raw Java 21, no f
 | Tab | What it is |
 |---|---|
 | **App** | A working neobank: customers in two REGIONS (eu/uk on separate Postgres servers), instant in-region payments, cross-region payments that settle over Kafka (honestly `Pending` until the arrival commits), savings, a credit card with a real authorize/capture/release lifecycle, Bitcoin & Apple stock on a **multi-currency ledger at live prices**, personal loans, external IBAN transfers, self-serve signup with a residency choice, PWA install, and **Rita**, an LLM support agent with the same powers as the buttons, gated by an Allow/Deny card on every action. |
-| **X-ray** | The exact architecture, drawn live: every real process and database as a labeled node, particle animations replaying real events, distributed **tracing assembled from the timestamps the system already writes**, a per-component row inspector, live invariant audits, and a Guide that explains anything clicked at three depths (Plainly / Mechanism / Interview answer). |
+| **X-ray** | The exact architecture, drawn live: every real process and database as a labeled node, particle animations replaying real events, distributed **tracing assembled from the timestamps the system already writes**, a per-component row inspector, live invariant audits, and a Guide that explains anything clicked at three depths (Plainly / Mechanism / Deep dive). |
 | **Console** | The pipeline as a page: **SQL Studio** (the four real databases, IDE-style: exact queries, syntax-highlighted, timed, zero injection surface) flowing into the **Kafka Console** (the broker itself: true offsets, the exact bytes, and live consumer-group LAG from the admin API). |
 | **Quiz** | 24 questions the site asks about its own architecture. Pass the bank's quiz and you understand the bank. |
 
@@ -52,7 +52,7 @@ Every design decision is recorded and argued; the point of this repo is understa
 - **D1** Raw JDBC via `DriverManager`, one connection per call, *deliberately naive*; stage 4 measures the cost and fixes it.
 - **D2** Each racing test thread gets its own connection; sharing one connection would queue, not race; real systems race because every request has its own connection.
 - **D3** Stage 0 stores balance as a mutable column, *deliberately wrong*; stage 1 replaces it with an append-only ledger and shows why.
-- **D4** (Igor) Ledger schema: double-entry with a cached balance, built as pure double-entry first, cache derived after, chosen to maximise interview-relevant depth: the sum-to-zero invariant, truth-vs-projection, and reconciliation.
+- **D4** (Igor) Ledger schema: double-entry with a cached balance, built as pure double-entry first, cache derived after, chosen to maximise the depth actually worth understanding: the sum-to-zero invariant, truth-vs-projection, and reconciliation.
 - **D5** Money only enters the bank by transfer: accounts are born empty and the external *world* account funds them (going negative, its job). Keeps the invariant pure: cache == SUM(entries), always, for everyone.
 - **D6** Business rules live in the schema: the balance check is kind-aware: customers never negative, externals unbounded.
 - **D8** Events are written into the SAME database transaction as the money (the transactional outbox); a relay ships them to Kafka afterwards. You cannot commit atomically across two systems, so we only ever commit to one.

@@ -55,6 +55,22 @@ public final class Shard {
     public static final long BROKER_BTC = 5;
     public static final long BROKER_AAPL = 6;
     public static final long CAFE = 7;
+    /** A clearing account PER CURRENCY. The sum-zero audit groups by
+     *  (tx_id, currency), so a BTC balance cannot ride a EUR clearing
+     *  account: the tx would sum to zero overall and to non-zero in each
+     *  currency alone. Real banks hold one nostro per currency for the
+     *  same reason. Used when a relocation moves a whole product shelf. */
+    public static final long IN_TRANSIT_BTC = 8;
+    public static final long IN_TRANSIT_AAPL = 9;
+
+    /** The clearing account money of this currency travels through. */
+    public static long inTransitFor(String currency) {
+        return switch (currency) {
+            case "BTC"  -> IN_TRANSIT_BTC;
+            case "AAPL" -> IN_TRANSIT_AAPL;
+            default     -> IN_TRANSIT;
+        };
+    }
 
     public final int index;
     public final String name;
@@ -80,6 +96,8 @@ public final class Shard {
             Ledger.createSchemaOn(c);
             ensureSystemAccount(c, WORLD, "world", "EUR");
             ensureSystemAccount(c, IN_TRANSIT, "in_transit", "EUR");
+            ensureSystemAccount(c, IN_TRANSIT_BTC, "in_transit", "BTC");
+            ensureSystemAccount(c, IN_TRANSIT_AAPL, "in_transit", "AAPL");
             ensureSystemAccount(c, BROKER_EUR, "broker", "EUR");
             ensureSystemAccount(c, BROKER_BTC, "broker", "BTC");
             ensureSystemAccount(c, BROKER_AAPL, "broker", "AAPL");
@@ -262,6 +280,111 @@ public final class Shard {
             ps.setLong(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // the shelf mover · relocation moves EVERY account, not just the main one
+    // ------------------------------------------------------------------
+    /**
+     * Take an account's ENTIRE balance out of this shard, into the clearing
+     * account of its OWN currency. The saga's depart(), generalized on the
+     * two axes a product shelf needs:
+     *
+     *   SIGN      savings travel as a credit, a card debt as a debit. Both
+     *             are "move the balance to zero", so both are the same line
+     *             of code · which is the honest double-entry answer to
+     *             "how do you move a liability between machines".
+     *   CURRENCY  the clearing leg matches the account's currency, so the
+     *             per-currency sum-zero audit passes on BOTH shards.
+     *
+     * No funds check: this moves exactly what is there, so it cannot
+     * overdraw, and the account lands on exactly zero. Returns the amount
+     * moved (ZERO for an already-empty account · entries forbid amount = 0).
+     */
+    public BigDecimal departBalance(UUID txId, long accountId) throws SQLException {
+        try (Connection conn = open()) {
+            conn.setAutoCommit(false);
+            try {
+                if (!Ledger.claimTx(conn, txId, "relocate:depart")) {
+                    // a replayed leg answers with what it moved the first
+                    // time, so the caller's arrive() can still finish
+                    conn.rollback();
+                    return movedAmount(conn, txId, accountId).negate();
+                }
+                // currency first, WITHOUT a lock: it never changes, and we
+                // need it to know which clearing account to lock. Then lock
+                // ascending (clearing ids are < 10, accounts >= 10), the
+                // same global ordering rule every other transaction obeys.
+                long clearing = inTransitFor(currencyOf(conn, accountId));
+                Ledger.lockAccount(conn, clearing);
+                BigDecimal amount = Ledger.lockAccount(conn, accountId).balance();
+                if (amount.signum() == 0) {          // nothing to move
+                    conn.commit();
+                    return BigDecimal.ZERO;
+                }
+                Ledger.insertEntry(conn, txId, accountId, amount.negate());
+                Ledger.insertEntry(conn, txId, clearing, amount);
+                Ledger.updateCachedBalance(conn, accountId, amount.negate());
+                Ledger.updateCachedBalance(conn, clearing, amount);
+                conn.commit();
+                return amount;
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            }
+        }
+    }
+
+    /** The other half: the same amount lands on this shard, out of the
+     *  matching clearing account. Gated by the SAME txId on THIS shard's
+     *  transactions table · replay lands the money once. Returns true only
+     *  when THIS call is the one that moved it, so callers can report what
+     *  actually happened instead of what was attempted. */
+    public boolean arriveBalance(UUID txId, long accountId, BigDecimal amount) throws SQLException {
+        if (amount.signum() == 0) return false;
+        try (Connection conn = open()) {
+            conn.setAutoCommit(false);
+            try {
+                if (!Ledger.claimTx(conn, txId, "relocate:arrive")) {
+                    conn.rollback();
+                    return false;
+                }
+                long clearing = inTransitFor(currencyOf(conn, accountId));
+                Ledger.lockAccount(conn, clearing);
+                Ledger.lockAccount(conn, accountId);
+                Ledger.insertEntry(conn, txId, clearing, amount.negate());
+                Ledger.insertEntry(conn, txId, accountId, amount);
+                Ledger.updateCachedBalance(conn, clearing, amount.negate());
+                Ledger.updateCachedBalance(conn, accountId, amount);
+                conn.commit();
+                return true;
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            }
+        }
+    }
+
+    /** what a given tx already moved out of a given account (replay support) */
+    private static BigDecimal movedAmount(Connection c, UUID txId, long accountId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT amount FROM entries WHERE tx_id = ? AND account_id = ?")) {
+            ps.setObject(1, txId);
+            ps.setLong(2, accountId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getBigDecimal(1) : BigDecimal.ZERO;
+            }
+        }
+    }
+
+    private static String currencyOf(Connection c, long accountId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT currency FROM accounts WHERE id = ?")) {
+            ps.setLong(1, accountId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) throw new IllegalArgumentException("no such account: " + accountId);
+                return rs.getString(1);
             }
         }
     }

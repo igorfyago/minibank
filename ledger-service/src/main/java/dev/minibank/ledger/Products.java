@@ -35,6 +35,8 @@ import java.util.UUID;
 public final class Products {
 
     public static final long SAVINGS = 100, BTC = 200, AAPL = 300, CARD = 400, LOAN = 500, HOLDS = 600;
+    /** every offset of the shelf, in id order · relocation walks this */
+    public static final long[] OFFSETS = {SAVINGS, BTC, AAPL, CARD, LOAN, HOLDS};
     public static final BigDecimal MORTGAGE_CAP = new BigDecimal("20000.00");
 
     private Products() {}
@@ -42,7 +44,13 @@ public final class Products {
     /** Idempotent: create the customer's product accounts on their home
      *  shard and point the directory at them. Safe to run every boot. */
     public static void ensureFor(long customerId) throws SQLException {
-        Shard home = Shards.forCustomer(customerId);
+        ensureOn(Shards.forCustomer(customerId), customerId);
+    }
+
+    /** The same, on an EXPLICIT shard. Relocation needs this: mid-move the
+     *  router refuses to answer for this customer (that is the write-pause),
+     *  so the destination shard has to be named rather than looked up. */
+    public static void ensureOn(Shard home, long customerId) throws SQLException {
         try (Connection c = home.open()) {
             ensure(c, customerId + SAVINGS, "savings", "customer", "EUR");
             ensure(c, customerId + BTC, "bitcoin", "customer", "BTC");
@@ -57,7 +65,7 @@ public final class Products {
                 ps.executeUpdate();
             }
         }
-        for (long off : new long[]{SAVINGS, BTC, AAPL, CARD, LOAN, HOLDS}) {
+        for (long off : OFFSETS) {
             try {
                 Directory.register(customerId + off, label(off), home.index);
             } catch (Exception ignored) {

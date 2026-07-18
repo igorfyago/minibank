@@ -136,6 +136,19 @@ public final class Directory {
         cache.remove(customerId);
     }
 
+    /** Every real customer, ids only (product accounts route through the
+     *  same table but are not customers · they live at offsets >= 100). */
+    public static java.util.List<Long> customerIds() throws SQLException {
+        java.util.List<Long> ids = new java.util.ArrayList<>();
+        try (Connection c = openOwnDb();
+             var st = c.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT customer_id FROM customers WHERE customer_id < 100 ORDER BY customer_id")) {
+            while (rs.next()) ids.add(rs.getLong(1));
+        }
+        return ids;
+    }
+
     /** read-only connection for the API layer (the X-ray shows the routing table). */
     public static Connection openForRead() throws SQLException {
         return openOwnDb();
