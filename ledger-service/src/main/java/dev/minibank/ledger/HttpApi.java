@@ -46,6 +46,7 @@ public final class HttpApi {
         // quietly acquiring the cardholder's powers.
         server.createContext("/issuer/v1/instruments", ex -> handle(ex, HttpApi::issuerInstrument));
         server.createContext("/issuer/v1/authorizations", ex -> handle(ex, HttpApi::issuerAuthorize));
+        server.createContext("/issuer/v1/clearing", ex -> handle(ex, HttpApi::issuerClearing));
         server.createContext("/api/signup", ex -> handle(ex, HttpApi::signup));
         server.createContext("/api/support", ex -> handle(ex, HttpApi::support));
         server.createContext("/api/prices/history", ex -> handle(ex, HttpApi::priceHistory));
@@ -1168,6 +1169,54 @@ public final class HttpApi {
             return Response.json(400, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");
         }
     }
+
+    /**
+     * Accept a clearing batch from an acquirer.
+     *
+     * The reply carries the issuer's OWN total, not the one it was sent. Two
+     * organisations sharing no database computing the same figure and then
+     * comparing is the entire mechanism, and an issuer that echoed the
+     * acquirer's number back would make every reconciliation pass and mean
+     * nothing.
+     */
+    private static Response issuerClearing(HttpExchange ex) throws Exception {
+        if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
+        String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        try {
+            String batch = Json.str(body, "batch");
+            String currency = Json.str(body, "currency");
+            String date = Json.str(body, "business_date");
+            if (batch == null || date == null) return Response.json(400, "{\"error\":\"need batch, business_date\"}");
+
+            // The lines, scanned out of the array. The codec here is a scanner
+            // rather than a parser, so the pairs are read positionally, which is
+            // fine for a flat array and stated plainly as the limit it is.
+            java.util.List<java.util.Map.Entry<java.util.UUID, java.math.BigDecimal>> lines =
+                    new java.util.ArrayList<>();
+            java.util.List<String> refs = Json.each(body, "authorization");
+            java.util.List<String> amounts = Json.each(body, "amount");
+            for (int i = 0; i < Math.min(refs.size(), amounts.size()); i++) {
+                lines.add(java.util.Map.entry(java.util.UUID.fromString(refs.get(i)),
+                        new java.math.BigDecimal(amounts.get(i))));
+            }
+
+            Issuer.Cleared c = Issuer.clear(batch, currency == null ? "EUR" : currency,
+                    java.time.LocalDate.parse(date),
+                    new java.math.BigDecimal(orElse(Json.str(body, "gross"), "0")),
+                    new java.math.BigDecimal(orElse(Json.str(body, "net"), "0")),
+                    lines, businessTime(Json.str(body, "business_at")));
+
+            return Response.json(200, "{\"reference\":\"" + Json.esc(c.batchId())
+                    + "\",\"gross\":\"" + c.settledGross().toPlainString()
+                    + "\",\"interchange\":\"" + c.interchange().toPlainString()
+                    + "\",\"net\":\"" + c.settledNet().toPlainString()
+                    + "\",\"matched\":" + c.matched() + ",\"unmatched\":" + c.unmatched() + "}");
+        } catch (IllegalArgumentException e) {
+            return Response.json(400, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");
+        }
+    }
+
+    private static String orElse(String v, String fallback) { return v == null || v.isBlank() ? fallback : v; }
 
     /** Absent means now, because a browser has no business time. Unreadable is
      *  a caller bug and is said so, never silently replaced with the clock. */

@@ -306,4 +306,116 @@ public final class Issuer {
             ps.executeUpdate();
         }
     }
+
+    // -------------------------------------------------------------- clearing
+
+    /** What this issuer worked out for itself about a batch an acquirer sent. */
+    public record Cleared(String batchId, BigDecimal settledGross, BigDecimal interchange,
+                          BigDecimal settledNet, int matched, int unmatched) {}
+
+    /**
+     * The issuer's interchange: what it keeps for having lent the customer the
+     * money and carried the risk. A real rate is a matrix of card type,
+     * merchant category and geography, and one number here is a deliberate
+     * simplification worth naming rather than implying interchange is simple.
+     */
+    public static volatile BigDecimal interchangeRate = new BigDecimal("0.008");
+
+    /**
+     * Accept a clearing batch, and WORK OUT THE TOTAL INDEPENDENTLY.
+     *
+     * The acquirer sends what it believes it is owed. This does not use that
+     * number for anything except recording what was claimed. The value of a
+     * clearing message is that two organisations sharing no database arrive at
+     * the same figure on their own and then compare, and an issuer that adopted
+     * the acquirer's total would make every reconciliation pass and mean
+     * nothing. The disagreement is the signal.
+     *
+     * A line that matches no authorisation this bank is carrying is counted as
+     * UNMATCHED rather than rejected or ignored. Rejecting the batch would
+     * punish a hundred good lines for one bad one; ignoring it would hide the
+     * only evidence of a dispute.
+     *
+     * Idempotent by the batch id and by a primary key on each authorisation, so
+     * an acquirer that resends is not paid twice.
+     */
+    public static Cleared clear(String batchId, String currency, java.time.LocalDate businessDate,
+                                BigDecimal claimedGross, BigDecimal claimedNet,
+                                java.util.List<java.util.Map.Entry<UUID, BigDecimal>> lines,
+                                Instant businessAt) throws SQLException {
+        Cleared existing = clearedBatch(batchId);
+        if (existing != null) return existing;    // a resend is the same batch
+
+        BigDecimal settledGross = BigDecimal.ZERO, interchange = BigDecimal.ZERO;
+        int matched = 0, unmatched = 0;
+        java.util.List<Object[]> rows = new java.util.ArrayList<>();
+
+        for (var line : lines) {
+            Existing auth = load(line.getKey());
+            // A line clears only if this bank is actually carrying that
+            // authorisation and the amount agrees with what it approved. An
+            // acquirer clearing more than was authorised is the oldest trick in
+            // the business and it is caught here, on the issuer's own record.
+            boolean ok = auth != null
+                    && ("captured".equals(auth.state()) || "approved".equals(auth.state()))
+                    && auth.amount() != null && auth.amount().compareTo(line.getValue()) == 0;
+            BigDecimal fee = ok
+                    ? line.getValue().multiply(interchangeRate).setScale(2, java.math.RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+            if (ok) {
+                settledGross = settledGross.add(line.getValue());
+                interchange = interchange.add(fee);
+                matched++;
+            } else {
+                unmatched++;
+            }
+            rows.add(new Object[]{line.getKey(), line.getValue(), fee, ok});
+        }
+        BigDecimal settledNet = settledGross.subtract(interchange);
+
+        try (Connection c = Directory.openForRead()) {
+            c.setAutoCommit(false);
+            try {
+                try (PreparedStatement ps = c.prepareStatement("""
+                        INSERT INTO clearing_batches(id, currency, business_date, claimed_gross, claimed_net,
+                                                     settled_gross, interchange, settled_net, matched, unmatched,
+                                                     business_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING""")) {
+                    ps.setString(1, batchId); ps.setString(2, currency); ps.setObject(3, businessDate);
+                    ps.setBigDecimal(4, claimedGross); ps.setBigDecimal(5, claimedNet);
+                    ps.setBigDecimal(6, settledGross); ps.setBigDecimal(7, interchange);
+                    ps.setBigDecimal(8, settledNet);
+                    ps.setInt(9, matched); ps.setInt(10, unmatched);
+                    ps.setTimestamp(11, java.sql.Timestamp.from(businessAt));
+                    if (ps.executeUpdate() == 0) { c.rollback(); return clearedBatch(batchId); }
+                }
+                for (Object[] r : rows) {
+                    try (PreparedStatement ps = c.prepareStatement("""
+                            INSERT INTO clearing_lines(authorization_id, batch_id, amount, interchange, matched)
+                            VALUES (?,?,?,?,?) ON CONFLICT (authorization_id) DO NOTHING""")) {
+                        ps.setObject(1, r[0]); ps.setString(2, batchId);
+                        ps.setBigDecimal(3, (BigDecimal) r[1]); ps.setBigDecimal(4, (BigDecimal) r[2]);
+                        ps.setBoolean(5, (Boolean) r[3]);
+                        ps.executeUpdate();
+                    }
+                }
+                c.commit();
+            } catch (SQLException | RuntimeException e) { c.rollback(); throw e; }
+        }
+        return new Cleared(batchId, settledGross, interchange, settledNet, matched, unmatched);
+    }
+
+    public static Cleared clearedBatch(String batchId) throws SQLException {
+        try (Connection c = Directory.openForRead();
+             PreparedStatement ps = c.prepareStatement("""
+                     SELECT settled_gross, interchange, settled_net, matched, unmatched
+                       FROM clearing_batches WHERE id = ?""")) {
+            ps.setString(1, batchId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return null;
+                return new Cleared(batchId, rs.getBigDecimal(1), rs.getBigDecimal(2),
+                        rs.getBigDecimal(3), rs.getInt(4), rs.getInt(5));
+            }
+        }
+    }
 }

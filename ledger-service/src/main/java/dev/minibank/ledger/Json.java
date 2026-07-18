@@ -20,6 +20,30 @@ public final class Json {
     }
 
     /** Extract "field":"value" (string) from a flat JSON object; null if absent. */
+    /**
+     * Every value for a field, in document order.
+     *
+     * str() returns only the FIRST match in the whole document, which is right
+     * for a flat object and useless for an array of them: a clearing batch of
+     * two hundred lines would read back as one. Still a scanner rather than a
+     * parser, so it cannot tell a nested field from a top-level one, and for
+     * the flat arrays these messages carry that is sufficient. Stated here so
+     * the limit is a known cost rather than a surprise.
+     */
+    public static java.util.List<String> each(String json, String field) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (json == null) return out;
+        String needle = "\"" + field + "\"";
+        int from = 0;
+        while (true) {
+            int i = json.indexOf(needle, from);
+            if (i < 0) return out;
+            String v = str(json.substring(i), field);
+            if (v != null) out.add(v);
+            from = i + needle.length();
+        }
+    }
+
     public static String str(String json, String field) {
         var m = java.util.regex.Pattern
                 .compile("\"" + java.util.regex.Pattern.quote(field) + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
