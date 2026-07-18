@@ -368,14 +368,23 @@ That's a staff engineer / architect level story.
 
 | File | Purpose | Status |
 |------|---------|--------|
-| `sso-service/src/main/java/dev/b4rruf3t/sso/SsoServer.java` | HTTP server, routes | pending |
-| `sso-service/src/main/java/dev/b4rruf3t/sso/UserDirectory.java` | User CRUD | pending |
-| `sso-service/src/main/java/dev/b4rruf3t/sso/TokenIssuer.java` | JWT signing | pending |
-| `sso-service/src/main/java/dev/b4rruf3t/sso/KeyManager.java` | RSA keypair | pending |
-| `sso-service/src/main/java/dev/b4rruf3t/sso/SessionStore.java` | Refresh tokens | pending |
-| `sso-service/src/main/resources/db/migration/V1__users.sql` | Users table | pending |
-| `sso-service/src/main/resources/db/migration/V2__sessions.sql` | Sessions table | pending |
-| `sso-client/src/main/java/dev/b4rruf3t/sso/client/SsoClient.java` | JWT validation | pending |
-| `sso-client/src/main/java/dev/b4rruf3t/sso/client/Jwks.java` | JWKS fetching | pending |
-| `sso-client/src/main/java/dev/b4rruf3t/sso/client/SsoUser.java` | User model | pending |
-| `docs/sso-architecture.md` | This document | done |
+| `sso-service/src/main/java/dev/b4rruf3t/sso/SsoServer.java` | HTTP server, routes, CORS, cookies | ✅ built + e2e tested |
+| `sso-service/src/main/java/dev/b4rruf3t/sso/UserDirectory.java` | User CRUD | ✅ built + tested |
+| `sso-service/src/main/java/dev/b4rruf3t/sso/TokenIssuer.java` | JWT signing | ✅ built + tested |
+| `sso-service/src/main/java/dev/b4rruf3t/sso/KeyManager.java` | RSA keypair | ✅ built + tested |
+| `sso-service/src/main/java/dev/b4rruf3t/sso/SessionStore.java` | Refresh tokens | ✅ built + tested |
+| `sso-service/src/main/java/dev/b4rruf3t/sso/MemoryDb.java` | In-memory directory (demo/smoke) | ✅ built + tested |
+| `sso-service/src/main/resources/db/migration/V1__users.sql` | Users table | ✅ built |
+| `sso-service/src/main/resources/db/migration/V2__sessions.sql` | Sessions table | ✅ built |
+| `sso-service/src/main/resources/web/login.html` | Login/register UI | ✅ built |
+| `sso-service/src/main/resources/web/eco-nav.html` | Shared estate nav header | ✅ built |
+| `sso-client/src/main/java/dev/b4rruf3t/sso/client/SsoClient.java` | JWT validation | ✅ built + tested |
+| `sso-client/src/main/java/dev/b4rruf3t/sso/client/Jwks.java` | JWKS fetching | ✅ built + tested |
+| `sso-client/src/main/java/dev/b4rruf3t/sso/client/SsoUser.java` | User model | ✅ built |
+| `ledger-service/src/main/java/dev/minibank/auth/BankAuth.java` | minibank JWT middleware | ✅ built + tested |
+| `ledger-service/src/main/resources/db/auth/V1__sso_customers.sql` | sub→customer mapping | ✅ built |
+| `docs/sso-architecture.md` | Architecture document | ✅ this file |
+| `docs/sso-integration-guide.md` | Per-app integration guide | ✅ done |
+
+**Test status: 38/38 green** — 35 unit tests + 3 end-to-end HTTP tests
+(register → login → estate cookie → refresh rotation → JWKS → CORS).

@@ -47,6 +47,8 @@ public final class SsoServer {
         server.createContext("/v1/users/me", ex -> handle(ex, this::me));
         server.createContext("/.well-known/jwks.json", ex -> handle(ex, this::jwks));
         server.createContext("/health", ex -> handle(ex, this::health));
+        server.createContext("/login", ex -> handle(ex, this::loginPage));
+        server.createContext("/", ex -> handle(ex, this::root));
 
         server.setExecutor(null);
         server.start();
@@ -95,6 +97,12 @@ public final class SsoServer {
             900  // 15 minutes
         );
         String refreshToken = sessions.createSession(userId.get(), 30);
+        // The cookie is what makes "log in once, recognized everywhere" true:
+        // Domain=.b4rruf3t.com covers every app in the estate, so mart/desk/pay
+        // can exchange it for a fresh access token on first visit.
+        ex.getResponseHeaders().add("Set-Cookie",
+            "b4rruf3t_refresh=" + refreshToken +
+            "; Domain=.b4rruf3t.com; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=" + (30 * 86400));
         return Response.json(200, String.format(
             "{\"access_token\":\"%s\",\"refresh_token\":\"%s\",\"token_type\":\"Bearer\",\"expires_in\":900}",
             accessToken, refreshToken));
@@ -102,8 +110,14 @@ public final class SsoServer {
 
     private Response refresh(HttpExchange ex) throws IOException {
         if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"method not allowed\"}");
+        // The refresh token arrives in the body (first-party JS on the same
+        // subdomain) OR in the estate cookie (arriving at a new subdomain
+        // with nothing in localStorage yet). Body wins; cookie is the fallback.
         String body = readBody(ex);
         String refreshToken = Json.str(body, "refresh_token");
+        if (refreshToken == null) {
+            refreshToken = cookieValue(ex, "b4rruf3t_refresh");
+        }
         if (refreshToken == null) {
             return Response.json(400, "{\"error\":\"need refresh_token\"}");
         }
@@ -114,6 +128,9 @@ public final class SsoServer {
         // Rotate: revoke old, create new
         sessions.revoke(refreshToken);
         String newRefreshToken = sessions.createSession(userId.get(), 30);
+        ex.getResponseHeaders().add("Set-Cookie",
+            "b4rruf3t_refresh=" + newRefreshToken +
+            "; Domain=.b4rruf3t.com; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=" + (30 * 86400));
         Optional<UserDirectory.User> user = users.findById(userId.get());
         if (user.isEmpty()) {
             return Response.json(500, "{\"error\":\"user not found\"}");
@@ -134,9 +151,15 @@ public final class SsoServer {
         if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"method not allowed\"}");
         String body = readBody(ex);
         String refreshToken = Json.str(body, "refresh_token");
+        if (refreshToken == null) {
+            refreshToken = cookieValue(ex, "b4rruf3t_refresh");
+        }
         if (refreshToken != null) {
             sessions.revoke(refreshToken);
         }
+        // Clear the estate cookie either way — logout must be complete
+        ex.getResponseHeaders().add("Set-Cookie",
+            "b4rruf3t_refresh=; Domain=.b4rruf3t.com; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
         return Response.json(200, "{\"ok\":true}");
     }
 
@@ -177,12 +200,56 @@ public final class SsoServer {
         return Response.json(200, "{\"status\":\"ok\",\"service\":\"sso\"}");
     }
 
+    /** The login page — the front door of the whole estate. */
+    private Response loginPage(HttpExchange ex) throws IOException {
+        if (!"GET".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"method not allowed\"}");
+        try (var in = getClass().getResourceAsStream("/web/login.html")) {
+            if (in == null) return Response.json(404, "{\"error\":\"login page not found\"}");
+            String html = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            return new Response(200, html, "text/html; charset=utf-8");
+        }
+    }
+
+    /** Root: signed-in? → /v1/users/me is one fetch away. Otherwise → /login. */
+    private Response root(HttpExchange ex) {
+        if (!"/".equals(ex.getRequestURI().getPath())) {
+            return Response.json(404, "{\"error\":\"not found\"}");
+        }
+        ex.getResponseHeaders().add("Location", "/login");
+        return new Response(302, "", "text/plain");
+    }
+
+    /** Read one cookie from the Cookie header. Null if absent. */
+    private String cookieValue(HttpExchange ex, String name) {
+        String header = ex.getRequestHeaders().getFirst("Cookie");
+        if (header == null) return null;
+        for (String pair : header.split(";")) {
+            String[] kv = pair.trim().split("=", 2);
+            if (kv.length == 2 && kv[0].equals(name)) return kv[1];
+        }
+        return null;
+    }
+
     // --- helpers ---
 
     private void handle(HttpExchange ex, Handler handler) {
         try {
+            // CORS: apps on sibling subdomains call the auth API with the
+            // estate cookie. Allow any b4rruf3t origin, with credentials.
+            String origin = ex.getRequestHeaders().getFirst("Origin");
+            if (origin != null && origin.endsWith(".b4rruf3t.com")) {
+                ex.getResponseHeaders().set("Access-Control-Allow-Origin", origin);
+                ex.getResponseHeaders().set("Access-Control-Allow-Credentials", "true");
+                ex.getResponseHeaders().set("Vary", "Origin");
+            }
+            if ("OPTIONS".equals(ex.getRequestMethod())) {
+                ex.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                ex.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+                ex.sendResponseHeaders(204, -1);
+                return;
+            }
             Response r = handler.handle(ex);
-            ex.getResponseHeaders().set("Content-Type", "application/json");
+            ex.getResponseHeaders().set("Content-Type", r.contentType);
             ex.sendResponseHeaders(r.status, r.body.getBytes(StandardCharsets.UTF_8).length);
             try (OutputStream os = ex.getResponseBody()) {
                 os.write(r.body.getBytes(StandardCharsets.UTF_8));
@@ -214,7 +281,9 @@ public final class SsoServer {
         Response handle(HttpExchange ex) throws IOException;
     }
 
-    private record Response(int status, String body) {
-        static Response json(int status, String body) { return new Response(status, body); }
+    private record Response(int status, String body, String contentType) {
+        static Response json(int status, String body) {
+            return new Response(status, body, "application/json");
+        }
     }
 }

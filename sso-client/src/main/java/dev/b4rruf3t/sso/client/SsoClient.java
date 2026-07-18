@@ -1,47 +1,48 @@
 package dev.b4rruf3t.sso.client;
 
-import java.math.BigInteger;
-import java.security.KeyFactory;
 import java.security.Signature;
 import java.security.interfaces.RSAPublicKey;
-import java.security.spec.RSAPublicKeySpec;
 import java.time.Instant;
 import java.util.Base64;
-import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 
 /**
  * Validates JWTs issued by the b4rruf3t SSO service.
- * Fetches public keys from the JWKS endpoint, caches them locally.
+ * Public keys come from a JWKS source — over HTTP in production,
+ * from a fixed key in tests.
  */
 public final class SsoClient {
     private final String issuer;
-    private final Jwks jwks;
+    private final Function<String, RSAPublicKey> keyResolver;
 
+    /** Production: resolve keys from the SSO service's JWKS endpoint. */
     public SsoClient(String issuer) {
+        this(issuer, new Jwks(issuer + "/.well-known/jwks.json")::getPublicKey);
+    }
+
+    /** Test/advanced: resolve keys however you like (e.g. a fixed test key). */
+    public SsoClient(String issuer, Function<String, RSAPublicKey> keyResolver) {
         this.issuer = issuer;
-        this.jwks = new Jwks(issuer + "/.well-known/jwks.json");
+        this.keyResolver = keyResolver;
     }
 
     /**
      * Validate a JWT. Returns the user if valid, empty otherwise.
-     * Checks: signature, expiry, issuer, audience.
+     * Checks: structure, signature, expiry, issuer, audience.
      */
     public Optional<SsoUser> validateToken(String jwt, String expectedAudience) {
         try {
             String[] parts = jwt.split("\\.");
             if (parts.length != 3) return Optional.empty();
 
-            // Decode header
             String headerJson = new String(Base64.getUrlDecoder().decode(parts[0]));
             String kid = extractJsonField(headerJson, "kid");
             if (kid == null) return Optional.empty();
 
-            // Get public key
-            RSAPublicKey publicKey = jwks.getPublicKey(kid);
+            RSAPublicKey publicKey = keyResolver.apply(kid);
             if (publicKey == null) return Optional.empty();
 
-            // Verify signature
             Signature sig = Signature.getInstance("SHA256withRSA");
             sig.initVerify(publicKey);
             sig.update((parts[0] + "." + parts[1]).getBytes("UTF-8"));
@@ -49,29 +50,22 @@ public final class SsoClient {
                 return Optional.empty();
             }
 
-            // Decode payload
             String payloadJson = new String(Base64.getUrlDecoder().decode(parts[1]));
 
-            // Check expiry
-            long exp = Long.parseLong(extractJsonField(payloadJson, "exp"));
-            if (Instant.now().getEpochSecond() > exp) {
+            String expStr = extractJsonNumber(payloadJson, "exp");
+            if (expStr == null || Instant.now().getEpochSecond() > Long.parseLong(expStr)) {
                 return Optional.empty();
             }
 
-            // Check issuer
             String iss = extractJsonField(payloadJson, "iss");
-            if (!issuer.equals(iss)) {
+            if (!issuer.equals(iss)) return Optional.empty();
+
+            if (expectedAudience != null && !hasAudience(payloadJson, expectedAudience)) {
                 return Optional.empty();
             }
 
-            // Check audience
-            String audJson = extractJsonArrayField(payloadJson, "aud");
-            if (expectedAudience != null && !audJson.contains(expectedAudience)) {
-                return Optional.empty();
-            }
-
-            // Extract user info
             String sub = extractJsonField(payloadJson, "sub");
+            if (sub == null) return Optional.empty();
             String name = extractJsonField(payloadJson, "name");
             String email = extractJsonField(payloadJson, "email");
 
@@ -81,17 +75,29 @@ public final class SsoClient {
         }
     }
 
+    /** Exact audience match: parse the aud array and compare element-wise. */
+    private boolean hasAudience(String payloadJson, String expected) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("\"aud\"\\s*:\\s*\\[([^\\]]*)\\]")
+            .matcher(payloadJson);
+        if (!m.find()) return false;
+        for (String entry : m.group(1).split(",")) {
+            if (entry.trim().replace("\"", "").equals(expected)) return true;
+        }
+        return false;
+    }
+
     private String extractJsonField(String json, String field) {
-        java.util.regex.Pattern p = java.util.regex.Pattern.compile(
-            "\"" + field + "\"\\s*:\\s*\"([^\"]*)\"");
-        java.util.regex.Matcher m = p.matcher(json);
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("\"" + field + "\"\\s*:\\s*\"([^\"]*)\"")
+            .matcher(json);
         return m.find() ? m.group(1) : null;
     }
 
-    private String extractJsonArrayField(String json, String field) {
-        java.util.regex.Pattern p = java.util.regex.Pattern.compile(
-            "\"" + field + "\"\\s*:\\s*\\[([^\\]]*)\\]");
-        java.util.regex.Matcher m = p.matcher(json);
-        return m.find() ? m.group(1) : "";
+    private String extractJsonNumber(String json, String field) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("\"" + field + "\"\\s*:\\s*(\\d+)")
+            .matcher(json);
+        return m.find() ? m.group(1) : null;
     }
 }

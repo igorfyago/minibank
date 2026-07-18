@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0d1117">
+<title>b4rruf3t · sign in</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#21262d; --text:#e6edf3; --dim:#8b949e;
+          --green:#3fb950; --red:#f85149; --accent:#58a6ff; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--text); font:14px/1.5 system-ui,'Segoe UI',sans-serif;
+         min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+          padding:32px; width:100%; max-width:380px; }
+  .brand { text-align:center; margin-bottom:6px; font-size:22px; font-weight:700; }
+  .brand span { color:var(--accent); }
+  .sub { text-align:center; color:var(--dim); font-size:12.5px; margin-bottom:24px; }
+  label { display:block; font-size:12px; color:var(--dim); margin:14px 0 4px;
+          text-transform:uppercase; letter-spacing:.05em; }
+  input { width:100%; background:var(--bg); border:1px solid var(--line); color:var(--text);
+          padding:10px 12px; border-radius:8px; font:14px system-ui; }
+  input:focus { outline:none; border-color:var(--accent); }
+  button { width:100%; margin-top:22px; background:var(--accent); border:none; color:#fff;
+           padding:11px; border-radius:8px; font:600 14px system-ui; cursor:pointer; }
+  button:hover { filter:brightness(1.1); }
+  button:disabled { opacity:.5; cursor:default; }
+  .err { color:var(--red); font-size:12.5px; margin-top:12px; text-align:center; min-height:18px; }
+  .swap { text-align:center; margin-top:18px; font-size:13px; color:var(--dim); }
+  .swap a { color:var(--accent); text-decoration:none; }
+  .swap a:hover { text-decoration:underline; }
+  #name-field { display:none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand">b4rruf<span>3</span>t</div>
+  <div class="sub" id="subtitle">one login for the whole estate</div>
+
+  <div id="name-field">
+    <label for="name">Display name</label>
+    <input id="name" type="text" autocomplete="name" placeholder="what the apps call you">
+  </div>
+
+  <label for="email">Email</label>
+  <input id="email" type="email" autocomplete="email" placeholder="you@example.com">
+
+  <label for="password">Password</label>
+  <input id="password" type="password" autocomplete="current-password" placeholder="••••••••">
+
+  <button id="go" onclick="submit()">Sign in</button>
+  <div class="err" id="err"></div>
+
+  <div class="swap">
+    <span id="swap-text">New here?</span>
+    <a href="#" id="swap-link" onclick="toggleMode();return false">Create an account</a>
+  </div>
+</div>
+
+<script>
+const API = location.origin;  // this page is served by the auth service itself
+let mode = 'login';
+
+// Where to go after auth — the app the user was trying to reach
+const next = new URLSearchParams(location.search).get('next')
+          || 'https://bank.b4rruf3t.com';
+
+function toggleMode() {
+  mode = mode === 'login' ? 'register' : 'login';
+  document.getElementById('name-field').style.display = mode === 'register' ? 'block' : 'none';
+  document.getElementById('go').textContent = mode === 'register' ? 'Create account' : 'Sign in';
+  document.getElementById('swap-text').textContent = mode === 'register' ? 'Already have an account?' : 'New here?';
+  document.getElementById('swap-link').textContent = mode === 'register' ? 'Sign in' : 'Create an account';
+  document.getElementById('subtitle').textContent = mode === 'register'
+    ? 'one account, every app — bank, shop, trade, pay' : 'one login for the whole estate';
+  err('');
+}
+
+function err(msg) { document.getElementById('err').textContent = msg; }
+
+async function submit() {
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  const name = document.getElementById('name').value.trim();
+  if (!email || !password) return err('email and password, please');
+
+  const btn = document.getElementById('go');
+  btn.disabled = true; err('');
+
+  try {
+    if (mode === 'register') {
+      const r = await fetch(API + '/v1/users', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ email, password, name: name || null })
+      });
+      if (r.status === 409) { err('that email is already registered — sign in instead'); btn.disabled = false; return; }
+      if (!r.ok) { err('registration failed'); btn.disabled = false; return; }
+    }
+
+    const r = await fetch(API + '/v1/tokens', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      credentials: 'include',   // the refresh cookie rides along
+      body: JSON.stringify({ email, password })
+    });
+    if (r.status === 401) { err(mode === 'register' ? 'account created — wrong password?' : 'wrong email or password'); btn.disabled = false; return; }
+    if (!r.ok) { err('sign-in failed'); btn.disabled = false; return; }
+
+    const data = await r.json();
+    localStorage.setItem('b4rruf3t_token', data.access_token);
+    localStorage.setItem('b4rruf3t_refresh', data.refresh_token);
+
+    // back to wherever the user was headed
+    location.href = next;
+  } catch (e) {
+    err('network error — is the auth service up?');
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('password').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submit();
+});
+</script>
+</body>
+</html>
