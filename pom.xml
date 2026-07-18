@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>dev.b4rruf3t</groupId>
+  <artifactId>minibank-reactor</artifactId>
+  <version>0.1.0</version>
+  <packaging>pom</packaging>
+  <name>minibank-reactor</name>
+  <description>Builds the whole bank in one command: the ledger, the identity service, and the client library every other app validates tokens with.</description>
+
+  <!-- AN AGGREGATOR, DELIBERATELY NOT A PARENT.
+       =========================================
+
+       This file exists so `mvn test` at the repo root builds all three
+       modules in dependency order instead of three separate invocations
+       that are easy to run inconsistently, and easy to forget one of.
+
+       It does NOT declare itself the parent of the modules, and the modules
+       do NOT point a <parent> at it. That is the tempting next step, because
+       the three poms genuinely repeat themselves: the same compiler release,
+       the same encoding, the same junit-bom import. Hoisting all of that is
+       the obvious DRY win and it would break the deploy.
+
+       The reason is the Dockerfiles. Both ledger-service/Dockerfile and
+       sso-service/Dockerfile build with the MODULE directory as the build
+       context and start with `COPY pom.xml .`, then run maven inside the
+       image. A module whose pom names a parent one level up cannot resolve
+       that parent from inside a context that does not contain it, so the
+       image build fails with a non-resolvable parent POM before it compiles
+       a line. Those images are the deploy artifact, and the sso-service one
+       has been built and booted as part of a release gate.
+
+       So: aggregation now, which is free and breaks nothing. Turning this
+       into a real parent means also teaching both Dockerfiles to copy the
+       root pom and build from the repo root, which changes a verified deploy
+       artifact and belongs in its own change, after auth.b4rruf3t.com is
+       actually live, not in the same breath as it.
+
+       Module order below is dependency order, not alphabetical: sso-client
+       is the library sso-service and the estate's apps validate tokens with,
+       so it is built first. Maven would work this out from the coordinates
+       anyway; writing it in the intended order makes the dependency legible
+       to a person reading the file. -->
+
+  <modules>
+    <module>sso-client</module>
+    <module>sso-service</module>
+    <module>ledger-service</module>
+  </modules>
+
+</project>
