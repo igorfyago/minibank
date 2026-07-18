@@ -427,6 +427,11 @@
   #q-explain { margin-top:12px; padding:12px; border:1px solid var(--line); border-radius:8px;
                font-size:13px; display:none; }
   /* Rita · the support agent */
+  /* The hero is a full-screen takeover at z-index 50 and the launcher sat at 55,
+     so Rita floated on top of it and opened a second full-screen surface over a
+     first one that was never dismissed. Two competing takeovers, neither aware
+     of the other. While the hero is up, the launcher is not. */
+  #hero:not(.hidden) ~ #chat-fab { display:none; }
   #chat-fab { position:fixed; right:20px; bottom:46px; z-index:55; width:54px; height:54px; border-radius:50%;
     border:none; background:linear-gradient(135deg, var(--accent), var(--violet)); color:#fff; font-size:23px;
     cursor:pointer; box-shadow:0 6px 24px rgba(88,166,255,.35); transition:transform .15s; }
@@ -2276,7 +2281,7 @@ const SHOW = [
     run: () => gShow('shard0'), dwell: 4800 },
   { cap: 'Everything explains itself at three depths, down to its actual database rows. This is the routing directory · the real one.',
     run: () => { gShow('api'); inspect('api'); }, dwell: 4800 },
-  { cap: 'And the architecture maps itself to the questions it answers: twelve of them, from lost updates to resharding.',
+  { cap: 'And the architecture maps itself to the questions it answers: sixteen of them, from lost updates to resharding.',
     run: () => { const q = document.querySelector('.q-acc[data-i="9"]'); if (q) { q.classList.add('open'); qOnMap(9); q.scrollIntoView({ behavior: 'smooth', block: 'center' }); } }, dwell: 5200 },
   { cap: 'Raw Java 21 · zero frameworks · 30 executable lessons prove every mechanism · built from first principles · github.com/igorfyago/minibank',
     run: () => window.scrollTo({ top: 0, behavior: 'smooth' }), dwell: 6500 },

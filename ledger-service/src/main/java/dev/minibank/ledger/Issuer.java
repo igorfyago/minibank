@@ -179,6 +179,13 @@ public final class Issuer {
         String reason = approved ? null
                 : result instanceof Ledger.InsufficientFunds ? "insufficient credit"
                 : "card unavailable";
+        // The card rail is the acquirer's traffic, and it arrives over HTTP from
+        // minipay rather than from anyone using this bank's own screens, so it
+        // was entirely absent from the money graph. A decline is counted too:
+        // an issuer that declines is working, and a graph that only shows
+        // approvals cannot tell a quiet night from a broken limit check.
+        Metrics.inc("minibank_ledger_events_total",
+                approved ? "kind=\"card_authorized\"" : "kind=\"card_declined\"");
         return record(authorizationId, token, customerId, amount, currency,
                 approved ? "approved" : "declined", reason, businessAt);
     }
@@ -203,6 +210,7 @@ public final class Issuer {
         // the ledger refused, so the state must go back rather than claim a
         // capture that never moved anything
         if (!ok) claimState(authorizationId, "captured", "approved", businessAt);
+        else Metrics.inc("minibank_ledger_events_total", "kind=\"card_captured\"");
         return ok;
     }
 
@@ -221,6 +229,7 @@ public final class Issuer {
         Ledger.TransferResult r = Products.release(authorizationId, a.customerId());
         boolean ok = r instanceof Ledger.Ok || r instanceof Ledger.AlreadyProcessed;
         if (!ok) claimState(authorizationId, "voided", "approved", businessAt);
+        else Metrics.inc("minibank_ledger_events_total", "kind=\"card_released\"");
         return ok;
     }
 

@@ -145,7 +145,12 @@ class MetricsCoverageLessonTest {
         // The original gap: everything reachable from a user's click was
         // counted, and everything the bank did on its own was not. A dashboard
         // built from that shows a bank that only works when someone is looking.
-        for (String file : List.of("OutboxRelay.java", "ShardApplier.java")) {
+        // Every class here moves money on a thread nobody is watching: the relay
+        // and applier on Kafka, Products on the broker's settlement callback,
+        // the Issuer on the acquirer's HTTP call from minipay, Shard on the
+        // compensating refund. None of them were reporting anything.
+        for (String file : List.of("OutboxRelay.java", "ShardApplier.java",
+                                   "Products.java", "Issuer.java", "Shard.java")) {
             assertTrue(read(file).contains("Metrics."),
                     file + " sits on the money path and must report what it does. "
                             + "Without it the operations dashboard cannot see any work "

@@ -264,6 +264,10 @@ public final class Products {
                         "\",\"units\":\"" + units.toPlainString() +
                         "\",\"cash\":\"" + cash.toPlainString() + "\"}");
                 conn.commit();
+                // A broker fill settling is money moving, and it arrives from
+                // the broker's thread rather than from anyone's click, which is
+                // exactly the class of event the dashboard used to be blind to.
+                Metrics.inc("minibank_ledger_events_total", "kind=\"fill_settled\"");
                 return new Ledger.Ok();
             } catch (Exception e) {
                 conn.rollback();
@@ -336,6 +340,7 @@ public final class Products {
                         "{\"type\":\"mortgage.approved\",\"txId\":\"" + txId +
                         "\",\"customer\":" + customerId + ",\"amount\":\"" + amount.toPlainString() + "\"}");
                 conn.commit();
+                Metrics.inc("minibank_ledger_events_total", "kind=\"loan_disbursed\"");
                 return new Ledger.Ok();
             } catch (Exception e) {
                 conn.rollback();
