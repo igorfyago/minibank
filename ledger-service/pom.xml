@@ -17,8 +17,12 @@
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <!-- set true on a machine without node · the JS unit tests are then skipped -->
-    <skip.js.tests>false</skip.js.tests>
+    <!-- The JS unit tests need node on PATH. -DskipTests only silences
+         surefire, so it is wired through here too: the Docker build passes
+         -DskipTests and its maven image has no node. -Dskip.js.tests=true
+         skips only these, keeping the Java tests. -->
+    <skipTests>false</skipTests>
+    <skip.js.tests>${skipTests}</skip.js.tests>
   </properties>
 
   <!-- align every junit-platform artifact (Spock brings its own) to the
