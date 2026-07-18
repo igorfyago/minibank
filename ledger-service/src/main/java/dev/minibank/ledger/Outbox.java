@@ -4,6 +4,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -91,14 +92,30 @@ public final class Outbox {
      *  will be sent again = at-least-once. Never mark before sending. */
     public static void markPublished(long id) throws SQLException {
         try (Connection c = Db.open()) {
-            markPublishedOn(c, id);
+            markPublishedOn(c, id, Instant.now());
         }
     }
 
-    public static void markPublishedOn(Connection c, long id) throws SQLException {
+    /**
+     * The instant is the caller's, and that is the whole point.
+     *
+     * This used to write now(), which is the time of the UPDATE: one database
+     * round trip AFTER the broker acked, by which time the consumer in another
+     * region may already have received the message, applied it and finished. A
+     * trace built from that reads "uk received a message that had not been sent
+     * yet", because the label says acked and the number meant marked.
+     *
+     * Two smaller traps go with it. Postgres now() is TRANSACTION time, not
+     * statement time, so a batch marked inside one transaction would collapse
+     * onto a single instant and the trace would sort arbitrary ties. And the
+     * timestamp would be the database's clock rather than the clock that
+     * observed the ack. Passing the instant in settles all three.
+     */
+    public static void markPublishedOn(Connection c, long id, Instant ackedAt) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "UPDATE outbox SET published_at = now() WHERE id = ?")) {
-            ps.setLong(1, id);
+                "UPDATE outbox SET published_at = ? WHERE id = ?")) {
+            ps.setTimestamp(1, java.sql.Timestamp.from(ackedAt));
+            ps.setLong(2, id);
             ps.executeUpdate();
         }
     }

@@ -256,7 +256,7 @@ class SettlementSagaLessonTest {
             for (Outbox.Event e : Outbox.pollUnpublishedOn(c, 50)) {
                 if (Settlement.TOPIC_SETTLEMENTS.equals(e.topic()))
                     SettlementConsumer.handle(broker, e.payload());
-                Outbox.markPublishedOn(c, e.id());
+                Outbox.markPublishedOn(c, e.id(), java.time.Instant.now());
             }
         }
     }

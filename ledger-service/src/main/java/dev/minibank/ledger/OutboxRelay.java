@@ -44,14 +44,22 @@ public final class OutboxRelay implements AutoCloseable {
         try (java.sql.Connection c = db.open()) {
             List<Outbox.Event> events = Outbox.pollUnpublishedOn(c, 100);
             for (Outbox.Event e : events) {
+                java.time.Instant acked;
                 try {
                     // send synchronously: only after the broker acks do we mark.
                     producer.send(new ProducerRecord<>(e.topic(), e.key(), e.payload())).get();
+                    // THIS instant, not the one the UPDATE below happens to land
+                    // on. The moment the broker acks, the message is on the
+                    // topic and a consumer in another region can already be
+                    // acting on it. Everything after this line is bookkeeping,
+                    // and timing the bookkeeping is what made the trace claim
+                    // uk received a message before eu sent it.
+                    acked = java.time.Instant.now();
                 } catch (Exception ex) {
                     Metrics.inc("minibank_ledger_events_total", "kind=\"publish_failed\"");
                     throw new RuntimeException("publish failed for outbox id " + e.id(), ex);
                 }
-                Outbox.markPublishedOn(c, e.id());   // crash before this line -> resent later. At-least-once.
+                Outbox.markPublishedOn(c, e.id(), acked);   // crash before this line -> resent later. At-least-once.
                 // Counted AFTER the mark, not after the send. A row that reached
                 // the broker but was not marked will be sent again, and the
                 // honest reading of that is two publishes, because that is what

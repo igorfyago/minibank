@@ -1418,13 +1418,17 @@ const EDGES = {
   applier_shard0:[140,328,222,266], applier_shard1:[178,328,396,268],
   kafka_notif:[455,356,507,356]
 };
-function pulse(edge, color = 'var(--accent)', delay = 0) {
+/* dur matters. It used to be hardcoded at 700ms while playTrace gives most
+   steps 450, so a step's bullets were still in the air two steps later and the
+   map showed three hops happening at once. A replay is a claim about ORDER, so
+   a hop has to land before the next one leaves. */
+function pulse(edge, color = 'var(--accent)', delay = 0, dur = 700) {
   const e = EDGES[edge]; if (!e) return;
   setTimeout(() => {
     const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     c.setAttribute('r', 4.5); c.setAttribute('class', 'pulse-dot'); c.style.color = color; c.setAttribute('fill', color);
     $('#pulse-layer').appendChild(c);
-    const t0 = performance.now(), D = 700;
+    const t0 = performance.now(), D = Math.max(120, dur);
     (function step(now) {
       const k = Math.min((now - t0) / D, 1);
       c.setAttribute('cx', e[0] + (e[2] - e[0]) * k);
@@ -1872,12 +1876,15 @@ async function xrayTick() {
   lastSummary = s; latestEvents = evs;
 
   const fly = $('#inflight-num'), flying = parseFloat(s.inFlight) !== 0;
-  if (fly.textContent !== '€' + s.inFlight) {
+  if (replayInFlight != null) { /* a replay owns this box right now */ }
+  else if (fly.textContent !== '€' + s.inFlight) {
     fly.parentNode.classList.remove('inflight-pop'); void fly.parentNode.getBoundingClientRect();
     fly.parentNode.classList.add('inflight-pop');
     fly.textContent = '€' + s.inFlight;
   }
-  fly.style.fill = flying ? 'var(--amber)' : '';
+  // not during a replay: the box is showing what WAS in flight, and the live
+  // reading is zero, which would strip the colour off a true statement
+  if (replayInFlight == null) fly.style.fill = flying ? 'var(--amber)' : '';
   const s0 = `:5434 · pool ${s.shards[0].poolBusy}/${s.shards[0].poolSize} · outbox ${s.shards[0].outboxPending}`;
   const s1 = `:5435 · pool ${s.shards[1].poolBusy}/${s.shards[1].poolSize} · outbox ${s.shards[1].outboxPending}`;
   if ($('#shard0-sub').textContent !== s0) $('#shard0-sub').textContent = s0;
@@ -1999,13 +2006,32 @@ const STEP_NODE = {
 let playTimers = [], following = null, playedSteps = 0;
 function stopPlay() { playTimers.forEach(clearTimeout); playTimers = []; following = null; }
 
-function playSegment(st, i, n) {
+function playSegment(st, i, n, window = 700) {
   document.querySelectorAll('.trace-step').forEach((el, j) => el.classList.toggle('active', j === i));
-  (STEP_EDGES[st.step] || (() => []))(st).forEach((e2, j) =>
-    pulse(e2, st.step === 'depart' ? 'var(--amber)' : st.step === 'notify' ? 'var(--green)' : 'var(--accent)', j * 260));
+  const edges = (STEP_EDGES[st.step] || (() => []))(st);
+  const color = st.step === 'depart' ? 'var(--amber)' : st.step === 'notify' ? 'var(--green)' : 'var(--accent)';
+  // divide this step's window between its edges, and leave a small gap so two
+  // hops of one step still read as two hops rather than one long smear
+  const slice = edges.length ? window / edges.length : window;
+  edges.forEach((e2, j) => pulse(e2, color, j * slice, slice * 0.88));
   const nd = (STEP_NODE[st.step] || (() => null))(st);
-  if (nd) glow(nd);
+  if (nd) glow(nd, nd === 'intransit' ? 'hot-amber' : 'hot', Math.max(600, window));
   $('#play-caption').textContent = `step ${i + 1}/${n} · ${st.detail} · ${st.region}`;
+}
+
+/* While a replay is showing what WAS in flight, the 2s poller must not
+   overwrite it with what is in flight now, which is nothing. null hands the
+   box back. */
+let replayInFlight = null;
+function showReplayInFlight(amount) {
+  replayInFlight = amount == null ? null : amount;
+  const fly = $('#inflight-num'); if (!fly) return;
+  if (replayInFlight == null) return;    // the next xrayTick restores the live value
+  fly.textContent = '€' + Number(amount).toFixed(2);
+  fly.style.fill = 'var(--amber)';
+  fly.parentNode.classList.remove('inflight-pop');
+  void fly.parentNode.getBoundingClientRect();
+  fly.parentNode.classList.add('inflight-pop');
 }
 
 function playTrace(tr) {
@@ -2013,9 +2039,17 @@ function playTrace(tr) {
   const steps = tr.steps; if (!steps || steps.length < 2) return;
   const t0 = new Date(steps[0].ts).getTime();
   const realTotal = Math.max(new Date(steps[steps.length - 1].ts).getTime() - t0, 1);
-  // scale the real gaps into a ~3s show; every chapter gets ≥450ms of fame
+  /* Scale the real gaps into a ~3s show, with a floor AND a ceiling.
+     The floor alone was not enough. A cross-region journey is mostly one wait:
+     eu departs, then 475ms of a 520ms journey passes before the relay's ack.
+     Scaled proportionally that single hop took 2.4 seconds of a 3 second replay
+     and the remaining three fired in a clump at the end, which reads as "these
+     are not happening in order" even though they are.
+     The printed deltas next to each step are where the real timing is told
+     exactly. The animation's job is to show the ORDER, so no hop is allowed to
+     eat the show. */
   const durs = steps.map((s2, i) => i === 0 ? 450 :
-    Math.max(450, (new Date(s2.ts) - new Date(steps[i - 1].ts)) / realTotal * 3000));
+    Math.min(1100, Math.max(450, (new Date(s2.ts) - new Date(steps[i - 1].ts)) / realTotal * 3000)));
   const total = durs.reduce((a, b2) => a + b2, 0);
   $('#play-wrap').hidden = false;
   const fill = $('#play-fill');
@@ -2025,7 +2059,11 @@ function playTrace(tr) {
   steps.forEach((s2, i) => {
     const at = acc, w = ((acc + durs[i]) / total * 100);
     playTimers.push(setTimeout(() => {
-      playSegment(s2, i, steps.length);
+      playSegment(s2, i, steps.length, durs[i]);
+      // The money is in the pipe from the moment it departs until it arrives,
+      // so the replay says so instead of showing the live zero.
+      if (s2.step === 'depart') showReplayInFlight(tr.amount);
+      if (s2.step === 'arrive' || s2.step === 'refund') showReplayInFlight(null);
       fill.style.transition = `width ${durs[i]}ms linear`;
       fill.style.width = w + '%';
     }, at));
@@ -2033,6 +2071,7 @@ function playTrace(tr) {
   });
   playTimers.push(setTimeout(() => {
     document.querySelectorAll('.trace-step').forEach(el => el.classList.remove('active'));
+    showReplayInFlight(null);   // hand the box back to the live number
     $('#play-caption').textContent = `✓ real journey, real timestamps · ${realTotal}ms end to end, replayed slow enough to read`;
   }, acc + 250));
 }
