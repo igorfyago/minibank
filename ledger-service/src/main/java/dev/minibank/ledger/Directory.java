@@ -60,15 +60,9 @@ public final class Directory {
                 }
             }
         }
-        try (Connection c = openOwnDb(); var st = c.createStatement()) {
-            st.execute("""
-                CREATE TABLE IF NOT EXISTS customers (
-                    customer_id BIGINT PRIMARY KEY,
-                    owner       TEXT NOT NULL,
-                    shard       INT  NOT NULL,
-                    moving      BOOLEAN NOT NULL DEFAULT false
-                )""");
-        }
+        // Flyway owns the directory schema · db/directory/V*.sql
+        String url = base.substring(0, base.lastIndexOf('/') + 1) + DB;
+        Migrate.run(url, "minibank", "minibank", "classpath:db/directory");
     }
 
     /** First registration wins; re-registering an existing customer is a

@@ -40,6 +40,18 @@
       <artifactId>jedis</artifactId>
       <version>5.1.5</version>
     </dependency>
+    <!-- Flyway: versioned SQL migrations. A library that owns the schema ·
+         the DDL lives in db/*/V*.sql, not scattered through Java. -->
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+      <version>10.20.1</version>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+      <version>10.20.1</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

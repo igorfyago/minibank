@@ -40,14 +40,10 @@ public final class Notifications {
                 }
             }
         }
-        try (Connection c = openOwnDb(); var st = c.createStatement()) {
-            st.execute("""
-                CREATE TABLE IF NOT EXISTS notifications (
-                    event_key  TEXT PRIMARY KEY,   -- the tx id: our idempotency key
-                    message    TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                )""");
-        }
+        // Flyway owns the notifications schema · db/notifications/V*.sql
+        String base = System.getenv().getOrDefault("MINIBANK_DB_URL", "jdbc:postgresql://localhost:5433/minibank");
+        String url = base.substring(0, base.lastIndexOf('/') + 1) + DB;
+        Migrate.run(url, "minibank", "minibank", "classpath:db/notifications");
     }
 
     /** Handle one event. Safe to call any number of times with the same event. */

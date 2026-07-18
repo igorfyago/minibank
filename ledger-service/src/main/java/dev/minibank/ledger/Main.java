@@ -27,10 +27,14 @@ public final class Main {
         // Absent or down? The bank runs identically, just without the cache.
         Cache.init(System.getenv().getOrDefault("REDIS_URL", "redis://localhost:6379"));
 
-        Shards.boot(
-                System.getenv().getOrDefault("MINIBANK_SHARD0_URL", "jdbc:postgresql://localhost:5434/minibank"),
-                System.getenv().getOrDefault("MINIBANK_SHARD1_URL", "jdbc:postgresql://localhost:5435/minibank"),
-                "minibank", "minibank", poolSize);
+        String shard0Url = System.getenv().getOrDefault("MINIBANK_SHARD0_URL", "jdbc:postgresql://localhost:5434/minibank");
+        String shard1Url = System.getenv().getOrDefault("MINIBANK_SHARD1_URL", "jdbc:postgresql://localhost:5435/minibank");
+        Shards.boot(shard0Url, shard1Url, "minibank", "minibank", poolSize);
+
+        // Flyway migrates each shard database from db/shard/V*.sql BEFORE any
+        // seeding · the schema is versioned SQL, recorded in flyway_schema_history.
+        Migrate.run(shard0Url, "minibank", "minibank", "classpath:db/shard");
+        Migrate.run(shard1Url, "minibank", "minibank", "classpath:db/shard");
 
         // STAGE 6: the shards become REGIONS · routing by residency
         // (directory lookup), not by arithmetic. igor starts in eu, coco

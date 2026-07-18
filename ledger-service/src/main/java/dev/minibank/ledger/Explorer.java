@@ -66,7 +66,19 @@ public final class Explorer {
         new Q("in_flight", "in_transit · this region's slice of money in the pipe", """
             SELECT owner, currency, trim_scale(balance) AS balance
             FROM accounts
-            WHERE id = 3"""));
+            WHERE id = 3"""),
+        new Q("migrations", "flyway · every schema migration this database has applied", """
+            SELECT installed_rank AS "#", version, description, type,
+                   success, to_char(installed_on, 'HH24:MI:SS') AS at
+            FROM flyway_schema_history
+            ORDER BY installed_rank"""));
+
+    private static final Q MIGRATIONS =
+        new Q("migrations", "flyway · every schema migration this database has applied", """
+            SELECT installed_rank AS "#", version, description, type,
+                   success, to_char(installed_on, 'HH24:MI:SS') AS at
+            FROM flyway_schema_history
+            ORDER BY installed_rank""");
 
     private static final Map<String, List<Q>> CATALOG = new LinkedHashMap<>();
     static {
@@ -77,7 +89,8 @@ public final class Explorer {
                 SELECT customer_id, owner,
                        CASE WHEN shard = 0 THEN 'eu' ELSE 'uk' END AS region, moving
                 FROM customers
-                ORDER BY customer_id""")));
+                ORDER BY customer_id"""),
+            MIGRATIONS));
         CATALOG.put("notifications", List.of(
             new Q("notifications", "notifications · the idempotent consumer's own table (latest 20)", """
                 SELECT substr(event_key, 1, 22) AS event_key,
@@ -85,7 +98,8 @@ public final class Explorer {
                        to_char(created_at, 'HH24:MI:SS') AS at
                 FROM notifications
                 ORDER BY created_at DESC
-                LIMIT 20""")));
+                LIMIT 20"""),
+            MIGRATIONS));
     }
 
     private static final Map<String, String> DB_TITLES = Map.of(
