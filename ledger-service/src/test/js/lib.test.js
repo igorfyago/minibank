@@ -592,9 +592,17 @@ const CASES = [
   { name: 'cross-region uk to eu',
     steps: [{ step: 'depart', region: 'uk' }, { step: 'published', region: 'uk' },
             { step: 'arrive', region: 'eu' }, { step: 'notify', region: 'notifications' }] },
+  // A bounce writes TWO outbox rows, "departed:<tx>" and "bounced:<tx>", and
+  // the trace query matches both. So ONE user action legitimately produces two
+  // published steps and two notify steps, and the shard->kafka->notif leg is
+  // walked twice. That is not the "second loop" bug, it is the compensating
+  // transaction being honest about itself.
   { name: 'bounced saga, the refund path',
     steps: [{ step: 'depart', region: 'eu' }, { step: 'published', region: 'eu' },
-            { step: 'refund', region: 'eu' }] },
+            { step: 'notify', region: 'notifications' }, { step: 'refund', region: 'eu' },
+            { step: 'published', region: 'eu' }, { step: 'notify', region: 'notifications' }] },
+  { name: 'relocation leg, a colon-bearing kind that used to animate as nothing',
+    steps: [{ step: 'relocate:depart', region: 'eu' }, { step: 'relocate:arrive', region: 'uk' }] },
   { name: 'a single step on its own',
     steps: [{ step: 'transfer', region: 'eu' }] },
   { name: 'live vocabulary, transfer_local must mean the same as transfer',
@@ -680,15 +688,24 @@ test('a node lights when the ball gets there, never before', () => {
   }
 });
 
-test('no hop is walked twice, there is no second loop', () => {
+test('a hop repeats only when the SYSTEM repeated it, never because we drew it twice', () => {
+  // The first version of this invariant asserted no hop may ever repeat, and it
+  // was wrong: a bounce really does publish twice and notify twice, because it
+  // writes a second outbox row for the compensating transaction. An invariant
+  // that forbids the truth is worse than no invariant. What must hold is that
+  // the animation repeats a hop exactly as often as the trace does, no more.
   const g = MB.mapGraph(GRAPH_PAIRS);
   for (const c of CASES) {
     const j = MB.journey(c.steps, g);
-    const seen = new Set();
-    for (const h of j.hops) {
-      const k = h.step + ':' + h.from + '>' + h.to;
-      assert.ok(!seen.has(k), c.name + ': ' + k + ' is animated twice');
-      seen.add(k);
+    const stepCount = {};
+    c.steps.forEach(s => { stepCount[MB.stepName(s.step)] = (stepCount[MB.stepName(s.step)] || 0) + 1; });
+    const hopCount = {};
+    j.hops.forEach(h => { const k = h.step + ':' + h.from + '>' + h.to;
+                          hopCount[k] = (hopCount[k] || 0) + 1; });
+    for (const k of Object.keys(hopCount)) {
+      const step = k.split(':')[0] === 'relocate' ? k.split('>')[0].split(':').slice(0,2).join(':') : k.split(':')[0];
+      assert.equal(hopCount[k], stepCount[step] || 0,
+        c.name + ': ' + k + ' drawn ' + hopCount[k] + ' times for ' + (stepCount[step]||0) + ' step(s)');
     }
   }
 });

@@ -406,6 +406,18 @@
     // notifications is a SECOND consumer group on the same topic, so it starts
     // at kafka like the applier does, not at whatever the applier reached.
     notify:    { path: function () { return ['kafka', 'notif']; }, region: 'kafka' },
+    /* A relocation moves a customer's whole shelf, one product account at a
+       time, and each leg claims a transaction kind with a COLON in it. Neither
+       old animation table had a key for these, so every shelf leg drew
+       absolutely nothing: up to six departures and six arrivals, silent. They
+       write no outbox row (Shard.java has no append on these paths), so they
+       produce no publish and no notification, and the API talks to the region
+       directly rather than through Kafka. */
+    'relocate:depart': { path: function (r) { return ['browser', 'caddy', 'api', r]; }, state: ['intransit'] },
+    /* The arrival is called DIRECTLY by the relocation, not delivered by Kafka
+       (Relocation.java calls arrive() itself for promptness), so it comes from
+       the API, which the departing leg has already reached. */
+    'relocate:arrive': { path: function (r) { return ['api', r]; } },
   };
 
   /* The live feed and the trace endpoint name the same things differently.
