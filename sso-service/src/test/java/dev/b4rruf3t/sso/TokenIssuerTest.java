@@ -1,19 +1,20 @@
 package dev.b4rruf3t.sso;
 
-import dev.b4rruf3t.sso.client.SsoClient;
-import dev.b4rruf3t.sso.client.SsoUser;
 import org.junit.jupiter.api.Test;
 
+import java.security.Signature;
+import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * The round-trip lesson: a token issued by the SSO service must validate
- * in any app using the sso-client library. This test wires the real issuer
- * to the real client through the public key — the exact path a request
- * takes from bank to mart in production.
+ * The issuer-side lessons, proven without the client library: this module
+ * must not depend on sso-client (the client validates tokens; the service
+ * mints them — the dependency points one way, and tests respect it).
+ * Signature verification here uses java.security directly, the same JDK
+ * calls the client makes.
  */
 class TokenIssuerTest {
 
@@ -21,22 +22,6 @@ class TokenIssuerTest {
 
     private final KeyManager keys = new KeyManager();
     private final TokenIssuer issuer = new TokenIssuer(keys, ISSUER);
-    // The client resolves keys straight from the test keypair — no HTTP needed.
-    private final SsoClient client = new SsoClient(ISSUER, kid -> keys.publicKey());
-
-    @Test
-    void issuedTokenValidatesRoundTrip() {
-        String jwt = issuer.issueAccessToken(
-            "usr_abc123", List.of("bank.b4rruf3t.com", "mart.b4rruf3t.com"),
-            "Igor", "igor@b4rruf3t.com", 900);
-
-        Optional<SsoUser> user = client.validateToken(jwt, "bank.b4rruf3t.com");
-
-        assertTrue(user.isPresent(), "a token the service just issued must validate");
-        assertEquals("usr_abc123", user.get().sub());
-        assertEquals("Igor", user.get().name());
-        assertEquals("igor@b4rruf3t.com", user.get().email());
-    }
 
     @Test
     void tokenHasThreePartsAndRs256Header() {
@@ -46,81 +31,74 @@ class TokenIssuerTest {
         String[] parts = jwt.split("\\.");
         assertEquals(3, parts.length, "a JWT is header.payload.signature");
 
-        String header = new String(java.util.Base64.getUrlDecoder().decode(parts[0]));
+        String header = new String(Base64.getUrlDecoder().decode(parts[0]));
         assertTrue(header.contains("\"alg\":\"RS256\""), "header declares RS256");
         assertTrue(header.contains("\"kid\":\""), "header carries the key id");
         assertFalse(parts[2].isEmpty(), "signature must not be empty");
     }
 
     @Test
-    void wrongAudienceIsRejected() {
+    void signatureVerifiesAgainstThePublicKey() throws Exception {
         String jwt = issuer.issueAccessToken(
-            "usr_abc", List.of("bank.b4rruf3t.com"), "Igor", "i@b.c", 900);
+            "usr_abc123", List.of("bank.b4rruf3t.com"), "Igor", "i@b.c", 900);
 
-        // 'pay' is not in the token's aud list — a substring match must not pass
-        Optional<SsoUser> user = client.validateToken(jwt, "pay.b4rruf3t.com");
+        String[] parts = jwt.split("\\.");
+        Signature sig = Signature.getInstance("SHA256withRSA");
+        sig.initVerify(keys.publicKey());
+        sig.update((parts[0] + "." + parts[1]).getBytes("UTF-8"));
 
-        assertTrue(user.isEmpty(), "a token for bank must not open pay");
+        assertTrue(sig.verify(Base64.getUrlDecoder().decode(parts[2])),
+            "any app holding the public key can prove this token is ours — that is the whole design");
     }
 
     @Test
-    void audienceSubstringDoesNotLeak() {
-        // adversarial: 'bank.b4rruf3t.com' contains 'bank' — a contains() check
-        // would accept 'bank.evil.com'. Ours compares exact elements.
+    void payloadCarriesTheClaims() {
         String jwt = issuer.issueAccessToken(
-            "usr_abc", List.of("bank.b4rruf3t.com"), "Igor", "i@b.c", 900);
+            "usr_abc", List.of("bank.b4rruf3t.com", "mart.b4rruf3t.com"), "Igor", "i@b.c", 900);
 
-        assertTrue(client.validateToken(jwt, "bank").isEmpty(),
-            "bare 'bank' is not an audience, even though it is a substring");
-        assertTrue(client.validateToken(jwt, "bank.b4rruf3t.com.evil").isEmpty(),
-            "a suffixed lookalike is not an audience");
+        String payload = new String(Base64.getUrlDecoder().decode(jwt.split("\\.")[1]));
+        assertTrue(payload.contains("\"iss\":\"" + ISSUER + "\""));
+        assertTrue(payload.contains("\"sub\":\"usr_abc\""));
+        assertTrue(payload.contains("\"aud\":[\"bank.b4rruf3t.com\",\"mart.b4rruf3t.com\"]"));
+        assertTrue(payload.contains("\"exp\":"));
+        assertTrue(payload.contains("\"jti\":\"tok_"));
     }
 
     @Test
-    void expiredTokenIsRejected() {
-        // ttl of -1: already expired when issued
-        String jwt = issuer.issueAccessToken(
-            "usr_abc", List.of("bank.b4rruf3t.com"), "Igor", "i@b.c", -1);
-
-        Optional<SsoUser> user = client.validateToken(jwt, "bank.b4rruf3t.com");
-
-        assertTrue(user.isEmpty(), "an expired token must not validate");
-    }
-
-    @Test
-    void wrongIssuerIsRejected() {
-        TokenIssuer other = new TokenIssuer(keys, "https://evil.example.com");
-        String jwt = other.issueAccessToken(
-            "usr_abc", List.of("bank.b4rruf3t.com"), "Igor", "i@b.c", 900);
-
-        Optional<SsoUser> user = client.validateToken(jwt, "bank.b4rruf3t.com");
-
-        assertTrue(user.isEmpty(), "a token from another issuer must not validate");
-    }
-
-    @Test
-    void tamperedPayloadIsRejected() {
+    void tamperedPayloadBreaksTheSignature() throws Exception {
         String jwt = issuer.issueAccessToken(
             "usr_abc", List.of("bank.b4rruf3t.com"), "Igor", "i@b.c", 900);
 
         String[] parts = jwt.split("\\.");
-        // Forge a payload that says the user is an admin of everything
-        String forgedPayload = "{\"iss\":\"" + ISSUER + "\",\"sub\":\"usr_admin\",\"aud\":[\"bank.b4rruf3t.com\"],\"exp\":9999999999}";
-        String forged = java.util.Base64.getUrlEncoder().withoutPadding()
-            .encodeToString(forgedPayload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        String tampered = parts[0] + "." + forged + "." + parts[2];
+        String forged = Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("{\"iss\":\"" + ISSUER + "\",\"sub\":\"usr_admin\",\"exp\":9999999999}".getBytes());
 
-        Optional<SsoUser> user = client.validateToken(tampered, "bank.b4rruf3t.com");
+        Signature sig = Signature.getInstance("SHA256withRSA");
+        sig.initVerify(keys.publicKey());
+        sig.update((parts[0] + "." + forged).getBytes("UTF-8"));
 
-        assertTrue(user.isEmpty(), "a swapped payload breaks the signature — must not validate");
+        assertFalse(sig.verify(Base64.getUrlDecoder().decode(parts[2])),
+            "swap the payload and the signature no longer matches — forgery fails");
     }
 
     @Test
-    void garbageIsRejectedNotThrown() {
-        assertTrue(client.validateToken("not-a-jwt", "bank.b4rruf3t.com").isEmpty());
-        assertTrue(client.validateToken("", "bank.b4rruf3t.com").isEmpty());
-        assertTrue(client.validateToken("a.b", "bank.b4rruf3t.com").isEmpty());
-        assertTrue(client.validateToken("a.b.c.d", "bank.b4rruf3t.com").isEmpty());
+    void expiryIsInTheFuture() {
+        String jwt = issuer.issueAccessToken(
+            "usr_abc", List.of("bank.b4rruf3t.com"), "Igor", "i@b.c", 900);
+
+        String payload = new String(Base64.getUrlDecoder().decode(jwt.split("\\.")[1]));
+        long exp = Long.parseLong(payload.replaceAll(".*\"exp\":(\\d+).*", "$1"));
+        assertTrue(exp > Instant.now().getEpochSecond(), "a fresh token must not be born dead");
+    }
+
+    @Test
+    void everyTokenGetsAUniqueJti() {
+        String a = issuer.issueAccessToken("usr_x", List.of("bank.b4rruf3t.com"), "A", "a@b.c", 900);
+        String b = issuer.issueAccessToken("usr_x", List.of("bank.b4rruf3t.com"), "A", "a@b.c", 900);
+
+        String jtiA = payloadField(a, "jti");
+        String jtiB = payloadField(b, "jti");
+        assertNotEquals(jtiA, jtiB, "the jti is what lets us revoke one token without revoking all");
     }
 
     @Test
@@ -134,18 +112,8 @@ class TokenIssuerTest {
         assertTrue(jwks.contains("\"alg\":\"RS256\""), "declares the algorithm");
     }
 
-    @Test
-    void everyTokenGetsAUniqueJti() {
-        String a = issuer.issueAccessToken("usr_x", List.of("bank.b4rruf3t.com"), "A", "a@b.c", 900);
-        String b = issuer.issueAccessToken("usr_x", List.of("bank.b4rruf3t.com"), "A", "a@b.c", 900);
-
-        String jtiA = payloadField(a, "jti");
-        String jtiB = payloadField(b, "jti");
-        assertNotEquals(jtiA, jtiB, "the jti is what lets us revoke one token without revoking all");
-    }
-
     private String payloadField(String jwt, String field) {
-        String payload = new String(java.util.Base64.getUrlDecoder().decode(jwt.split("\\.")[1]));
+        String payload = new String(Base64.getUrlDecoder().decode(jwt.split("\\.")[1]));
         java.util.regex.Matcher m = java.util.regex.Pattern
             .compile("\"" + field + "\"\\s*:\\s*\"([^\"]*)\"")
             .matcher(payload);

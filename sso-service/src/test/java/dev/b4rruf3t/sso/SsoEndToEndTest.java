@@ -1,16 +1,18 @@
 package dev.b4rruf3t.sso;
 
-import dev.b4rruf3t.sso.client.SsoClient;
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigInteger;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.List;
-import java.util.Optional;
+import java.security.KeyFactory;
+import java.security.Signature;
+import java.security.interfaces.RSAPublicKey;
+import java.security.spec.RSAPublicKeySpec;
+import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -72,12 +74,22 @@ class SsoEndToEndTest {
             "the cookie covers every subdomain — that is the whole point");
         assertTrue(setCookie.get().contains("HttpOnly"));
 
-        // the token validates client-side against the live JWKS endpoint
-        SsoClient client = new SsoClient(BASE);
-        var user = client.validateToken(accessToken, "bank.b4rruf3t.com");
-        assertTrue(user.isPresent(), "a token from the live service validates via live JWKS");
-        assertEquals("igor@b4rruf3t.com", user.get().email());
-        assertEquals("Igor", user.get().name());
+        // the token validates against the live JWKS endpoint, the way any
+        // third party (an app, a script, curl + a JWT debugger) would prove
+        // it: fetch the public key, verify the signature with java.security.
+        // This module does not depend on sso-client — the dependency points
+        // one way, and the test respects it.
+        RSAPublicKey publicKey = fetchPublicKeyFromJwks();
+        String[] parts = accessToken.split("\\.");
+        Signature sig = Signature.getInstance("SHA256withRSA");
+        sig.initVerify(publicKey);
+        sig.update((parts[0] + "." + parts[1]).getBytes("UTF-8"));
+        assertTrue(sig.verify(Base64.getUrlDecoder().decode(parts[2])),
+            "a token from the live service verifies against the live JWKS");
+
+        String payload = new String(Base64.getUrlDecoder().decode(parts[1]));
+        assertTrue(payload.contains("\"sub\":\"usr_"), "the token names its user");
+        assertTrue(payload.contains("bank.b4rruf3t.com"), "the token names its audiences");
 
         // /v1/users/me with the bearer token
         var me = http.send(HttpRequest.newBuilder(URI.create(BASE + "/v1/users/me"))
@@ -151,6 +163,20 @@ class SsoEndToEndTest {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json)).build(),
             HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** Fetch and rebuild the RSA public key from the live JWKS endpoint —
+     *  the exact steps any third party takes, with no client library. */
+    private RSAPublicKey fetchPublicKeyFromJwks() throws Exception {
+        var res = http.send(HttpRequest.newBuilder(URI.create(BASE + "/.well-known/jwks.json")).GET().build(),
+            HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, res.statusCode(), "the JWKS endpoint is public");
+        String n = jsonField(res.body(), "n");
+        String e = jsonField(res.body(), "e");
+        var spec = new RSAPublicKeySpec(
+            new BigInteger(1, Base64.getUrlDecoder().decode(n)),
+            new BigInteger(1, Base64.getUrlDecoder().decode(e)));
+        return (RSAPublicKey) KeyFactory.getInstance("RSA").generatePublic(spec);
     }
 
     private String jsonField(String json, String field) {
