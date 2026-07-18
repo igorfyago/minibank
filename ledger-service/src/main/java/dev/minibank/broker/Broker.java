@@ -191,6 +191,92 @@ public final class Broker {
     }
 
     /**
+     * The ledger settled it · the order is done.
+     *
+     * Idempotent by being a narrowed UPDATE rather than a read-then-write:
+     * a redelivered settlement matches no rows the second time.
+     */
+    public void markSettled(UUID fillId) throws SQLException {
+        try (Connection c = BrokerDb.open();
+             PreparedStatement ps = c.prepareStatement("""
+                     UPDATE orders SET status = 'settled', updated_at = now()
+                     WHERE id = (SELECT order_id FROM fills WHERE id = ?) AND status = 'filled'""")) {
+            ps.setObject(1, fillId);
+            ps.executeUpdate();
+        }
+    }
+
+    /**
+     * THE COMPENSATION · the money side refused, so the position comes back.
+     *
+     * This is the saga's unhappy path and the reason a saga is not just "two
+     * commits in a row". The venue filled; we cannot un-fill it, and we
+     * cannot edit the fill, because fills are append-only facts. So the
+     * position is corrected the way a ledger corrects anything: by recording
+     * the opposite movement, marked as what it is.
+     *
+     * Idempotent on the derived venue_fill_id, so a redelivered rejection
+     * compensates once. Compensating twice would leave the customer short of
+     * a position they never had, which is the classic saga bug.
+     */
+    public void compensate(UUID fillId, String reason) throws SQLException {
+        try (Connection c = BrokerDb.open()) {
+            c.setAutoCommit(false);
+            try {
+                String marker = "compensation:" + fillId;
+                if (fillAlreadyRecorded(c, marker)) { c.rollback(); return; }
+
+                Fill original = fillById(c, fillId);
+                if (original == null) { c.rollback(); return; }
+                Order order = byId(c, original.orderId());
+
+                // the mirror image of what the fill did to the position
+                String reverse = "buy".equals(order.side()) ? "sell" : "buy";
+                applyToPosition(c, order.customerId(), order.symbol(), reverse,
+                        original.qty(), original.price(), BigDecimal.ZERO);
+
+                UUID compId = UUID.randomUUID();
+                try (PreparedStatement ps = c.prepareStatement("""
+                        INSERT INTO fills(id, order_id, qty, price, fee, venue_fill_id, kind)
+                        VALUES (?,?,?,?,0,?, 'compensation')""")) {
+                    ps.setObject(1, compId);
+                    ps.setObject(2, original.orderId());
+                    ps.setBigDecimal(3, original.qty());
+                    ps.setBigDecimal(4, original.price());
+                    ps.setString(5, marker);
+                    ps.executeUpdate();
+                }
+                try (PreparedStatement ps = c.prepareStatement("""
+                        UPDATE orders SET status = 'rejected', reject_reason = ?, updated_at = now()
+                        WHERE id = ?""")) {
+                    ps.setString(1, "settlement refused: " + reason);
+                    ps.setObject(2, original.orderId());
+                    ps.executeUpdate();
+                }
+                c.commit();
+            } catch (Exception e) {
+                c.rollback();
+                throw e;
+            } finally {
+                c.setAutoCommit(true);
+            }
+        }
+    }
+
+    private record Fill(UUID id, UUID orderId, BigDecimal qty, BigDecimal price) {}
+
+    private static Fill fillById(Connection c, UUID fillId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT id, order_id, qty, price FROM fills WHERE id = ?")) {
+            ps.setObject(1, fillId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? new Fill(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class),
+                        rs.getBigDecimal(3), rs.getBigDecimal(4)) : null;
+            }
+        }
+    }
+
+    /**
      * The projection step · average cost in four lines, and the reason each
      * one is there.
      *
@@ -294,13 +380,19 @@ public final class Broker {
      * Exactly the ledger's drift audit, one noun over. A projection you
      * cannot recompute is not a projection, it is a second source of truth
      * that has not been caught lying yet.
+     *
+     * A compensation reverses its order's side, so it subtracts where a
+     * trade adds. Getting that wrong is not a cosmetic bug: the audit would
+     * report drift on every compensated order and, worse, would have counted
+     * a reversal as a second purchase.
      */
     public static List<String> audit() throws SQLException {
         List<String> drifted = new ArrayList<>();
         try (Connection c = BrokerDb.open();
              PreparedStatement ps = c.prepareStatement("""
                      SELECT o.customer_id, o.symbol,
-                            SUM(CASE WHEN o.side = 'buy' THEN f.qty ELSE -f.qty END) AS net_qty
+                            SUM(CASE WHEN (o.side = 'buy') <> (f.kind = 'compensation')
+                                     THEN f.qty ELSE -f.qty END) AS net_qty
                      FROM fills f JOIN orders o ON o.id = f.order_id
                      GROUP BY o.customer_id, o.symbol""");
              ResultSet rs = ps.executeQuery()) {

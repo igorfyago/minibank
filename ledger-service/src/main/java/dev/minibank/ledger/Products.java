@@ -199,6 +199,119 @@ public final class Products {
     }
 
     // ------------------------------------------------------------------
+    // settlement: the same four entries, but the numbers come from a VENUE
+    // ------------------------------------------------------------------
+
+    /**
+     * Settle a fill the broker service reported.
+     *
+     * Structurally this is trade() with one difference that matters: the
+     * units and the cash are GIVEN, not derived. A venue fills a quantity at
+     * a price and those are facts; recomputing them here from cash / price
+     * would introduce a rounding step and the two services would slowly
+     * disagree about what the customer owns.
+     *
+     * Gated by the fill id, which is the broker's own primary key reused as
+     * this bank's txId. Kafka will deliver the fill twice eventually and the
+     * transactions table already knows how to answer that.
+     */
+    public static Ledger.TransferResult settleFill(UUID fillId, long customerId, String asset,
+                                                   boolean buy, BigDecimal units, BigDecimal cash)
+            throws SQLException {
+        if (units.signum() <= 0 || cash.signum() <= 0)
+            throw new IllegalArgumentException("units and cash must be positive");
+        long assetAcct = customerId + ("btc".equals(asset) ? BTC : AAPL);
+        long brokerAsset = "btc".equals(asset) ? Shard.BROKER_BTC : Shard.BROKER_AAPL;
+
+        Shard home = Shards.forCustomer(customerId);
+        try (Connection conn = home.open()) {
+            conn.setAutoCommit(false);
+            try {
+                if (!Ledger.claimTx(conn, fillId, "settle:" + asset + ":" + (buy ? "buy" : "sell"))) {
+                    conn.rollback();
+                    return new Ledger.AlreadyProcessed();
+                }
+                long[] ids = {Shard.BROKER_EUR, brokerAsset, customerId, assetAcct};
+                java.util.Arrays.sort(ids);              // the global lock order, unchanged
+                Ledger.Account main = null, assetA = null;
+                for (long lid : ids) {
+                    Ledger.Account a = Ledger.lockAccount(conn, lid);
+                    if (lid == customerId) main = a;
+                    if (lid == assetAcct) assetA = a;
+                }
+                // the only decision that can fail, and it is local
+                if (buy && main.balance().compareTo(cash) < 0) { conn.rollback(); return new Ledger.InsufficientFunds(); }
+                if (!buy && assetA.balance().compareTo(units) < 0) { conn.rollback(); return new Ledger.InsufficientFunds(); }
+
+                BigDecimal se = buy ? cash.negate() : cash;      // customer's EUR leg
+                BigDecimal su = buy ? units : units.negate();    // customer's asset leg
+                Ledger.insertEntry(conn, fillId, customerId, se);
+                Ledger.insertEntry(conn, fillId, Shard.BROKER_EUR, se.negate());
+                Ledger.insertEntry(conn, fillId, brokerAsset, su.negate());
+                Ledger.insertEntry(conn, fillId, assetAcct, su);
+                Ledger.updateCachedBalance(conn, customerId, se);
+                Ledger.updateCachedBalance(conn, Shard.BROKER_EUR, se.negate());
+                Ledger.updateCachedBalance(conn, brokerAsset, su.negate());
+                Ledger.updateCachedBalance(conn, assetAcct, su);
+
+                // the answer rides out on the SAME commit as the money · a
+                // crash here cannot leave the broker waiting forever for a
+                // settlement that silently happened
+                Outbox.append(conn, Settlement.TOPIC_SETTLEMENTS, "settled:" + fillId,
+                        "{\"type\":\"trade.settled\",\"fillId\":\"" + fillId +
+                        "\",\"customer\":" + customerId +
+                        ",\"symbol\":\"" + asset.toUpperCase() +
+                        "\",\"units\":\"" + units.toPlainString() +
+                        "\",\"cash\":\"" + cash.toPlainString() + "\"}");
+                conn.commit();
+                return new Ledger.Ok();
+            } catch (Exception e) {
+                conn.rollback();
+                if (e instanceof SQLException se && "23514".equals(se.getSQLState()))
+                    return new Ledger.InsufficientFunds();
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * Record that settlement was REFUSED, and tell the broker.
+     *
+     * No money moves, so there is nothing to write entries for · but the
+     * refusal still has to be a durable, idempotent fact, or a redelivered
+     * fill would produce a second rejection event and the broker would
+     * compensate twice. The gate is a deterministic id derived from the
+     * fill, the same trick the saga's refund already uses.
+     */
+    public static void recordSettlementRefusal(UUID fillId, long customerId, String symbol,
+                                               boolean buy, BigDecimal units, String reason)
+            throws SQLException {
+        UUID refusalId = UUID.nameUUIDFromBytes(
+                ("refuse:" + fillId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        Shard home = Shards.forCustomer(customerId);
+        try (Connection conn = home.open()) {
+            conn.setAutoCommit(false);
+            try {
+                if (!Ledger.claimTx(conn, refusalId, "settle-refused")) {
+                    conn.rollback();
+                    return;                                   // already told them
+                }
+                Outbox.append(conn, Settlement.TOPIC_SETTLEMENTS, "rejected:" + fillId,
+                        "{\"type\":\"trade.rejected\",\"fillId\":\"" + fillId +
+                        "\",\"customer\":" + customerId +
+                        ",\"symbol\":\"" + symbol +
+                        "\",\"side\":\"" + (buy ? "buy" : "sell") +
+                        "\",\"units\":\"" + units.toPlainString() +
+                        "\",\"reason\":\"" + Json.esc(reason) + "\"}");
+                conn.commit();
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // the mortgage: borrowing changes nothing · and the books prove it
     // ------------------------------------------------------------------
     public static Ledger.TransferResult mortgage(UUID txId, long customerId, BigDecimal amount) throws SQLException {

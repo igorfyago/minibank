@@ -60,6 +60,7 @@ public final class Main {
             new OutboxRelay(kafka, s::open).runLoop(500);   // a relay per shard
         }
         ShardApplier.start(kafka);
+        Settlement.start(kafka);        // settles the broker service's fills
         NotificationsConsumer.start(kafka);
 
         // metrics sampler · keeps the Prometheus gauges fresh on their own

@@ -41,6 +41,8 @@ public final class BrokerService {
         // one relay, pointed at THIS service's outbox · the ledger will
         // settle the cash leg from the far side of the topic
         new OutboxRelay(kafka, BrokerDb::open).runLoop(500);
+        // ... and one consumer for what the ledger decided about our fills
+        SettlementConsumer.start(kafka, broker);
 
         System.out.println("broker on :" + port + " · venue=" + venue.name()
                 + " · publishing to topic '" + Broker.TOPIC_ORDERS + "'");
