@@ -141,6 +141,20 @@ public final class Issuer {
                                      String currency, Instant businessAt) throws SQLException {
         Existing prior = load(authorizationId);
         if (prior != null) {
+            // THE SAME REFERENCE MUST MEAN THE SAME MONEY.
+            //
+            // The first version answered from the state alone and never looked
+            // at the amount, so a retry of the same reference for a LARGER sum
+            // was approved against the smaller hold that actually existed. The
+            // difference was authorised by nobody and would have been captured
+            // by an acquirer that believed it had asked for it.
+            boolean sameMoney = prior.amount() != null && amount != null
+                    && prior.amount().compareTo(amount) == 0
+                    && java.util.Objects.equals(prior.currency(), currency == null ? "EUR" : currency);
+            if (!sameMoney) {
+                return new Decision(authorizationId, false,
+                        "authorization reference reused for a different amount");
+            }
             // the same authorisation asked for again. Answer identically and do
             // nothing, whatever the acquirer's retry logic believes.
             return new Decision(authorizationId, "approved".equals(prior.state()) || "captured".equals(prior.state()),
@@ -176,9 +190,19 @@ public final class Issuer {
         if ("captured".equals(a.state())) return true;      // idempotent
         if (!"approved".equals(a.state())) return false;     // declined or voided: nothing to take
 
+        // Claim the transition FIRST. Whoever wins the compare-and-swap is the
+        // one that moves the money, so a capture and a void racing each other
+        // cannot both succeed.
+        if (!claimState(authorizationId, "approved", "captured", businessAt)) {
+            // somebody else took it: re-read and answer honestly
+            Existing now = load(authorizationId);
+            return now != null && "captured".equals(now.state());
+        }
         Ledger.TransferResult r = Products.capture(authorizationId, a.customerId());
         boolean ok = r instanceof Ledger.Ok || r instanceof Ledger.AlreadyProcessed;
-        if (ok) settle(authorizationId, "captured", businessAt);
+        // the ledger refused, so the state must go back rather than claim a
+        // capture that never moved anything
+        if (!ok) claimState(authorizationId, "captured", "approved", businessAt);
         return ok;
     }
 
@@ -190,9 +214,13 @@ public final class Issuer {
         if ("voided".equals(a.state())) return true;         // idempotent
         if (!"approved".equals(a.state())) return false;
 
+        if (!claimState(authorizationId, "approved", "voided", businessAt)) {
+            Existing now = load(authorizationId);
+            return now != null && "voided".equals(now.state());
+        }
         Ledger.TransferResult r = Products.release(authorizationId, a.customerId());
         boolean ok = r instanceof Ledger.Ok || r instanceof Ledger.AlreadyProcessed;
-        if (ok) settle(authorizationId, "voided", businessAt);
+        if (!ok) claimState(authorizationId, "voided", "approved", businessAt);
         return ok;
     }
 
@@ -216,16 +244,40 @@ public final class Issuer {
 
     // ------------------------------------------------------------- internals
 
-    private record Existing(String state, String reason, long customerId) {}
+    private record Existing(String state, String reason, long customerId,
+                            BigDecimal amount, String currency) {}
 
     private static Existing load(UUID id) throws SQLException {
         try (Connection c = Directory.openForRead();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT state, reason, customer_id FROM card_authorizations WHERE id = ?")) {
+                     "SELECT state, reason, customer_id, amount, currency FROM card_authorizations WHERE id = ?")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? new Existing(rs.getString(1), rs.getString(2), rs.getLong(3)) : null;
+                return rs.next() ? new Existing(rs.getString(1), rs.getString(2), rs.getLong(3),
+                        rs.getBigDecimal(4), rs.getString(5)) : null;
             }
+        }
+    }
+
+    /**
+     * Move an authorisation to its next state, and say whether THIS caller is
+     * the one that moved it.
+     *
+     * A compare-and-swap rather than a read followed by a write. The first
+     * version loaded the row on one connection, acted on the ledger, and wrote
+     * the new state on a third, so a capture and a void arriving together could
+     * both read "approved" and both proceed: the merchant would be paid AND the
+     * cardholder's limit returned, for the same money, funded out of another of
+     * that customer's holds. The next purchase of theirs would then be wedged
+     * for reasons nobody could trace back here.
+     */
+    private static boolean claimState(UUID id, String from, String to, Instant at) throws SQLException {
+        try (Connection c = Directory.openForRead();
+             PreparedStatement ps = c.prepareStatement(
+                     "UPDATE card_authorizations SET state = ?, settled_at = ? WHERE id = ? AND state = ?")) {
+            ps.setString(1, to); ps.setTimestamp(2, java.sql.Timestamp.from(at));
+            ps.setObject(3, id); ps.setString(4, from);
+            return ps.executeUpdate() == 1;
         }
     }
 
