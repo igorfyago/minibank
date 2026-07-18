@@ -1,0 +1,49 @@
+# auth.b4rruf3t.com — the identity service in production.
+#
+# This fragment slots into deploy/docker-compose.aws.yml on the EC2 box,
+# alongside minibank/minimart/minipay. It follows the house rules:
+#
+#   - its database lives on minibank-control, next to minimart's and
+#     minipay's: a server hosting several databases is exactly what a
+#     database server is for. They share a server and nothing else, so
+#     moving one onto its own is a change of URL.
+#   - its keypair persists on a named volume: a key that changes on deploy
+#     is a service that silently logs every user out.
+#   - it is polite about memory, like the rest of the box.
+#
+#   1. paste the service below into deploy/docker-compose.aws.yml
+#   2. paste the Caddy block from caddy-auth.fragment into deploy/Caddyfile
+#   3. cd ~/apps/ai-trading-desk/deploy && docker compose -f docker-compose.aws.yml up -d --build sso caddy
+
+  # ---- sso: one login for the whole estate. Issues the JWTs every other
+  # service on this box validates. The estate cookie (Domain=.b4rruf3t.com)
+  # it sets is what "log in once, recognized everywhere" physically is.
+  sso:
+    build: ../../minibank/sso-service
+    restart: unless-stopped
+    depends_on:
+      minibank-control:
+        condition: service_healthy
+    environment:
+      SSO_PORT: "8090"
+      SSO_ISSUER: https://auth.b4rruf3t.com
+      # The sso database brings itself up on the control plane: ADMIN_URL is
+      # any existing database on the server (the bootstrap creates sso if it
+      # is missing), the real URL is where the schema then lives. Same pattern
+      # as MINIMART_ADMIN_URL.
+      SSO_ADMIN_URL: jdbc:postgresql://minibank-control:5432/minibank
+      SSO_DB_URL: jdbc:postgresql://minibank-control:5432/sso
+      SSO_DB_USER: minibank
+      SSO_DB_PASS: minibank
+      # persisted keypair: survives rebuilds, or every deploy is a logout
+      SSO_KEY_FILE: /keys/sso-rsa.key
+      JAVA_TOOL_OPTIONS: "-Xmx96m"
+    volumes:
+      - sso_keys:/keys
+
+  # Caddy gains one block (see caddy-auth.fragment):
+  #   auth.{$BASE_DOMAIN} { reverse_proxy sso:8090 }
+  # and sso joins caddy's depends_on list.
+
+# add to the volumes: section at the bottom of the file:
+#   sso_keys:

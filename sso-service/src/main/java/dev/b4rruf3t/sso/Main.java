@@ -20,12 +20,22 @@ public final class Main {
         } else {
             String dbUser = System.getenv().getOrDefault("SSO_DB_USER", "sso");
             String dbPass = System.getenv().getOrDefault("SSO_DB_PASS", "sso");
+            String adminUrl = System.getenv().getOrDefault("SSO_ADMIN_URL", "");
+            Migrate.bootstrap(adminUrl, dbUrl, dbUser, dbPass);   // create if missing, then own the schema
             db = new Db(dbUrl, dbUser, dbPass);
+        }
+
+        // Keys persist across restarts: SSO_KEY_FILE on a mounted volume.
+        // A key that changes on deploy is a service that silently logs every
+        // user out — the estate deserves better than discovering that in prod.
+        String keyFile = System.getenv().getOrDefault("SSO_KEY_FILE", "");
+        KeyManager keys = keyFile.isBlank() ? new KeyManager() : KeyManager.persisted(keyFile);
+        if (keyFile.isBlank()) {
+            System.out.println("WARNING: SSO_KEY_FILE unset — keys are ephemeral, every restart logs everyone out");
         }
 
         UserDirectory users = new UserDirectory(db);
         SessionStore sessions = new SessionStore(db);
-        KeyManager keys = new KeyManager();
         TokenIssuer tokens = new TokenIssuer(keys, issuer);
 
         SsoServer server = new SsoServer(users, sessions, tokens, keys, issuer);
