@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#0d1117">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -431,17 +431,61 @@
     border:none; background:linear-gradient(135deg, var(--accent), var(--violet)); color:#fff; font-size:23px;
     cursor:pointer; box-shadow:0 6px 24px rgba(88,166,255,.35); transition:transform .15s; }
   #chat-fab:hover { transform:scale(1.08); }
+  /* dvh, not vh. On a phone 100vh is the LARGE viewport: it deliberately
+     ignores the browser's own chrome, so a panel sized against it is taller
+     than the screen it is drawn on, which is why this opened off the bottom.
+     dvh is the viewport as it actually is at this moment. */
   #chat-panel { position:fixed; right:20px; bottom:106px; z-index:56; width:min(430px, calc(100vw - 24px));
-    height:min(640px, calc(100vh - 150px)); background:var(--panel); border:1px solid var(--line);
+    height:min(640px, calc(100dvh - 150px)); background:var(--panel); border:1px solid var(--line);
     border-radius:18px; display:flex; flex-direction:column; box-shadow:0 12px 48px rgba(0,0,0,.5);
     animation:slidein .2s ease; }
+
+  /* the scrim only exists on a phone, where the sheet is modal */
+  #chat-scrim { position:fixed; inset:0; z-index:55; background:rgba(0,0,0,.5);
+    backdrop-filter:blur(2px); display:none; animation:fadein .2s ease; }
+  @keyframes fadein { from { opacity:0; } }
+
+  /* ------------------------------------------------------------------------
+     PHONE · a bottom sheet, not a floating card.
+     A card pinned 20px from a corner is a desktop popup. What an app does on a
+     phone is come up from the bottom edge, full width, with a handle, and own
+     the screen while it is open. Same component, different surface. */
+  @media (max-width:700px) {
+    #chat-scrim.on { display:block; }
+    #chat-panel {
+      left:0; right:0; bottom:0; width:100%;
+      /* tall enough to hold a conversation, short enough to still see whose
+         account is behind it */
+      height:min(80dvh, 640px);
+      border-radius:20px 20px 0 0;
+      border-bottom:none;
+      box-shadow:0 -10px 40px rgba(0,0,0,.55);
+      animation:sheetup .22s cubic-bezier(.2,.8,.3,1);
+      /* the home indicator is not screen we may draw under */
+      padding-bottom:env(safe-area-inset-bottom, 0px);
+    }
+    @keyframes sheetup { from { transform:translateY(100%); } }
+    /* the grab handle: the one affordance that says "this is a sheet" */
+    #chat-panel::before {
+      content:""; position:absolute; top:8px; left:50%; transform:translateX(-50%);
+      width:38px; height:4px; border-radius:999px; background:var(--line);
+    }
+    .chat-head { padding-top:20px; }
+    #chat-fab { right:16px; bottom:calc(20px + env(safe-area-inset-bottom, 0px)); }
+    /* the composer rides above the keyboard rather than being covered by it */
+    .chat-row { position:sticky; bottom:0; background:var(--panel); }
+    .chat-row input { font-size:16px; }   /* under 16px iOS zooms the page in */
+  }
   .chat-head { padding:13px 15px; border-bottom:1px solid var(--line); font-weight:650; font-size:14.5px;
     display:flex; align-items:center; gap:9px; }
   .chat-ava { width:27px; height:27px; border-radius:50%; display:flex; align-items:center; justify-content:center;
     background:linear-gradient(135deg, var(--accent), var(--violet)); color:#fff; font:800 13px system-ui; }
   .chat-dot { width:7px; height:7px; border-radius:50%; background:var(--green); animation:blink 1.8s infinite; }
   .chat-note { text-align:center; font-size:10px; color:var(--dim); opacity:.75; padding:0 0 4px; }
-  #chat-msgs { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:8px; }
+  /* contain, so flicking past the last message does not start scrolling the
+     page underneath the sheet */
+  #chat-msgs { flex:1; overflow-y:auto; overscroll-behavior:contain; padding:12px;
+    display:flex; flex-direction:column; gap:8px; }
   .chat-b { max-width:85%; padding:8px 12px; border-radius:14px; font-size:13px; line-height:1.5; white-space:pre-wrap; }
   .chat-b.me { align-self:flex-end; background:var(--violet); color:#fff; border-bottom-right-radius:4px; }
   .chat-b.rita { align-self:flex-start; background:#20283a; border-bottom-left-radius:4px; }
@@ -942,7 +986,8 @@
 <div id="ticker-bar"><div id="tk-belt"><div id="tk-track"></div></div></div>
 
 <button id="chat-fab" title="Rita">💬</button>
-<div id="chat-panel" class="hidden">
+<div id="chat-scrim"></div>
+<div id="chat-panel" class="hidden" role="dialog" aria-modal="true" aria-label="Rita, support agent">
   <div class="chat-head"><span class="chat-ava">R</span><b>Rita</b><span class="chat-dot"></span>
     <span style="flex:1"></span>
     <button class="ghost" style="padding:1px 9px" id="chat-close">✕</button></div>
@@ -2373,11 +2418,60 @@ document.querySelectorAll('.chip-btn').forEach(b => b.onclick = () => {
   $('#chat-in').value = b.textContent;
   $('#chat-send').click();
 });
+/* Rita as a sheet on a phone · open, close, and stay out of the keyboard's way.
+ *
+ * Three things make this feel like an app rather than a web popup:
+ *   the page behind stops scrolling while the sheet owns the screen,
+ *   the thread sticks to its newest message when the keyboard changes the
+ *   height available, because visualViewport is the only thing that reports
+ *   that honestly,
+ *   and back / escape closes it, which is what a phone user reaches for first.
+ */
+const _phone = matchMedia('(max-width:700px)');
+
+function ritaOpen(open) {
+  const panel = $('#chat-panel'), scrim = $('#chat-scrim');
+  panel.classList.toggle('hidden', !open);
+  scrim.classList.toggle('on', open && _phone.matches);
+  // the bank behind must not scroll under the sheet
+  document.body.style.overflow = (open && _phone.matches) ? 'hidden' : '';
+  if (open) {
+    if (!chatLog.length) chatHello();
+    ritaStickToBottom();
+    // focus opens the keyboard, so only do it where that is wanted: on a phone
+    // it hides most of the conversation the moment the sheet appears
+    if (!_phone.matches) $('#chat-in').focus();
+  }
+}
+
+function ritaStickToBottom() {
+  const msgs = $('#chat-msgs');
+  if (msgs) msgs.scrollTop = msgs.scrollHeight;
+}
+
+// The keyboard changes how much room there is, and visualViewport is what
+// reports it. With interactive-widget=resizes-content the sheet resizes itself,
+// so all that is left is keeping the newest message in view.
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => {
+    if (!$('#chat-panel').classList.contains('hidden')) ritaStickToBottom();
+  });
+}
+$('#chat-scrim').onclick = () => ritaOpen(false);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !$('#chat-panel').classList.contains('hidden')) ritaOpen(false);
+});
+_phone.addEventListener('change', () => {
+  // rotating or resizing must not leave a scrim over a desktop layout
+  const open = !$('#chat-panel').classList.contains('hidden');
+  ritaOpen(open);
+});
+
 $('#chat-fab').onclick = () => {
-  $('#chat-panel').classList.toggle('hidden');
-  if (!$('#chat-panel').classList.contains('hidden')) { if (!chatLog.length) chatHello(); $('#chat-in').focus(); }
+  ritaOpen($('#chat-panel').classList.contains('hidden'));
+  if (false) { if (!chatLog.length) chatHello(); $('#chat-in').focus(); }
 };
-$('#chat-close').onclick = () => $('#chat-panel').classList.add('hidden');
+$('#chat-close').onclick = () => ritaOpen(false);
 $('#chat-in').addEventListener('keydown', e => { if (e.key === 'Enter') $('#chat-send').click(); });
 $('#chat-send').onclick = async () => {
   const msg = $('#chat-in').value.trim();
