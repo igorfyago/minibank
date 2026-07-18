@@ -413,12 +413,13 @@
      the thing being replayed off screen: the pulses travel along the edges in
      the diagram, so a trace you can read and a diagram you can watch have to be
      on screen at the same time. */
-  /* Pinned ONLY while the map is on screen. That was always the entire reason
-     to pin it: so the trace you read and the diagram it animates are visible
-     together. Pinned for the whole column it had no such job, it just sat on
-     top of everything that scrolled past underneath. */
-  #trace-card { position:static; top:12px; z-index:2; }
-  #trace-card.pin { position:sticky; }
+  /* NOT sticky, and that was the mistake twice over.
+     The requirement is that the trace and the map are on screen together while
+     a replay runs. Being the first card of the right column already does that:
+     the map is the first card of the left column, the grid puts them side by
+     side, and they scroll as one. Pinning added nothing and cost a real bug,
+     because a sticky first child means every later card in the same column
+     slides underneath it. */
   #trace-steps { max-height:40vh; overflow:auto; }
   .guide-head { display:flex; align-items:center; margin-bottom:8px; }
   .guide-head h3 { font-size:15px; }
@@ -437,7 +438,7 @@
   .xcol { display:flex; flex-direction:column; gap:14px; min-width:0; }
   .xray-grid .card { padding:14px 16px; }
   #xsvg { display:block; }
-  @media (max-width:1180px) { .xray-grid { grid-template-columns:1fr; } .guide { position:static; max-height:none; } /* stacked, the trace would sit on top of the map it describes */ #trace-card, #trace-card.pin { position:static; } }
+  @media (max-width:1180px) { .xray-grid { grid-template-columns:1fr; } .guide { position:static; max-height:none; } }
   svg text { font-family:system-ui; }
   .node { cursor:pointer; }
   .node rect, .node ellipse, .node path { fill:#1c2330; stroke:var(--line); stroke-width:1.5; }
@@ -2232,16 +2233,6 @@ async function followPoll(tx, tries) {
   }
   playTimers.push(setTimeout(() => followPoll(tx, tries + 1), 700));
 }
-/* Pin the trace beside the map, and only while the map is there to sit beside.
-   IntersectionObserver rather than a scroll handler: it fires when the state
-   actually changes instead of on every frame of every scroll. */
-(function pinTraceToMap() {
-  const map = document.querySelector('#xsvg'), card = document.querySelector('#trace-card');
-  if (!map || !card || !('IntersectionObserver' in window)) return;
-  new IntersectionObserver(([entry]) => card.classList.toggle('pin', entry.isIntersecting),
-                           { threshold: 0 }).observe(map);
-})();
-
 $('#replay-btn').onclick = () => { if (activeTrace) playTrace(activeTrace); };
 
 /* ---- the ecosystem rail: each technology, live, with a pulse line ---- */
