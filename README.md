@@ -1,6 +1,6 @@
 # minibank
 
-A neobank built from first principles, one lesson at a time. **Raw Java 21, no frameworks** · PostgreSQL · Kafka · Kubernetes.
+A neobank built from first principles, one lesson at a time. **Raw Java 21, no frameworks** · PostgreSQL · Kafka · Redis · Kubernetes · Prometheus + Grafana · Flyway · JUnit + Spock.
 
 > Learning project: each stage builds one real piece of a modern fintech backend and **proves one system-design concept with a runnable demo**. Inspired by how contemporary neobanks are engineered (microservices, database-per-service, event-driven consistency, and in-house tooling over frameworks). Not affiliated with any bank.
 
@@ -22,6 +22,14 @@ A neobank built from first principles, one lesson at a time. **Raw Java 21, no f
 | ![X-ray](docs/xray.png) | ![Console](docs/console.png) |
 
 ![hero](docs/hero.png)
+
+## Runs on Kubernetes (and it's observable)
+
+The public demo runs on Docker Compose on one box, but the manifests in [`k8s/`](k8s/) actually deploy. One command, `./k8s/run-local.sh`, builds the image and stands the whole bank up on a real 3-node [k3s](https://k3s.io) cluster: the app tier as 3 stateless replicas, Postgres per region pinned by `nodeSelector` so **data residency is a scheduling constraint the cluster cannot violate**, KRaft Kafka, Redis, the FX microservice, and a full **Prometheus + Grafana** stack. Prometheus discovers and scrapes each app pod; Grafana graphs it from a version-controlled dashboard.
+
+![Grafana on the cluster](docs/grafana.png)
+
+The app itself exposes a hand-written **`/metrics`** endpoint (Prometheus text format, no client library): request counters, a latency histogram, cache hit/miss, FX outcomes, and live gauges for money-in-flight, pool usage and outbox backlog. **Redis** is a read-through cache in front of prices and market data (two levels: in-process L1, shared L2), and it fails open, the bank is correct without it and merely faster with it. **Flyway** owns every database's schema as versioned SQL, browsable live in SQL Studio.
 
 ## Doctrine: no frameworks
 
@@ -62,6 +70,11 @@ Every design decision is recorded and argued; the point of this repo is understa
 - **D20** Relocating a customer = money moving, so it uses the machinery money already has: create the account in the new region, set MOVING in the directory (the router refuses new transfers with a retriable 409, a write-pause of milliseconds), transfer the WHOLE balance through the standard cross-shard saga, flip the pointer. History stays archived on the old region; reads route through the directory so only the home account is visible. This is also the honest answer to "how do you reshard?".
 - **D21** The relocation calls arrive() directly AND the departed event still rides Kafka to the applier, which finds the arrival gate already claimed and shrugs. Duplicates are not tolerated; they are designed for. (Also learned live: kill -9 a consumer and its partitions stay parked until the session timeout; clean shutdown leaves the group instantly.)
 - **D22** K8s manifests say the quiet part out loud: the app tier is the ONLY thing `replicas` scales (stateless clones behind one Service); databases are StatefulSets (territories with names and disks), and `nodeSelector: topology.kubernetes.io/region` makes data residency a scheduling constraint the cluster cannot violate. Pool math before replica math: pods × shards × pool size = server connections.
+- **D23** The FX rate is its own microservice (own process, own port, own container), not a library call. The boundary is drawn around DATA OWNERSHIP: rates change owner, schema and deploy cadence independently of the ledger and share zero state with it. The bank calls it with a hard deadline and a fallback, so a slow currency lookup can never stall a payment (the circuit-breaker idea at demo scale). Everything else stays a modular monolith with database-shaped seams: split a service when a boundary earns it, not before.
+- **D24** Observability is hand-written, not imported: a raw `/metrics` endpoint in Prometheus text format (understand the wire, don't autoconfigure it), scraped per-pod via Kubernetes service discovery, graphed by a provisioned Grafana dashboard. Gauges are refreshed by a background sampler so a scrape is accurate whether or not anyone is watching the UI.
+- **D25** Redis caches only what tolerates staleness (prices, market history) and NEVER a balance the money path is about to lock; it fails open (correct without it, faster with it); the loader runs exactly once (a cache write error must never change what the money path computes).
+- **D26** Flyway owns the schema as versioned SQL, applied per database with `baselineOnMigrate` so an already-running database is baselined, never wiped. The migrations are idempotent, so they are safe over live data and reproducible on an empty one.
+- **D27** Two test voices under one `mvn test`: JUnit for the concurrency lessons, Spock (given/when/then + data tables) for the units that read better as specifications. A framework choice inside tests, where expressiveness is the whole point.
 - **D7** Concurrency correctness belongs to the database, not the JVM: ordered FOR UPDATE locking (ascending account id) makes deadlock impossible; the caller-supplied transaction id doubles as the idempotency key via the primary key.
 
 ## The curriculum
