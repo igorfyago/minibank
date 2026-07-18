@@ -278,6 +278,20 @@
   .k8s-note { font-size:11.5px; color:var(--dim); margin-top:9px; line-height:1.6; }
   .k8s-note code, .muted code { background:rgba(255,255,255,.06); padding:1px 5px; border-radius:5px;
     font:11px 'Cascadia Code', Consolas, monospace; }
+  .lm-head { display:flex; align-items:center; gap:8px; font-size:11px; color:var(--dim);
+    text-transform:uppercase; letter-spacing:.08em; margin-bottom:8px; }
+  .lm-dot { width:8px; height:8px; border-radius:50%; background:#22c55e; box-shadow:0 0 9px #22c55e;
+    animation:ledpulse 2.4s ease-in-out infinite; flex:none; }
+  .lm-strip { display:grid; grid-template-columns:repeat(5, 1fr) 1.6fr; gap:10px; margin-bottom:16px; }
+  @media (max-width:900px) { .lm-strip { grid-template-columns:repeat(2, 1fr); } .lm-wide { grid-column:1 / -1; } }
+  .lm-tile { background:#0a0e14; border:1px solid var(--line); border-radius:10px; padding:11px 13px; min-width:0; }
+  .lm-k { font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; }
+  .lm-v { font-size:26px; font-weight:700; color:#31e981; line-height:1.15; margin-top:3px;
+    font-variant-numeric:tabular-nums; transition:color .3s; }
+  .lm-u { font-size:10.5px; color:var(--dim); }
+  .lm-wide { display:flex; flex-direction:column; }
+  .lm-wide svg { flex:1; width:100%; height:40px; margin-top:6px; }
   header h1 { cursor:pointer; }
   
   
@@ -666,7 +680,21 @@
       <h2>Runs on Kubernetes · the manifests in this repo actually deploy</h2>
       <div class="muted" style="font-size:12.5px;margin-bottom:12px">The public demo runs on Docker Compose on one box.
         The same image also runs on a real Kubernetes cluster (k3s): <code>./k8s/run-local.sh</code> builds it, stands up
-        a 3-node cluster, and applies the manifests. Below is that cluster, live · Prometheus scrapes each app pod, Grafana graphs it.</div>
+        a 3-node cluster, and applies the manifests. The strip below is <b>live from this very deployment</b>; the Grafana
+        panel is that same data, in the tool, on the cluster.</div>
+
+      <div class="lm-head"><span class="lm-dot"></span>LIVE · parsed from this deployment's
+        <a href="/metrics" target="_blank" style="color:var(--accent)">/metrics</a> in your browser, every 3s</div>
+      <div class="lm-strip">
+        <div class="lm-tile"><div class="lm-k">Request rate</div><div class="lm-v" id="lm-rps">·</div><div class="lm-u">req/s</div></div>
+        <div class="lm-tile"><div class="lm-k">p99 latency</div><div class="lm-v" id="lm-p99">·</div><div class="lm-u">ms</div></div>
+        <div class="lm-tile"><div class="lm-k">Redis hit rate</div><div class="lm-v" id="lm-hit">·</div><div class="lm-u">%</div></div>
+        <div class="lm-tile"><div class="lm-k">In flight</div><div class="lm-v" id="lm-flight">·</div><div class="lm-u">EUR</div></div>
+        <div class="lm-tile"><div class="lm-k">Outbox</div><div class="lm-v" id="lm-outbox">·</div><div class="lm-u">pending</div></div>
+        <div class="lm-tile lm-wide"><div class="lm-k">Requests / sec, last ~2 min</div>
+          <svg id="lm-svg" viewBox="0 0 240 40" preserveAspectRatio="none"></svg></div>
+      </div>
+
       <div class="k8s-wrap">
         <div class="k8s-left">
           <div class="k8s-cap">kubectl get pods -o wide</div>
@@ -676,10 +704,11 @@
             schedule onto UK nodes. The 3 stateless app replicas spread across all nodes; the databases are pinned.</div>
         </div>
         <div class="k8s-right">
-          <div class="k8s-cap">Grafana · dashboards on the cluster, fed by Prometheus</div>
+          <div class="k8s-cap">Grafana on the cluster · a captured view of the same metrics</div>
           <a href="/grafana.png" target="_blank"><img src="/grafana.png" alt="Grafana dashboard" class="k8s-img"></a>
-          <div class="k8s-note">Request rate, p99 latency, Redis hit rate, money in flight, requests by route,
-            ledger events, outbox backlog and pool usage per region · all real PromQL over the metrics on the left.</div>
+          <div class="k8s-note">A screenshot: Grafana runs on the k3s cluster (Prometheus scraping each pod), not on this small
+            demo box, so it cannot be embedded live here. <code>kubectl port-forward svc/grafana 3000:3000</code> and it is
+            fully interactive. The live numbers are the strip above; this shows them in the tool, as real PromQL.</div>
         </div>
       </div>
     </div>
@@ -2438,6 +2467,77 @@ const K8S_PODS = [
   ['prometheus-5fc459b775-8mkkl', 'agent-1', ''],
   ['redis-95cdf456f-5st77', 'server-0', ''],
 ];
+/* ---- live metrics: parse THIS deployment's /metrics in the browser ---- */
+function parseProm(text) {
+  const m = {};
+  for (const ln of text.split('\n')) {
+    if (!ln || ln[0] === '#') continue;
+    const sp = ln.lastIndexOf(' ');
+    if (sp < 0) continue;
+    const v = parseFloat(ln.slice(sp + 1));
+    if (!isNaN(v)) m[ln.slice(0, sp)] = v;
+  }
+  return m;
+}
+const promSum = (m, prefix) => Object.keys(m).reduce((a, k) =>
+  (k === prefix || k.startsWith(prefix + '{')) ? a + m[k] : a, 0);
+function p99(m) {
+  // linear interpolation over the cumulative histogram buckets
+  const pts = [];
+  for (const k of Object.keys(m)) {
+    const mm = k.match(/_duration_seconds_bucket\{le="([^"]+)"\}/);
+    if (mm) pts.push([mm[1] === '+Inf' ? Infinity : parseFloat(mm[1]), m[k]]);
+  }
+  if (!pts.length) return null;
+  pts.sort((a, b) => a[0] - b[0]);
+  const total = pts[pts.length - 1][1];
+  if (!total) return 0;
+  const target = 0.99 * total;
+  let prevLe = 0, prevC = 0;
+  for (const [le, c] of pts) {
+    if (c >= target) {
+      if (!isFinite(le)) return prevLe * 1000;   // in +Inf bucket
+      const frac = (c - prevC) ? (target - prevC) / (c - prevC) : 0;
+      return (prevLe + frac * (le - prevLe)) * 1000;   // ms
+    }
+    prevLe = le; prevC = c;
+  }
+  return prevLe * 1000;
+}
+let lmPrev = null, lmSpark = [];
+async function liveMetricsTick() {
+  if (!document.querySelector('#lm-rps') || document.hidden) return;
+  let m;
+  try { m = parseProm(await fetch('/metrics').then(r => r.text())); } catch (e) { return; }
+  const now = Date.now();
+  const reqTotal = promSum(m, 'minibank_http_requests_total');
+  let rps = 0;
+  if (lmPrev && now > lmPrev.t) rps = Math.max(0, (reqTotal - lmPrev.req) / ((now - lmPrev.t) / 1000));
+  lmPrev = { t: now, req: reqTotal };
+  const allCache = Object.keys(m).filter(k => k.startsWith('minibank_cache_total{')).reduce((a, k) => a + m[k], 0);
+  const hitRate = allCache ? Math.round((Object.keys(m).filter(k => k.includes('result="hit"')).reduce((a, k) => a + m[k], 0)) / allCache * 100) : 0;
+  const flight = promSum(m, 'minibank_inflight_eur');
+  const outbox = promSum(m, 'minibank_outbox_pending');
+  const q = p99(m);
+  const set = (id, val) => { const el = document.querySelector(id); if (el && el.textContent !== val) {
+    el.textContent = val; el.style.color = '#8ff0c0'; setTimeout(() => { el.style.color = ''; }, 300); } };
+  set('#lm-rps', rps.toFixed(rps < 10 ? 1 : 0));
+  set('#lm-p99', q == null ? '·' : Math.round(q).toString());
+  set('#lm-hit', String(hitRate));
+  set('#lm-flight', '\u20ac' + Math.round(flight));
+  set('#lm-outbox', String(Math.round(outbox)));
+  // sparkline of request rate
+  lmSpark.push(rps); if (lmSpark.length > 40) lmSpark.shift();
+  const svg = document.querySelector('#lm-svg');
+  if (svg && lmSpark.length > 1) {
+    const max = Math.max(0.5, ...lmSpark), W = 240, H = 40;
+    const pts = lmSpark.map((v, i) => `${(i / (lmSpark.length - 1) * W).toFixed(1)},${(H - (v / max) * (H - 4) - 2).toFixed(1)}`).join(' ');
+    svg.innerHTML = `<polyline points="${pts}" fill="none" stroke="#31e981" stroke-width="1.6"/>`;
+  }
+}
+setInterval(liveMetricsTick, 3000);
+liveMetricsTick();
+
 (function renderK8s() {
   const el = document.querySelector('#k8s-pods'); if (!el) return;
   const head = 'NAME'.padEnd(34) + 'STATUS'.padEnd(10) + 'NODE';
