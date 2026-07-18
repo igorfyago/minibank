@@ -138,8 +138,18 @@ public final class HttpApi {
                 case Ledger.InsufficientFunds i -> "insufficient_funds";
                 case Ledger.NoSuchAccount n -> "no_such_account";
             };
-            Metrics.inc("minibank_ledger_events_total",
-                    "kind=\"" + (plan.crossShard() ? "saga_depart" : "transfer_local") + "\"");
+            // Counted by what actually happened, not by what was attempted. This
+            // used to increment saga_depart / transfer_local unconditionally, so
+            // a transfer refused for insufficient funds was published to the
+            // dashboard as a completed money movement. A rejection is a real
+            // event worth counting, but it is a DIFFERENT event, and a graph
+            // that cannot tell them apart is worse than no graph.
+            Metrics.inc("minibank_ledger_events_total", "kind=\"" + switch (result) {
+                case Ledger.Ok ok -> plan.crossShard() ? "saga_depart" : "transfer_local";
+                case Ledger.AlreadyProcessed a -> "replayed";
+                case Ledger.InsufficientFunds i -> "declined_funds";
+                case Ledger.NoSuchAccount n -> "declined_no_account";
+            } + "\"");
             return Response.json(200, "{\"result\":\"" + kind +
                     "\",\"crossShard\":" + plan.crossShard() + "}");
         } catch (Directory.CustomerMoving e) {
