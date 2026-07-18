@@ -1051,7 +1051,7 @@ document.querySelectorAll('.tab-btn[data-tab]').forEach(b => b.onclick = () => {
 
 
 /* ---------------- app tab ---------------- */
-let me = null, accounts = [], lastTx = null, prevStmtSig = '';
+let me = null, accounts = [], lastTx = null, prevStmtSig = '', prevPayeeSig = '';
 const fmt = v => '€' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const usdFmt = (v, d) => '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 
@@ -1065,8 +1065,20 @@ async function loadAccounts() {
   const mine = accounts.find(a => a.id === me);
   $('#balance').textContent = mine ? fmt(mine.balance) : '·';
   $('#acct-label').textContent = mine ? `Main · EUR · ${mine.region} region` : 'Main · EUR';
-  $('#send-to').innerHTML = customers.filter(a => a.id !== me)
-    .map(a => `<option value="${a.id}">${a.owner} · ${a.region}</option>`).join('');
+  // The "To" dropdown is inside a 2s poll. Repainting a <select> with
+  // innerHTML throws away its <option> nodes and the selection collapses to
+  // the first entry, so picking coco reverted to oscar seconds later. Repaint
+  // only when the offered payees actually changed, and carry the choice over.
+  // Logic lives in lib.js, unit-tested there.
+  const peers = MB.payeeOptions(accounts, me);
+  const payeeSig = MB.payeeSig(peers);
+  if (payeeSig !== prevPayeeSig) {
+    const keep = MB.keepPayee(peers, $('#send-to').value);
+    prevPayeeSig = payeeSig;
+    $('#send-to').innerHTML = peers
+      .map(a => `<option value="${a.id}">${a.owner} · ${a.region}</option>`).join('');
+    if (keep) $('#send-to').value = keep;
+  }
 }
 window.switchUser = id => { me = id; lastTx = null; prevStmtSig = ''; prevPortSig = ''; chatLog = []; if (!$('#chat-panel').classList.contains('hidden')) chatHello(); loadAccounts(); loadStatement(); loadPortfolio(); };
 

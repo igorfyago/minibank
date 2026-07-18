@@ -305,6 +305,44 @@
     return { mode: 'total', kinds: keys.slice(0, limit), hiddenCount: Math.max(0, keys.length - limit) };
   }
 
+  // ============================================================ payee picker
+  //
+  // The "To" dropdown is repainted by a 2 second poll. Rebuilding a <select>
+  // with innerHTML destroys its <option> nodes, and a select whose options are
+  // all new falls back to the FIRST one · so choosing coco silently reverted
+  // to oscar about two seconds later, and the money aimed at whoever sorted
+  // first. Two rules fix it, both pure enough to test here: only repaint when
+  // the offered payees actually changed, and carry the chosen payee across a
+  // repaint that does happen.
+
+  // Who this customer may pay: every OTHER customer. System accounts (world,
+  // in_transit, card hold) are book-keeping, never a destination a human picks.
+  function payeeOptions(accounts, me) {
+    return (accounts || []).filter(function (a) {
+      return a && a.kind === 'customer' && a.id !== me;
+    });
+  }
+
+  // Identity of the offer itself. An unchanged signature means the dropdown
+  // already shows the right thing, so leave the DOM, and the user's choice,
+  // alone.
+  function payeeSig(peers) {
+    return (peers || []).map(function (a) {
+      return a.id + ':' + a.owner + ':' + a.region;
+    }).join('|');
+  }
+
+  // What to re-select after a repaint: the chosen payee if they are still on
+  // offer, otherwise nothing. Never silently fall through to another person ·
+  // if coco is gone the field goes blank rather than aiming money at whoever
+  // replaced her in the list.
+  function keepPayee(peers, current) {
+    var want = String(current === null || current === undefined ? '' : current);
+    if (!want) return '';
+    var still = (peers || []).some(function (a) { return String(a.id) === want; });
+    return still ? want : '';
+  }
+
   return {
     makeApi: makeApi,
     panelLegend: panelLegend,
@@ -316,5 +354,8 @@
     chartPoints: chartPoints,
     swrCache: swrCache,
     tapeLayout: tapeLayout,
+    payeeOptions: payeeOptions,
+    payeeSig: payeeSig,
+    keepPayee: keepPayee,
   };
 });

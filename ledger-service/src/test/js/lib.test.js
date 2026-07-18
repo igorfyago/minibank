@@ -394,3 +394,135 @@ test('panelLegend caps the fallback so one busy kind cannot push the legend off 
   assert.equal(r.kinds[0], 'kind0', 'the largest survives the cap');
   assert.equal(r.hiddenCount, 14, 'and the panel says how many it is not showing, rather than silently truncating');
 });
+
+// ------------------------------------------------------------- payee picker
+// Regression: the "To" dropdown is repainted by a 2s poll, and repainting a
+// <select> with innerHTML resets it to the first option. Choosing coco went
+// back to oscar seconds later, so a transfer could leave for the wrong person.
+
+const ACCTS = [
+  { id: 1, kind: 'customer', owner: 'oscar', region: 'eu' },
+  { id: 2, kind: 'customer', owner: 'coco', region: 'uk' },
+  { id: 3, kind: 'customer', owner: 'igor', region: 'eu' },
+  { id: 9, kind: 'system', owner: 'world', region: 'eu' },
+  { id: 10, kind: 'system', owner: 'in_transit', region: 'eu' },
+];
+
+test('payeeOptions offers the other customers, never myself', () => {
+  assert.deepEqual(MB.payeeOptions(ACCTS, 1).map(a => a.owner), ['coco', 'igor']);
+  assert.deepEqual(MB.payeeOptions(ACCTS, 2).map(a => a.owner), ['oscar', 'igor']);
+});
+
+test('payeeOptions never offers a system account as a destination', () => {
+  const owners = MB.payeeOptions(ACCTS, 1).map(a => a.owner);
+  assert.ok(!owners.includes('world'), 'world is book-keeping, not a payee');
+  assert.ok(!owners.includes('in_transit'), 'in_transit is a clearing account');
+});
+
+test('payeeOptions survives a missing or empty account list', () => {
+  assert.deepEqual(MB.payeeOptions(null, 1), []);
+  assert.deepEqual(MB.payeeOptions([], 1), []);
+});
+
+test('payeeSig is stable across polls that changed nothing', () => {
+  const a = MB.payeeSig(MB.payeeOptions(ACCTS, 1));
+  const b = MB.payeeSig(MB.payeeOptions(ACCTS.slice(), 1));
+  assert.equal(a, b, 'an unchanged roster must not trigger a repaint');
+});
+
+test('payeeSig changes when a payee joins, leaves or is renamed', () => {
+  const base = MB.payeeSig(MB.payeeOptions(ACCTS, 1));
+  const joined = MB.payeeSig(MB.payeeOptions(
+    ACCTS.concat([{ id: 4, kind: 'customer', owner: 'nova', region: 'uk' }]), 1));
+  const left = MB.payeeSig(MB.payeeOptions(ACCTS.filter(a => a.id !== 2), 1));
+  const renamed = MB.payeeSig(MB.payeeOptions(
+    ACCTS.map(a => (a.id === 2 ? { ...a, owner: 'coco2' } : a)), 1));
+  assert.notEqual(joined, base);
+  assert.notEqual(left, base);
+  assert.notEqual(renamed, base, 'a rename must repaint or the label goes stale');
+});
+
+test('keepPayee carries the chosen payee across a repaint', () => {
+  const peers = MB.payeeOptions(ACCTS, 1);
+  assert.equal(MB.keepPayee(peers, '2'), '2', 'coco must stay selected');
+  assert.equal(MB.keepPayee(peers, 2), '2', 'a numeric value works too');
+});
+
+test('keepPayee blanks the field rather than aiming at someone else', () => {
+  // coco left the bank between polls: the safe answer is "nobody", never the
+  // person who happens to take her place at the top of the list.
+  const peers = MB.payeeOptions(ACCTS.filter(a => a.id !== 2), 1);
+  assert.equal(MB.keepPayee(peers, '2'), '');
+});
+
+test('keepPayee treats an empty selection as no selection', () => {
+  const peers = MB.payeeOptions(ACCTS, 1);
+  assert.equal(MB.keepPayee(peers, ''), '');
+  assert.equal(MB.keepPayee(peers, null), '');
+  assert.equal(MB.keepPayee(peers, undefined), '');
+});
+
+test('THE BUG: a poll that changes nothing leaves the chosen payee alone', () => {
+  // Reproduces the report end to end against a fake <select>: oscar is logged
+  // in, the user picks coco, then the 2s poll fires with identical accounts.
+  const select = { value: '', options: [] };
+  let prevSig = '';
+  function poll(accounts, me) {
+    const peers = MB.payeeOptions(accounts, me);
+    const sig = MB.payeeSig(peers);
+    if (sig === prevSig) return;              // nothing changed: do not repaint
+    const keep = MB.keepPayee(peers, select.value);
+    prevSig = sig;
+    select.options = peers.map(a => String(a.id));   // innerHTML would do this
+    select.value = keep || '';                       // ...and reset without keep
+  }
+
+  poll(ACCTS, 1);
+  assert.equal(select.value, '', 'first paint selects nobody');
+  select.value = '2';                                // the user clicks coco
+  for (let i = 0; i < 10; i++) poll(ACCTS, 1);       // 20 seconds of polling
+  assert.equal(select.value, '2', 'coco reverted to oscar again');
+});
+
+test('THE BUG: the choice also survives a poll that DOES repaint', () => {
+  const select = { value: '', options: [] };
+  let prevSig = '';
+  function poll(accounts, me) {
+    const peers = MB.payeeOptions(accounts, me);
+    const sig = MB.payeeSig(peers);
+    if (sig === prevSig) return;
+    const keep = MB.keepPayee(peers, select.value);
+    prevSig = sig;
+    select.options = peers.map(a => String(a.id));
+    select.value = keep || '';
+  }
+
+  poll(ACCTS, 1);
+  select.value = '2';                                       // the user picks coco
+  poll(ACCTS.concat([{ id: 5, kind: 'customer', owner: 'nova', region: 'eu' }]), 1);
+  assert.equal(select.value, '2', 'a new customer joining must not steal the choice');
+  assert.ok(select.options.includes('5'), 'and the newcomer is now on offer');
+});
+
+test('the page actually USES the payee guard · the wiring, not just the helpers', () => {
+  // The helpers above are correct in isolation, which is exactly what the
+  // original code was too. What shipped the bug was the CALL SITE: a bare
+  // innerHTML repaint of #send-to inside a 2s poll. Pin that, or a future edit
+  // reintroduces it while every test above still passes.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const page = fs.readFileSync(
+    path.join(__dirname, '../../main/resources/web/index.html'), 'utf8');
+
+  assert.match(page, /MB\.payeeOptions\(/, 'loadAccounts must build peers via lib.js');
+  assert.match(page, /MB\.payeeSig\(/, 'the repaint must be gated on a signature');
+  assert.match(page, /MB\.keepPayee\(/, 'the selection must be carried across a repaint');
+
+  // and no unguarded repaint of the dropdown anywhere on the page
+  const bare = page.match(/\$\('#send-to'\)\.innerHTML\s*=/g) || [];
+  assert.equal(bare.length, 1, 'exactly one place may repaint #send-to');
+  const idx = page.indexOf("$('#send-to').innerHTML");
+  const before = page.slice(Math.max(0, idx - 400), idx);
+  assert.match(before, /prevPayeeSig/,
+    'the single repaint must sit behind the changed-signature guard');
+});
