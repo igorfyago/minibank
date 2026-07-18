@@ -278,20 +278,31 @@
   .k8s-note { font-size:11.5px; color:var(--dim); margin-top:9px; line-height:1.6; }
   .k8s-note code, .muted code { background:rgba(255,255,255,.06); padding:1px 5px; border-radius:5px;
     font:11px 'Cascadia Code', Consolas, monospace; }
-  .lm-head { display:flex; align-items:center; gap:8px; font-size:11px; color:var(--dim);
-    text-transform:uppercase; letter-spacing:.08em; margin-bottom:8px; }
   .lm-dot { width:8px; height:8px; border-radius:50%; background:#22c55e; box-shadow:0 0 9px #22c55e;
     animation:ledpulse 2.4s ease-in-out infinite; flex:none; }
-  .lm-strip { display:grid; grid-template-columns:repeat(5, 1fr) 1.6fr; gap:10px; margin-bottom:16px; }
-  @media (max-width:900px) { .lm-strip { grid-template-columns:repeat(2, 1fr); } .lm-wide { grid-column:1 / -1; } }
-  .lm-tile { background:#0a0e14; border:1px solid var(--line); border-radius:10px; padding:11px 13px; min-width:0; }
-  .lm-k { font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em; white-space:nowrap;
-    overflow:hidden; text-overflow:ellipsis; }
-  .lm-v { font-size:26px; font-weight:700; color:#31e981; line-height:1.15; margin-top:3px;
-    font-variant-numeric:tabular-nums; transition:color .3s; }
-  .lm-u { font-size:10.5px; color:var(--dim); }
-  .lm-wide { display:flex; flex-direction:column; }
-  .lm-wide svg { flex:1; width:100%; height:40px; margin-top:6px; }
+  .dash-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; }
+  .dash-sub { display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--dim); margin-top:5px; }
+  .dash-sub a { color:var(--accent); }
+  .dash-clock { font:11px 'Cascadia Code', Consolas, monospace; color:var(--dim); white-space:nowrap;
+    border:1px solid var(--line); border-radius:8px; padding:4px 9px; flex:none; }
+  .dash { display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; margin-top:14px; }
+  .dpanel { background:#0b0f16; border:1px solid var(--line); border-radius:12px; padding:12px 14px; min-width:0; }
+  .dwide { grid-column:span 2; }
+  @media (max-width:820px) { .dash { grid-template-columns:repeat(2, 1fr); } .dwide { grid-column:span 2; } }
+  @media (max-width:520px) { .dash { grid-template-columns:1fr; } .dwide { grid-column:span 1; } }
+  .dp-title { display:flex; justify-content:space-between; align-items:baseline; font-size:10.5px; color:var(--dim);
+    text-transform:uppercase; letter-spacing:.07em; margin-bottom:8px; }
+  .dp-sub { color:#4a5568; font-size:9.5px; letter-spacing:.04em; }
+  .dp-stat { display:flex; align-items:baseline; gap:6px; }
+  .dp-num { font-size:29px; font-weight:750; color:#31e981; font-variant-numeric:tabular-nums; line-height:1;
+    transition:color .3s; }
+  .dp-unit { font-size:11px; color:var(--dim); }
+  .dp-spark { width:100%; height:30px; display:block; margin-top:8px; }
+  .dp-chart { width:100%; height:118px; display:block; }
+  .dp-legend { display:flex; flex-wrap:wrap; gap:9px 14px; margin-top:9px; font-size:10.5px; color:var(--dim); }
+  .dp-leg { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+  .dp-sw { width:10px; height:3px; border-radius:2px; flex:none; }
+  .dp-leg b { color:var(--text); font-weight:600; font-variant-numeric:tabular-nums; }
   header h1 { cursor:pointer; }
   
   
@@ -677,40 +688,56 @@
     </div>
 
     <div class="card" style="margin-top:14px">
+      <div class="dash-head">
+        <div>
+          <h2 style="margin:0">Live operations dashboard</h2>
+          <div class="dash-sub"><span class="lm-dot"></span>parsed from this deployment's
+            <a href="/metrics" target="_blank">/metrics</a> in your browser, every 3s · the same series Prometheus
+            scrapes and Grafana graphs on the Kubernetes cluster</div>
+        </div>
+        <div class="dash-clock" id="dash-clock">connecting…</div>
+      </div>
+      <div class="dash">
+        <div class="dpanel"><div class="dp-title">Request rate <span class="dp-sub">HTTP</span></div>
+          <div class="dp-stat"><span class="dp-num" id="d-rps">·</span><span class="dp-unit">req/s</span></div>
+          <svg class="dp-spark" id="d-rps-spark" viewBox="0 0 200 30" preserveAspectRatio="none"></svg></div>
+        <div class="dpanel"><div class="dp-title">Latency p99 <span class="dp-sub">histogram</span></div>
+          <div class="dp-stat"><span class="dp-num" id="d-p99">·</span><span class="dp-unit">ms</span></div>
+          <svg class="dp-spark" id="d-p99-spark" viewBox="0 0 200 30" preserveAspectRatio="none"></svg></div>
+        <div class="dpanel"><div class="dp-title">Redis hit rate <span class="dp-sub">cache</span></div>
+          <div class="dp-stat"><span class="dp-num" id="d-hit">·</span><span class="dp-unit">%</span></div>
+          <svg class="dp-spark" id="d-hit-spark" viewBox="0 0 200 30" preserveAspectRatio="none"></svg></div>
+        <div class="dpanel"><div class="dp-title">Money in flight <span class="dp-sub">saga</span></div>
+          <div class="dp-stat"><span class="dp-num" id="d-flight">·</span><span class="dp-unit">EUR</span></div>
+          <svg class="dp-spark" id="d-flight-spark" viewBox="0 0 200 30" preserveAspectRatio="none"></svg></div>
+
+        <div class="dpanel dwide"><div class="dp-title">HTTP requests by route <span class="dp-sub">req/s</span></div>
+          <svg class="dp-chart" id="d-routes" viewBox="0 0 400 118" preserveAspectRatio="none"></svg>
+          <div class="dp-legend" id="d-routes-leg"></div></div>
+        <div class="dpanel dwide"><div class="dp-title">Ledger events by kind <span class="dp-sub">events/s</span></div>
+          <svg class="dp-chart" id="d-events" viewBox="0 0 400 118" preserveAspectRatio="none"></svg>
+          <div class="dp-legend" id="d-events-leg"></div></div>
+        <div class="dpanel dwide"><div class="dp-title">Outbox backlog by region <span class="dp-sub">rows pending</span></div>
+          <svg class="dp-chart" id="d-outbox" viewBox="0 0 400 118" preserveAspectRatio="none"></svg>
+          <div class="dp-legend" id="d-outbox-leg"></div></div>
+        <div class="dpanel dwide"><div class="dp-title">Connection pool busy by region <span class="dp-sub">connections</span></div>
+          <svg class="dp-chart" id="d-pool" viewBox="0 0 400 118" preserveAspectRatio="none"></svg>
+          <div class="dp-legend" id="d-pool-leg"></div></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
       <h2>Runs on Kubernetes · the manifests in this repo actually deploy</h2>
       <div class="muted" style="font-size:12.5px;margin-bottom:12px">The public demo runs on Docker Compose on one box.
-        The same image also runs on a real Kubernetes cluster (k3s): <code>./k8s/run-local.sh</code> builds it, stands up
-        a 3-node cluster, and applies the manifests. The strip below is <b>live from this very deployment</b>; the Grafana
-        panel is that same data, in the tool, on the cluster.</div>
-
-      <div class="lm-head"><span class="lm-dot"></span>LIVE · parsed from this deployment's
-        <a href="/metrics" target="_blank" style="color:var(--accent)">/metrics</a> in your browser, every 3s</div>
-      <div class="lm-strip">
-        <div class="lm-tile"><div class="lm-k">Request rate</div><div class="lm-v" id="lm-rps">·</div><div class="lm-u">req/s</div></div>
-        <div class="lm-tile"><div class="lm-k">p99 latency</div><div class="lm-v" id="lm-p99">·</div><div class="lm-u">ms</div></div>
-        <div class="lm-tile"><div class="lm-k">Redis hit rate</div><div class="lm-v" id="lm-hit">·</div><div class="lm-u">%</div></div>
-        <div class="lm-tile"><div class="lm-k">In flight</div><div class="lm-v" id="lm-flight">·</div><div class="lm-u">EUR</div></div>
-        <div class="lm-tile"><div class="lm-k">Outbox</div><div class="lm-v" id="lm-outbox">·</div><div class="lm-u">pending</div></div>
-        <div class="lm-tile lm-wide"><div class="lm-k">Requests / sec, last ~2 min</div>
-          <svg id="lm-svg" viewBox="0 0 240 40" preserveAspectRatio="none"></svg></div>
-      </div>
-
-      <div class="k8s-wrap">
-        <div class="k8s-left">
-          <div class="k8s-cap">kubectl get pods -o wide</div>
-          <pre class="k8s-term" id="k8s-pods"></pre>
-          <div class="k8s-note">🌍 <b>Data residency, enforced by the scheduler.</b> pg-eu carries a
-            <code>nodeSelector: region=eu-west-1</code>, pg-uk <code>region=eu-west-2</code>, so UK data can only ever
-            schedule onto UK nodes. The 3 stateless app replicas spread across all nodes; the databases are pinned.</div>
-        </div>
-        <div class="k8s-right">
-          <div class="k8s-cap">Grafana on the cluster · a captured view of the same metrics</div>
-          <a href="/grafana.png" target="_blank"><img src="/grafana.png" alt="Grafana dashboard" class="k8s-img"></a>
-          <div class="k8s-note">A screenshot: Grafana runs on the k3s cluster (Prometheus scraping each pod), not on this small
-            demo box, so it cannot be embedded live here. <code>kubectl port-forward svc/grafana 3000:3000</code> and it is
-            fully interactive. The live numbers are the strip above; this shows them in the tool, as real PromQL.</div>
-        </div>
-      </div>
+        The same image also runs on a real 3-node Kubernetes cluster (k3s): <code>./k8s/run-local.sh</code> builds it,
+        stands the cluster up, and applies the manifests. Prometheus then scrapes every app pod and Grafana graphs it ·
+        the dashboard above is those exact metrics, live in this page.</div>
+      <div class="k8s-cap">kubectl get pods -o wide</div>
+      <pre class="k8s-term" id="k8s-pods"></pre>
+      <div class="k8s-note">🌍 <b>Data residency, enforced by the scheduler.</b> pg-eu carries a
+        <code>nodeSelector: region=eu-west-1</code>, pg-uk <code>region=eu-west-2</code>, so UK data can only ever
+        schedule onto UK nodes. The 3 stateless app replicas spread across all nodes; the databases are pinned. Grafana
+        and Prometheus run in the cluster too · <code>kubectl port-forward svc/grafana 3000:3000</code> to open them.</div>
     </div>
 
     <div class="card" style="margin-top:14px">
@@ -2467,7 +2494,7 @@ const K8S_PODS = [
   ['prometheus-5fc459b775-8mkkl', 'agent-1', ''],
   ['redis-95cdf456f-5st77', 'server-0', ''],
 ];
-/* ---- live metrics: parse THIS deployment's /metrics in the browser ---- */
+/* ---- live operations dashboard: parse THIS deployment's /metrics ---- */
 function parseProm(text) {
   const m = {};
   for (const ln of text.split('\n')) {
@@ -2482,7 +2509,6 @@ function parseProm(text) {
 const promSum = (m, prefix) => Object.keys(m).reduce((a, k) =>
   (k === prefix || k.startsWith(prefix + '{')) ? a + m[k] : a, 0);
 function p99(m) {
-  // linear interpolation over the cumulative histogram buckets
   const pts = [];
   for (const k of Object.keys(m)) {
     const mm = k.match(/_duration_seconds_bucket\{le="([^"]+)"\}/);
@@ -2496,47 +2522,124 @@ function p99(m) {
   let prevLe = 0, prevC = 0;
   for (const [le, c] of pts) {
     if (c >= target) {
-      if (!isFinite(le)) return prevLe * 1000;   // in +Inf bucket
+      if (!isFinite(le)) return prevLe * 1000;
       const frac = (c - prevC) ? (target - prevC) / (c - prevC) : 0;
-      return (prevLe + frac * (le - prevLe)) * 1000;   // ms
+      return (prevLe + frac * (le - prevLe)) * 1000;
     }
     prevLe = le; prevC = c;
   }
   return prevLe * 1000;
 }
-let lmPrev = null, lmSpark = [];
-async function liveMetricsTick() {
-  if (!document.querySelector('#lm-rps') || document.hidden) return;
-  let m;
-  try { m = parseProm(await fetch('/metrics').then(r => r.text())); } catch (e) { return; }
-  const now = Date.now();
-  const reqTotal = promSum(m, 'minibank_http_requests_total');
-  let rps = 0;
-  if (lmPrev && now > lmPrev.t) rps = Math.max(0, (reqTotal - lmPrev.req) / ((now - lmPrev.t) / 1000));
-  lmPrev = { t: now, req: reqTotal };
-  const allCache = Object.keys(m).filter(k => k.startsWith('minibank_cache_total{')).reduce((a, k) => a + m[k], 0);
-  const hitRate = allCache ? Math.round((Object.keys(m).filter(k => k.includes('result="hit"')).reduce((a, k) => a + m[k], 0)) / allCache * 100) : 0;
-  const flight = promSum(m, 'minibank_inflight_eur');
-  const outbox = promSum(m, 'minibank_outbox_pending');
-  const q = p99(m);
-  const set = (id, val) => { const el = document.querySelector(id); if (el && el.textContent !== val) {
-    el.textContent = val; el.style.color = '#8ff0c0'; setTimeout(() => { el.style.color = ''; }, 300); } };
-  set('#lm-rps', rps.toFixed(rps < 10 ? 1 : 0));
-  set('#lm-p99', q == null ? '·' : Math.round(q).toString());
-  set('#lm-hit', String(hitRate));
-  set('#lm-flight', '\u20ac' + Math.round(flight));
-  set('#lm-outbox', String(Math.round(outbox)));
-  // sparkline of request rate
-  lmSpark.push(rps); if (lmSpark.length > 40) lmSpark.shift();
-  const svg = document.querySelector('#lm-svg');
-  if (svg && lmSpark.length > 1) {
-    const max = Math.max(0.5, ...lmSpark), W = 240, H = 40;
-    const pts = lmSpark.map((v, i) => `${(i / (lmSpark.length - 1) * W).toFixed(1)},${(H - (v / max) * (H - 4) - 2).toFixed(1)}`).join(' ');
-    svg.innerHTML = `<polyline points="${pts}" fill="none" stroke="#31e981" stroke-width="1.6"/>`;
-  }
+
+const DASH = {
+  palette: ['#58a6ff', '#31e981', '#a78bff', '#f5b43c', '#ff6b81', '#3fd0c9', '#e879f9', '#7ee787'],
+  colorMap: {}, hist: {}, series: {}, prevCounters: {}, prevT: 0, reqPrev: null, fails: 0,
+};
+function dashColor(name) {
+  if (!DASH.colorMap[name]) DASH.colorMap[name] = DASH.palette[Object.keys(DASH.colorMap).length % DASH.palette.length];
+  return DASH.colorMap[name];
 }
-setInterval(liveMetricsTick, 3000);
-liveMetricsTick();
+function pushHist(key, v, cap = 40) {
+  (DASH.hist[key] = DASH.hist[key] || []).push(v);
+  if (DASH.hist[key].length > cap) DASH.hist[key].shift();
+}
+function drawSpark(id, key, color) {
+  const svg = document.querySelector('#' + id); if (!svg) return;
+  const a = DASH.hist[key] || []; if (a.length < 2) { svg.innerHTML = ''; return; }
+  const W = 200, H = 30, max = Math.max(...a, 0.001);
+  const pts = a.map((v, i) => `${(i / (a.length - 1) * W).toFixed(1)},${(H - (v / max) * (H - 4) - 2).toFixed(1)}`).join(' ');
+  svg.innerHTML = `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.6" opacity=".95"/>`;
+}
+// per-label RATE of a counter family, seeding prevCounters even on the first tick
+function rateByLabel(m, prefix, labelKey, dtSec) {
+  const out = {};
+  const re = new RegExp(labelKey + '="([^"]+)"');
+  for (const k of Object.keys(m)) {
+    if (!(k === prefix || k.startsWith(prefix + '{'))) continue;
+    const lm = k.match(re), label = lm ? lm[1] : 'all';
+    const prev = DASH.prevCounters[k];
+    DASH.prevCounters[k] = m[k];
+    if (prev != null && dtSec > 0) out[label] = (out[label] || 0) + Math.max(0, (m[k] - prev) / dtSec);
+  }
+  return out;
+}
+// per-label current VALUE of a gauge family
+function gaugeByLabel(m, prefix, labelKey) {
+  const out = {}, re = new RegExp(labelKey + '="([^"]+)"');
+  for (const k of Object.keys(m)) {
+    if (!(k === prefix || k.startsWith(prefix + '{'))) continue;
+    const lm = k.match(re);
+    out[lm ? lm[1] : 'all'] = m[k];
+  }
+  return out;
+}
+function pushSeries(panel, map, cap = 40) {
+  const s = DASH.series[panel] = DASH.series[panel] || {};
+  const names = new Set([...Object.keys(s), ...Object.keys(map)]);
+  for (const n of names) { (s[n] = s[n] || []).push(map[n] || 0); if (s[n].length > cap) s[n].shift(); }
+}
+function drawChart(svgId, legId, panelKey, fmt) {
+  const svg = document.querySelector('#' + svgId); if (!svg) return;
+  const s = DASH.series[panelKey] || {};
+  const names = Object.keys(s).filter(n => s[n].some(v => v > 0)).sort();
+  const W = 400, H = 118;
+  let max = 0.001, len = 1;
+  for (const n of names) { len = Math.max(len, s[n].length); for (const v of s[n]) if (v > max) max = v; }
+  let paths = '';
+  for (const n of names) {
+    const a = s[n]; if (a.length < 2) continue;
+    const pts = a.map((v, i) => `${(i / (len - 1) * W).toFixed(1)},${(H - (v / max) * (H - 8) - 4).toFixed(1)}`).join(' ');
+    paths += `<polyline points="${pts}" fill="none" stroke="${dashColor(n)}" stroke-width="1.5" opacity=".92"/>`;
+  }
+  svg.innerHTML = `<line x1="0" y1="${H - 0.5}" x2="${W}" y2="${H - 0.5}" stroke="var(--line)" stroke-width="1"/>` + paths;
+  const leg = document.querySelector('#' + legId);
+  if (leg) leg.innerHTML = names.length
+    ? names.map(n => `<span class="dp-leg"><span class="dp-sw" style="background:${dashColor(n)}"></span>${n.replace(/</g, '&lt;')} <b>${fmt(s[n][s[n].length - 1] || 0)}</b></span>`).join('')
+    : '<span style="color:#4a5568">quiet · no activity in this window</span>';
+}
+
+async function dashTick() {
+  if (!document.querySelector('#d-rps') || document.hidden) return;
+  let m;
+  try { m = parseProm(await fetch('/metrics').then(r => r.text())); DASH.fails = 0; }
+  catch (e) { if (++DASH.fails > 1) { const c = document.querySelector('#dash-clock'); if (c) c.textContent = 'reconnecting…'; } return; }
+  const now = Date.now();
+  const dt = DASH.prevT ? (now - DASH.prevT) / 1000 : 0;
+  DASH.prevT = now;
+
+  const reqTotal = promSum(m, 'minibank_http_requests_total');
+  let rps = 0; if (DASH.reqPrev != null && dt > 0) rps = Math.max(0, (reqTotal - DASH.reqPrev) / dt); DASH.reqPrev = reqTotal;
+  const q = p99(m);
+  const allCache = Object.keys(m).filter(k => k.startsWith('minibank_cache_total{')).reduce((a, k) => a + m[k], 0);
+  const hit = allCache ? Math.round(Object.keys(m).filter(k => k.includes('result="hit"')).reduce((a, k) => a + m[k], 0) / allCache * 100) : 0;
+  const flight = promSum(m, 'minibank_inflight_eur');
+
+  const setNum = (id, val) => { const el = document.querySelector(id); if (el && el.textContent !== val) {
+    el.textContent = val; el.style.color = '#8ff0c0'; setTimeout(() => { el.style.color = ''; }, 300); } };
+  setNum('#d-rps', rps.toFixed(rps < 10 ? 1 : 0));
+  setNum('#d-p99', q == null ? '·' : Math.round(q).toString());
+  setNum('#d-hit', String(hit));
+  setNum('#d-flight', '\u20ac' + Math.round(flight));
+  pushHist('rps', rps); drawSpark('d-rps-spark', 'rps', '#31e981');
+  pushHist('p99', q || 0); drawSpark('d-p99-spark', 'p99', '#f5b43c');
+  pushHist('hit', hit); drawSpark('d-hit-spark', 'hit', '#58a6ff');
+  pushHist('flight', flight); drawSpark('d-flight-spark', 'flight', '#a78bff');
+
+  const rr = rateByLabel(m, 'minibank_http_requests_total', 'route', dt);
+  const er = rateByLabel(m, 'minibank_ledger_events_total', 'kind', dt);
+  if (dt > 0) { pushSeries('routes', rr); pushSeries('events', er); }
+  pushSeries('outbox', gaugeByLabel(m, 'minibank_outbox_pending', 'region'));
+  pushSeries('pool', gaugeByLabel(m, 'minibank_pool_busy', 'region'));
+  const f2 = v => v.toFixed(v < 10 ? 1 : 0), f0 = v => Math.round(v).toString();
+  drawChart('d-routes', 'd-routes-leg', 'routes', f2);
+  drawChart('d-events', 'd-events-leg', 'events', f2);
+  drawChart('d-outbox', 'd-outbox-leg', 'outbox', f0);
+  drawChart('d-pool', 'd-pool-leg', 'pool', f0);
+
+  const c = document.querySelector('#dash-clock'); if (c) c.textContent = 'updated ' + new Date(now).toLocaleTimeString();
+}
+setInterval(dashTick, 3000);
+dashTick();
 
 (function renderK8s() {
   const el = document.querySelector('#k8s-pods'); if (!el) return;
