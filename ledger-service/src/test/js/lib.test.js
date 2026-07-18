@@ -526,3 +526,292 @@ test('the page actually USES the payee guard · the wiring, not just the helpers
   assert.match(before, /prevPayeeSig/,
     'the single repaint must sit behind the changed-signature guard');
 });
+
+// ============================================================ THE MAP GRAPH
+/**
+ * THE REFACTOR THIS MATRIX EXISTS TO DRIVE.
+ *
+ * The x-ray map had TWO implementations of "what does this event look like on
+ * the map": flowFor/animateEvent for live events, and STEP_EDGES/STEP_NODES for
+ * replays. They disagreed on the step vocabulary (transfer_local versus
+ * transfer), on the edges walked, on which nodes lit and when, on colour and on
+ * timing. Neither validated its edges against the map actually drawn. So:
+ *
+ *   - flowFor walked ['browser_api','caddy_api','api_shardN'], and the edge
+ *     NAMED browser_api actually draws browser -> caddy, so anything reading
+ *     that name lit the wrong node
+ *   - a step could name an edge that does not exist and simply draw no ball
+ *   - the live poller animated up to 6 events, 3 balls each, on a 2 second
+ *     timer, with no idea a replay was running, using raw setTimeout that
+ *     stopPlay() could not cancel, so a replay got a second differently-timed
+ *     animation painted over the top of it
+ *
+ * The fix is one model. Edges are declared as [from, to] PAIRS and the name is
+ * derived, so a name can never contradict the topology. A step declares a PATH
+ * of nodes and hops are consecutive pairs, so contiguity holds by construction:
+ * a ball can only start where a ball has already arrived.
+ */
+const GRAPH_PAIRS = [
+  ['browser', 'caddy'], ['caddy', 'api'], ['api', 'directory'],
+  ['api', 'shard0'], ['api', 'shard1'],
+  ['shard0', 'kafka'], ['shard1', 'kafka'],
+  ['kafka', 'applier'], ['kafka', 'notif'],
+  ['applier', 'shard0'], ['applier', 'shard1'],
+];
+
+test('mapGraph derives an edge name from its endpoints, so the name cannot lie', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  assert.equal(g.name('browser', 'caddy'), 'browser_caddy');
+  assert.equal(g.name('shard0', 'kafka'), 'shard0_kafka');
+  assert.ok(g.has('kafka', 'notif'));
+  assert.ok(!g.has('shard1', 'notif'), 'uk does not talk to notifications');
+  assert.ok(!g.has('kafka', 'shard1'), 'kafka reaches uk only through the applier');
+});
+
+test('mapGraph is directed, uk publishes to kafka and kafka does not publish to uk', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  assert.ok(g.has('shard1', 'kafka'));
+  assert.ok(!g.has('kafka', 'shard1'));
+});
+
+// ============================================================== THE JOURNEY
+// The cartesian matrix of everything this bank can actually do.
+const CASES = [
+  // Proven against the live server: a local transfer publishes too. It is one
+  // ACID transaction for the MONEY, and the echo still goes out through the
+  // outbox, so the steps are transfer, published, notify.
+  { name: 'local transfer in eu, igor to oscar',
+    steps: [{ step: 'transfer', region: 'eu' }, { step: 'published', region: 'eu' },
+            { step: 'notify', region: 'notifications' }] },
+  { name: 'local transfer in uk',
+    steps: [{ step: 'transfer', region: 'uk' }, { step: 'published', region: 'uk' },
+            { step: 'notify', region: 'notifications' }] },
+  { name: 'cross-region eu to uk, igor to coco',
+    steps: [{ step: 'depart', region: 'eu' }, { step: 'published', region: 'eu' },
+            { step: 'arrive', region: 'uk' }, { step: 'notify', region: 'notifications' }] },
+  { name: 'cross-region uk to eu',
+    steps: [{ step: 'depart', region: 'uk' }, { step: 'published', region: 'uk' },
+            { step: 'arrive', region: 'eu' }, { step: 'notify', region: 'notifications' }] },
+  { name: 'bounced saga, the refund path',
+    steps: [{ step: 'depart', region: 'eu' }, { step: 'published', region: 'eu' },
+            { step: 'refund', region: 'eu' }] },
+  { name: 'a single step on its own',
+    steps: [{ step: 'transfer', region: 'eu' }] },
+  { name: 'live vocabulary, transfer_local must mean the same as transfer',
+    steps: [{ step: 'transfer_local', region: 'eu' }] },
+];
+
+test('every case walks only edges that exist on the map', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const c of CASES) {
+    const j = MB.journey(c.steps, g);
+    assert.equal(j.unknown.length, 0, c.name + ': unknown ' + JSON.stringify(j.unknown));
+    for (const h of j.hops)
+      assert.ok(g.has(h.from, h.to), c.name + ': hop ' + h.from + '->' + h.to + ' is not on the map');
+  }
+});
+
+test('a ball only starts where a ball has already arrived, or at the entry point', () => {
+  // The "spontaneous ball" invariant. flowFor violated it by walking
+  // browser->api and then starting again at caddy, where nothing had arrived.
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const c of CASES) {
+    const j = MB.journey(c.steps, g);
+    const reached = new Set(['browser']);
+    for (const h of j.hops) {
+      assert.ok(reached.has(h.from),
+        c.name + ': a ball starts at ' + h.from + ', where nothing has arrived yet');
+      reached.add(h.to);
+    }
+  }
+});
+
+test('no hop starts before the previous one lands, unless it is a declared fork', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const c of CASES) {
+    const j = MB.journey(c.steps, g);
+    for (let i = 1; i < j.hops.length; i++) {
+      const prev = j.hops[i - 1], cur = j.hops[i];
+      if (cur.wave === prev.wave) continue;
+      assert.ok(cur.start >= prev.end - 1,
+        c.name + ': ' + cur.from + '->' + cur.to + ' starts ' + cur.start +
+        ' but ' + prev.from + '->' + prev.to + ' lands ' + prev.end);
+    }
+  }
+});
+
+test('a fork shares an origin and a start time, which is what two consumer groups look like', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const j = MB.journey(CASES[2].steps, g);
+  const byWave = {};
+  j.hops.forEach(h => (byWave[h.wave] = byWave[h.wave] || []).push(h));
+  const forks = Object.keys(byWave).map(k => byWave[k])
+    .filter(hs => new Set(hs.map(h => h.step)).size > 1);
+  assert.equal(forks.length, 1, 'exactly one fork: applier and notifications reading one message');
+  // A branch may be several hops long, so compare where each STEP begins.
+  const firstOfStep = {};
+  forks[0].forEach(h => { if (!firstOfStep[h.step]) firstOfStep[h.step] = h; });
+  const heads = Object.keys(firstOfStep).map(k => firstOfStep[k]);
+  assert.equal(new Set(heads.map(h => h.from)).size, 1, 'both branches leave the same node');
+  assert.equal(heads[0].from, 'kafka');
+  assert.equal(new Set(heads.map(h => h.start)).size, 1, 'and leave at the same instant');
+});
+
+test('every light is justified by a ball arriving, or by a declared state', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const c of CASES) {
+    const j = MB.journey(c.steps, g);
+    const arrivals = new Set(j.hops.map(h => h.to));
+    for (const l of j.lights)
+      assert.ok(arrivals.has(l.node) || l.reason === 'state',
+        c.name + ': ' + l.node + ' lights for no reason (' + l.reason + ')');
+  }
+});
+
+test('a node lights when the ball gets there, never before', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const c of CASES) {
+    const j = MB.journey(c.steps, g);
+    for (const l of j.lights) {
+      if (l.reason === 'state') continue;
+      const hop = j.hops.find(h => h.to === l.node && h.end <= l.at + 1);
+      assert.ok(hop, c.name + ': ' + l.node + ' lights at ' + l.at + ' before any ball reaches it');
+    }
+  }
+});
+
+test('no hop is walked twice, there is no second loop', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const c of CASES) {
+    const j = MB.journey(c.steps, g);
+    const seen = new Set();
+    for (const h of j.hops) {
+      const k = h.step + ':' + h.from + '>' + h.to;
+      assert.ok(!seen.has(k), c.name + ': ' + k + ' is animated twice');
+      seen.add(k);
+    }
+  }
+});
+
+test('time only moves forwards and the whole journey is bounded', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const c of CASES) {
+    const j = MB.journey(c.steps, g);
+    for (const h of j.hops) assert.ok(h.end > h.start, c.name + ': a hop with no duration');
+    assert.ok(j.total > 0 && j.total <= 12000, c.name + ': total ' + j.total + 'ms out of bounds');
+  }
+});
+
+test('the same input always produces the same journey', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const c of CASES)
+    assert.deepEqual(MB.journey(c.steps, g), MB.journey(c.steps, g), c.name);
+});
+
+test('an unrecognised step is reported, not silently dropped', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const j = MB.journey([{ step: 'teleport', region: 'eu' }], g);
+  assert.deepEqual(j.unknown, ['teleport']);
+  assert.equal(j.hops.length, 0);
+});
+
+test('local and cross-region genuinely differ, oscar is not coco', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const local = MB.journey(CASES[0].steps, g);
+  const cross = MB.journey(CASES[2].steps, g);
+  // Both publish. What separates them is that the MONEY never leaves one
+  // database locally: no applier, no in-transit, no second region.
+  assert.ok(!local.hops.some(h => h.from === 'applier' || h.to === 'applier'),
+    'a local transfer needs no applier, the money never left its database');
+  assert.ok(cross.hops.some(h => h.to === 'applier'), 'a saga does');
+  assert.ok(!local.lights.some(l => l.node === 'intransit'),
+    'and nothing is ever in flight in a local transfer');
+  assert.ok(cross.lights.some(l => l.node === 'intransit'));
+});
+
+test('the two vocabularies agree, transfer_local walks exactly what transfer walks', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const a = MB.journey([{ step: 'transfer', region: 'eu' }], g);
+  const b = MB.journey([{ step: 'transfer_local', region: 'eu' }], g);
+  assert.deepEqual(b.hops.map(h => h.from + '>' + h.to), a.hops.map(h => h.from + '>' + h.to));
+});
+
+test('region maps to the right database, both ways round', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  assert.ok(MB.journey([{ step: 'depart', region: 'eu' }], g).hops.some(h => h.to === 'shard0'));
+  assert.ok(MB.journey([{ step: 'depart', region: 'uk' }], g).hops.some(h => h.to === 'shard1'));
+  const odd = MB.journey([{ step: 'depart', region: 'mars' }], g);
+  assert.ok(odd.unknown.length > 0 || odd.hops.length === 0, 'an unknown region is not eu by default');
+});
+
+// ====================================================== THE THREE COPIES
+/**
+ * The map exists three times: as SVG <line data-edge> markup you can see, as
+ * the EDGES coordinate table the balls travel along, and as MAP_PAIRS which the
+ * animation reasons about. Three copies of one graph is two chances to drift,
+ * and drift here is invisible until someone watches a replay closely: a ball
+ * flies along a route that is no longer drawn, or a drawn edge never carries
+ * anything.
+ *
+ * This is the guard. It is a test about a file rather than about a function,
+ * which is unusual and is the right tool: the failure being prevented is two
+ * declarations disagreeing, and no unit test of either one alone can see it.
+ */
+const fs = require('node:fs');
+const path = require('node:path');
+const INDEX = fs.readFileSync(
+  path.join(__dirname, '../../main/resources/web/index.html'), 'utf8');
+
+function drawnEdges() {
+  const svg = INDEX.slice(INDEX.indexOf('<svg viewBox="0 0 720 600"'),
+                          INDEX.indexOf('<g id="pulse-layer">'));
+  return new Set([...svg.matchAll(/data-edge="([a-z0-9_]+)"/g)].map(m => m[1]));
+}
+function declaredEdges() {
+  const block = INDEX.slice(INDEX.indexOf('const MAP_PAIRS'), INDEX.indexOf('const MAP ='));
+  return new Set([...block.matchAll(/\['([a-z0-9]+)', '([a-z0-9]+)'\]/g)].map(m => m[1] + '_' + m[2]));
+}
+function pulsePaths() {
+  const i = INDEX.indexOf('const EDGES = {');
+  const block = INDEX.slice(i, INDEX.indexOf('};', i));
+  return new Set([...block.matchAll(/(\w+):\[/g)].map(m => m[1]));
+}
+
+test('every edge drawn on the map is declared in the graph', () => {
+  const missing = [...drawnEdges()].filter(e => !declaredEdges().has(e));
+  assert.deepEqual(missing, [], 'drawn but the animation does not know about them');
+});
+
+test('every edge in the graph is actually drawn', () => {
+  const missing = [...declaredEdges()].filter(e => !drawnEdges().has(e));
+  assert.deepEqual(missing, [], 'declared but invisible, so a ball would fly through empty space');
+});
+
+test('every drawn edge has pulse coordinates, or its ball has nowhere to travel', () => {
+  const missing = [...drawnEdges()].filter(e => !pulsePaths().has(e));
+  assert.deepEqual(missing, [], 'no coordinates: pulse() returns silently and no ball appears');
+});
+
+test('an edge name always matches the nodes it connects', () => {
+  // browser_api actually drew browser -> caddy, so every reader that split the
+  // name on the underscore lit the wrong node. Names are derived now; this
+  // makes sure nobody hand-writes a contradicting one back in.
+  const svg = INDEX.slice(INDEX.indexOf('<svg viewBox="0 0 720 600"'),
+                          INDEX.indexOf('<g id="pulse-layer">'));
+  const nodes = new Set([...svg.matchAll(/data-node="([a-z0-9]+)"/g)].map(m => m[1]));
+  for (const e of drawnEdges()) {
+    const from = [...nodes].filter(n => e.startsWith(n + '_')).sort((a, b) => b.length - a.length)[0];
+    const to = [...nodes].filter(n => e.endsWith('_' + n)).sort((a, b) => b.length - a.length)[0];
+    assert.ok(from && to, `edge ${e} does not name two real nodes`);
+    assert.equal(`${from}_${to}`, e, `edge ${e} does not say what it connects`);
+  }
+});
+
+test('the live poller cannot animate over a running replay', () => {
+  // The regression that produced "an unexpected second loop": the 2s poller
+  // called animateEvent with no idea a replay was in progress.
+  assert.ok(/Date\.now\(\) > playingUntil/.test(INDEX),
+    'the poller must yield while a deliberate animation owns the map');
+  assert.ok(!/fresh\.slice\(0, 6\)[\s\S]{0,60}animateEvent/.test(INDEX),
+    'the poller must not fan six events onto the map at once');
+});

@@ -343,8 +343,157 @@
     return still ? want : '';
   }
 
+
+  // ================================================================== the map
+
+  /**
+   * THE MAP, AS A GRAPH. One declaration, from which everything else follows.
+   *
+   * Edges are declared as [from, to] PAIRS and the name is DERIVED. That is the
+   * whole point. The old code stored edge names as strings and read the
+   * topology back out of them, which went wrong the moment a name disagreed
+   * with what it drew: the edge named "browser_api" actually connects browser
+   * to caddy, so every reader that split the name lit the wrong node. A derived
+   * name cannot contradict its own endpoints.
+   */
+  function mapGraph(pairs) {
+    var out = {}, nodes = {};
+    for (var i = 0; i < pairs.length; i++) {
+      var a = pairs[i][0], b = pairs[i][1];
+      out[a + '>' + b] = true; nodes[a] = true; nodes[b] = true;
+    }
+    return {
+      has: function (a, b) { return out[a + '>' + b] === true; },
+      name: function (a, b) { return a + '_' + b; },
+      nodes: Object.keys(nodes),
+      edges: pairs.map(function (e) { return e[0] + '_' + e[1]; }),
+    };
+  }
+
+  // ============================================================== the journey
+
+  /* A region is a database, and nothing else is. An unrecognised region is
+     reported rather than quietly treated as eu, because silently animating the
+     wrong country is worse than animating nothing. */
+  var REGION_NODE = { eu: 'shard0', uk: 'shard1' };
+
+  /**
+   * What each step DOES, as a path of nodes the money walks.
+   *
+   * A path, not an edge list. Hops are consecutive pairs of this path, so a
+   * ball can only ever start where the previous ball arrived: contiguity is a
+   * property of the shape rather than something a test has to police. The two
+   * old tables (edges to draw, nodes to light) could and did drift apart; here
+   * the lights fall out of the walk.
+   *
+   * `state` is for something true of a step that is not a journey. Money
+   * entering the in-transit account is a state the depart step creates, not
+   * somewhere a ball travels to.
+   */
+  var FLOW = {
+    // one ACID transaction. It never touches Kafka, and that is the lesson.
+    transfer:  { path: function (r) { return ['browser', 'caddy', 'api', r]; } },
+    // the saga leaves. Same walk, plus the money is now in the pipe.
+    depart:    { path: function (r) { return ['browser', 'caddy', 'api', r]; }, state: ['intransit'] },
+    published: { path: function (r) { return [r, 'kafka']; } },
+    arrive:    { path: function (r) { return ['kafka', 'applier', r]; } },
+    /* A refund is what happens when the ARRIVAL fails, so the message still
+       travelled kafka -> applier; the applier then sends the money back to the
+       region it came from. Starting this walk at the applier would spawn a ball
+       on a node nothing had reached, which is one of the ways balls appeared
+       out of nowhere. */
+    refund:    { path: function (r) { return ['kafka', 'applier', r]; } },
+    // notifications is a SECOND consumer group on the same topic, so it starts
+    // at kafka like the applier does, not at whatever the applier reached.
+    notify:    { path: function () { return ['kafka', 'notif']; }, region: 'kafka' },
+  };
+
+  /* The live feed and the trace endpoint name the same things differently.
+     Normalising here means there is one vocabulary below this line. */
+  var STEP_ALIAS = { transfer_local: 'transfer', bounced: 'refund', notified: 'notify' };
+
+  var HOP_MS = 700;          // how long one ball takes to cross one edge
+  var HOP_MAX = 1700;        // and the most it may take, so no hop eats the show
+  var SHOW_MS = 5000;        // the budget the real gaps are scaled into
+
+  /**
+   * Turn trace steps into an ordered list of hops and lights.
+   *
+   * Pure: same steps in, same journey out, no DOM, no clock. Everything the
+   * animation needs is decided here and unit tested, which is the point.
+   */
+  /** The one true name for a step, whichever vocabulary it arrived in. */
+  function stepName(s) { return STEP_ALIAS[s] || s; }
+
+  function journey(steps, graph, opts) {
+    var o = opts || {};
+    var showMs = o.showMs || SHOW_MS;
+    var hops = [], lights = [], unknown = [], cursor = 0, wave = 0;
+    var prevOrigin = null, prevWaveStart = 0, prevWaveEnd = 0;
+
+    var t0 = steps.length && steps[0].ts ? new Date(steps[0].ts).getTime() : null;
+    var span = 1;
+    if (t0 != null && steps[steps.length - 1].ts)
+      span = Math.max(new Date(steps[steps.length - 1].ts).getTime() - t0, 1);
+
+    for (var i = 0; i < steps.length; i++) {
+      var st = steps[i];
+      var name = STEP_ALIAS[st.step] || st.step;
+      var flow = FLOW[name];
+      if (!flow) { unknown.push(st.step); continue; }
+
+      var regionNode = flow.region || REGION_NODE[st.region];
+      if (!regionNode) { unknown.push(st.region); continue; }
+
+      var path = flow.path(regionNode);
+      var legs = path.length - 1;
+      if (legs < 1) continue;
+
+      // Real gaps decide the pace, within bounds, and the bounds are PER HOP so
+      // a two hop step is not crammed into one hop's worth of time.
+      var per = HOP_MS;
+      if (t0 != null && i > 0 && st.ts && steps[i - 1].ts) {
+        var gap = (new Date(st.ts).getTime() - new Date(steps[i - 1].ts).getTime()) / span * showMs;
+        per = Math.min(HOP_MAX, Math.max(HOP_MS, gap / legs));
+      }
+
+      // THE FORK. Steps that leave the same node leave it at the same moment,
+      // because that is what two consumer groups reading one message is. The
+      // applier and the notifications service both start at kafka; drawing them
+      // in series is what made the ball look like it jumped back to fetch the
+      // notification.
+      var origin = path[0];
+      var start = (origin === prevOrigin) ? prevWaveStart : cursor;
+      if (origin === prevOrigin) { /* same wave */ } else { wave++; }
+
+      for (var k = 0; k < legs; k++) {
+        var from = path[k], to = path[k + 1];
+        if (!graph.has(from, to)) { unknown.push(from + '_' + to); continue; }
+        var s = start + k * per, e = s + per * 0.88;
+        hops.push({ step: name, edge: graph.name(from, to), from: from, to: to,
+                    start: Math.round(s), end: Math.round(e), wave: wave });
+        lights.push({ node: to, at: Math.round(e), reason: 'arrival' });
+      }
+
+      var stepEnd = start + legs * per;
+      (flow.state || []).forEach(function (nd) {
+        lights.push({ node: nd, at: Math.round(stepEnd - per), reason: 'state' });
+      });
+
+      prevOrigin = origin;
+      prevWaveStart = start;
+      prevWaveEnd = Math.max(prevWaveEnd, stepEnd);
+      cursor = Math.max(cursor, stepEnd);
+    }
+
+    return { hops: hops, lights: lights, unknown: unknown, total: Math.round(cursor) };
+  }
+
   return {
     makeApi: makeApi,
+    mapGraph: mapGraph,
+    journey: journey,
+    stepName: stepName,
     panelLegend: panelLegend,
     parseProm: parseProm,
     gaugeByLabel: gaugeByLabel,
