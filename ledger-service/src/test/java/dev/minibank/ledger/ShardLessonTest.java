@@ -46,12 +46,7 @@ class ShardLessonTest {
 
     @BeforeEach
     void freshMoney() throws Exception {
-        for (Shard s : Shards.all()) {
-            try (Connection c = s.open(); var st = c.createStatement()) {
-                st.execute("TRUNCATE entries, transactions, outbox, accounts CASCADE");
-            }
-            s.createSchema();   // system accounts back (world, in_transit)
-        }
+        Fixtures.resetShards();   // system accounts back (world, in_transit)
         Shards.forCustomer(IGOR).createCustomer(IGOR, "igor");
         Shards.forCustomer(COCO).createCustomer(COCO, "coco");
         Shards.forCustomer(IGOR).transferLocal(UUID.randomUUID(), Shard.WORLD, IGOR, eur("500.00"));
@@ -138,12 +133,7 @@ class ShardLessonTest {
 
         // read the event the depart-transaction committed · these are the
         // exact bytes the relay hands to Kafka and Kafka hands back.
-        List<Outbox.Event> events;
-        try (Connection c = Shards.s(0).open()) {
-            events = Outbox.pollUnpublishedOn(c, 100);
-        }
-        Outbox.Event departed = events.stream()
-                .filter(e -> e.key().equals("departed:" + tx)).findFirst().orElseThrow();
+        Outbox.Event departed = Fixtures.outboxEvent(Shards.s(0), "departed:" + tx);
 
         ShardApplier.handle(departed.payload());   // what the consumer does
         ShardApplier.handle(departed.payload());   // ...and a redelivery

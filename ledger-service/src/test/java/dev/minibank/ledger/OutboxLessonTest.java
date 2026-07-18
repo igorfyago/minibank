@@ -9,7 +9,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
-import java.sql.Connection;
 import java.time.Duration;
 import java.util.List;
 import java.util.Properties;
@@ -45,9 +44,7 @@ class OutboxLessonTest {
 
     @BeforeEach
     void freshBank() throws Exception {
-        try (Connection c = Db.open(); var st = c.createStatement()) {
-            st.execute("TRUNCATE outbox, entries, transactions, accounts CASCADE");
-        }
+        Fixtures.onSingleDb("TRUNCATE entries, transactions, outbox, accounts CASCADE");
         Ledger.createAccount(WORLD, "world", Ledger.KIND_EXTERNAL);
         Ledger.createAccount(IGOR, "igor", Ledger.KIND_CUSTOMER);
         Ledger.createAccount(COCO, "coco", Ledger.KIND_CUSTOMER);

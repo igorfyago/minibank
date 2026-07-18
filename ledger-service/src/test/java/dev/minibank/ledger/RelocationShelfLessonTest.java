@@ -67,19 +67,8 @@ class RelocationShelfLessonTest {
      *  a card he has spent on, a loan he has drawn, and a live card hold. */
     @BeforeEach
     void freshWorldWithAShelf() throws Exception {
-        for (Shard s : Shards.all()) {
-            try (Connection c = s.open(); var st = c.createStatement()) {
-                st.execute("TRUNCATE entries, transactions, outbox, accounts CASCADE");
-            }
-            s.createSchema();
-        }
-        try (Connection c = java.sql.DriverManager.getConnection(
-                System.getenv().getOrDefault("MINIBANK_DB_URL", "jdbc:postgresql://localhost:5433/minibank")
-                        .replaceFirst("/minibank$", "/minibank_directory"), "minibank", "minibank");
-             var st = c.createStatement()) {
-            st.execute("TRUNCATE customers");
-        }
-        Directory.clearCache();
+        Fixtures.resetShards();
+        Fixtures.resetDirectory();
 
         Directory.register(IGOR, "igor", EU);
         Directory.register(COCO, "coco", UK);

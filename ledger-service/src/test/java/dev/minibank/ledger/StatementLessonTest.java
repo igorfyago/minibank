@@ -66,12 +66,7 @@ class StatementLessonTest {
 
     @BeforeEach
     void freshLedger() throws Exception {
-        for (Shard s : Shards.all()) {
-            try (Connection c = s.open(); var st = c.createStatement()) {
-                st.execute("TRUNCATE entries, transactions, outbox, accounts CASCADE");
-            }
-            s.createSchema();
-        }
+        Fixtures.resetShards();
         Shards.forCustomer(IGOR).createCustomer(IGOR, "igor");
         Products.ensureFor(IGOR);
     }

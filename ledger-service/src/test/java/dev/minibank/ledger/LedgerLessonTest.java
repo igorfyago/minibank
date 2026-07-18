@@ -48,9 +48,7 @@ class LedgerLessonTest {
 
     @BeforeEach
     void freshBank() throws Exception {
-        try (Connection c = Db.open(); var st = c.createStatement()) {
-            st.execute("TRUNCATE outbox, entries, transactions, accounts CASCADE");
-        }
+        Fixtures.onSingleDb("TRUNCATE entries, transactions, outbox, accounts CASCADE");
         Ledger.createAccount(WORLD, "world", Ledger.KIND_EXTERNAL);
         Ledger.createAccount(CAFE, "cafe", Ledger.KIND_EXTERNAL);
         Ledger.createAccount(IGOR, "igor", Ledger.KIND_CUSTOMER);

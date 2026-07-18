@@ -57,19 +57,8 @@ class RegionLessonTest {
 
     @BeforeEach
     void freshWorld() throws Exception {
-        for (Shard s : Shards.all()) {
-            try (Connection c = s.open(); var st = c.createStatement()) {
-                st.execute("TRUNCATE entries, transactions, outbox, accounts CASCADE");
-            }
-            s.createSchema();
-        }
-        try (Connection c = java.sql.DriverManager.getConnection(
-                System.getenv().getOrDefault("MINIBANK_DB_URL", "jdbc:postgresql://localhost:5433/minibank")
-                        .replaceFirst("/minibank$", "/minibank_directory"), "minibank", "minibank");
-             var st = c.createStatement()) {
-            st.execute("TRUNCATE customers");
-        }
-        Directory.clearCache();
+        Fixtures.resetShards();
+        Fixtures.resetDirectory();
 
         Directory.register(IGOR, "igor", EU);
         Directory.register(COCO, "coco", UK);
@@ -104,13 +93,10 @@ class RegionLessonTest {
         Shards.forCustomer(IGOR).depart(tx, IGOR, COCO, eur("30.00"));
         assertEquals(0, eur("30.00").compareTo(Shards.inFlight()), "in the pipe between regions");
 
-        // the applier fed the outbox's own bytes, exactly as in stage 5
-        List<Outbox.Event> events;
-        try (Connection c = Shards.s(EU).open()) {
-            events = Outbox.pollUnpublishedOn(c, 100);
-        }
-        ShardApplier.handle(events.stream()
-                .filter(e -> e.key().equals("departed:" + tx)).findFirst().orElseThrow().payload());
+        // the applier fed the outbox's own bytes, exactly as in stage 5.
+        // Read the row whatever its published_at: whether a relay has already
+        // forwarded it is not what this lesson is about.
+        ShardApplier.handle(Fixtures.outboxEvent(Shards.s(EU), "departed:" + tx).payload());
 
         assertEquals(0, eur("530.00").compareTo(Shards.s(UK).balance(COCO)), "landed in uk");
         assertEquals(0, BigDecimal.ZERO.compareTo(Shards.inFlight()), "settled");
@@ -162,14 +148,9 @@ class RegionLessonTest {
     void lesson5_theDuplicateSettles() throws Exception {
         Relocation.relocate(IGOR, UK);      // arrive() was called directly
 
-        // the departed event still sits in eu's outbox; in production the
-        // relay ships it and the applier processes it AGAIN. Simulate that:
-        List<Outbox.Event> events;
-        try (Connection c = Shards.s(EU).open()) {
-            events = Outbox.pollUnpublishedOn(c, 100);
-        }
-        Outbox.Event echo = events.stream()
-                .filter(e -> e.key().startsWith("departed:")).findFirst().orElseThrow();
+        // the departed event sits in eu's outbox; in production the relay
+        // ships it and the applier processes it AGAIN. Simulate that:
+        Outbox.Event echo = Fixtures.outboxEvent(Shards.s(EU), "departed:");
         ShardApplier.handle(echo.payload());
         ShardApplier.handle(echo.payload());
 

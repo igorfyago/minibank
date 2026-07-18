@@ -42,12 +42,7 @@ class ProductLessonTest {
 
     @BeforeEach
     void freshMoney() throws Exception {
-        for (Shard s : Shards.all()) {
-            try (Connection c = s.open(); var st = c.createStatement()) {
-                st.execute("TRUNCATE entries, transactions, outbox, accounts CASCADE");
-            }
-            s.createSchema();
-        }
+        Fixtures.resetShards();
         Shards.forCustomer(IGOR).createCustomer(IGOR, "igor");
         Shards.forCustomer(IGOR).transferLocal(UUID.randomUUID(), Shard.WORLD, IGOR, eur("500.00"));
         Products.ensureFor(IGOR);

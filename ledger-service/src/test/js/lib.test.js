@@ -200,6 +200,17 @@ test('tapeLayout: a train entering an empty belt starts at the right edge', () =
   assert.equal(t.place(120), 800, 'first train is placed just off the right edge');
 });
 
+// The bar has no layout at parse time, so a beltWidth captured once is 0 and
+// every train launches from the LEFT edge instead of sliding in from the
+// right. place() must read whatever the caller set most recently.
+test('tapeLayout: place uses the CURRENT belt width, not the one it was built with', () => {
+  const t = MB.tapeLayout({ beltWidth: 0, gap: 76 });
+  assert.equal(t.place(100), 0, 'an unmeasured belt places at the origin');
+  t.trains.length = 0; t.cursor = 0; t.x = 0;
+  t.beltWidth = 1200;                       // measured once the bar has layout
+  assert.equal(t.place(100), 1200, 'now it enters at the right edge');
+});
+
 test('tapeLayout: trains queue behind each other with the gap', () => {
   const t = MB.tapeLayout({ beltWidth: 800, gap: 76 });
   t.place(120);

@@ -61,10 +61,8 @@ class LostUpdateLessonTest {
 
     @BeforeEach
     void freshAccount() throws Exception {
-        try (Connection c = Db.open(); var st = c.createStatement()) {
-            st.execute("TRUNCATE accounts CASCADE");
-            st.execute("INSERT INTO accounts(id, owner, balance, version) VALUES (1, 'joint', 100.00, 0)");
-        }
+        Fixtures.onSingleDb("TRUNCATE accounts CASCADE",
+                "INSERT INTO accounts(id, owner, balance, version) VALUES (1, 'joint', 100.00, 0)");
     }
 
     private BigDecimal balance() throws Exception {
