@@ -1,0 +1,213 @@
+---
+# THE LESSONS RUN ON A BARE MACHINE.
+#
+# 15 of the 18 test classes need live Postgres and one needs a live Kafka, and
+# they need them because of what they assert. "naive read-compute-write LOSES
+# 30", "wrong-order locking, Postgres kills one (40P01)", "insufficient funds,
+# and NOTHING was written" are claims about real MVCC, a real deadlock detector
+# and a real CHECK constraint. A mock cannot lose an update and an in-memory
+# substitute in PostgreSQL-compatibility mode would go green on things real
+# Postgres fails, which is worse than having no test: it launders a claim.
+#
+# So the databases are real, and the platform is told to provide them at the
+# same fixed addresses the compose file already binds. Nothing in the
+# production code changes, and no test learns anything about CI.
+#
+# Locally the identical contract, in one command:
+#   docker compose up -d --wait && cd ledger-service && mvn -B test
+#
+name: lessons
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------- ledger
+  # Everything except the one test that needs a broker. Kafka is by far the
+  # slowest thing in the stack, so the 14 classes that do not need it must not
+  # wait for it. ShardLessonTest lesson 4 ("Kafka may deliver five times, the
+  # money lands once") belongs HERE, not in the broker job: it replays the
+  # exact bytes the relay hands to Kafka straight into ShardApplier.handle,
+  # twice. That is a better lesson than a live broker and a much cheaper test.
+  ledger:
+    name: ledger, shards, saga, issuer, pool
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      # The control plane: directory, notifications, and the stage-1 ledger.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: minibank
+          POSTGRES_PASSWORD: minibank
+          POSTGRES_DB: minibank
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U minibank -d minibank"
+          --health-interval 3s --health-timeout 3s
+          --health-retries 20 --health-start-period 3s
+
+      # A shard is a different MACHINE. Separate servers, not separate
+      # schemas: you cannot JOIN across them, and that impossibility is the
+      # entire point of the sharding lessons.
+      shard0:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: minibank
+          POSTGRES_PASSWORD: minibank
+          POSTGRES_DB: minibank
+        ports: ['5434:5432']
+        options: >-
+          --health-cmd "pg_isready -U minibank -d minibank"
+          --health-interval 3s --health-timeout 3s
+          --health-retries 20 --health-start-period 3s
+
+      shard1:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: minibank
+          POSTGRES_PASSWORD: minibank
+          POSTGRES_DB: minibank
+        ports: ['5435:5432']
+        options: >-
+          --health-cmd "pg_isready -U minibank -d minibank"
+          --health-interval 3s --health-timeout 3s
+          --health-retries 20 --health-start-period 3s
+
+      # PoolLessonTest lesson 5 runs the same workload through a real
+      # transaction pooler. DB_HOST: postgres resolves exactly as it does under
+      # compose, because Actions puts every service on one bridge network and
+      # registers each service label as an alias.
+      #
+      # No health check here on purpose: this image ships none and has no
+      # reliable probe binary. The exposure is bounded and acceptable. It boots
+      # in well under a second, it fronts a Postgres that IS health-gated, and
+      # the only test that dials :6432 runs minutes into the job.
+      pgbouncer:
+        image: edoburu/pgbouncer:v1.23.1-p2
+        env:
+          DB_HOST: postgres
+          DB_USER: minibank
+          DB_PASSWORD: minibank
+          DB_NAME: minibank
+          POOL_MODE: transaction
+          MAX_CLIENT_CONN: '1000'
+          DEFAULT_POOL_SIZE: '10'
+          AUTH_TYPE: scram-sha-256
+        ports: ['6432:5432']
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # No schema step. The lessons build their own tables (Ledger.createTables,
+      # Notifications.createOwnDatabase, the Flyway migrations the app runs),
+      # because a test that cannot stand up its own world is not a lesson, it is
+      # a fixture with extra steps.
+      - name: the lessons
+        working-directory: ledger-service
+        run: mvn -B -ntp test -Dtest='!OutboxLessonTest' -DfailIfNoSpecifiedTests=false
+
+      - name: surefire reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-ledger
+          path: ledger-service/target/surefire-reports/
+
+  # ---------------------------------------------------------------- broker
+  # The one class that genuinely needs Kafka: OutboxLessonTest drives a real
+  # producer through OutboxRelay and reads back with a real KafkaConsumer.
+  broker:
+    name: outbox, relay, idempotent consumer
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: minibank
+          POSTGRES_PASSWORD: minibank
+          POSTGRES_DB: minibank
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U minibank -d minibank"
+          --health-interval 3s --health-timeout 3s
+          --health-retries 20 --health-start-period 3s
+
+      # Deliberately NO health check on the broker.
+      #
+      # Actions blocks the first step until every health-checked service is
+      # healthy, so gating on Kafka would buy roughly twenty seconds of dead
+      # time before checkout even starts. Without a gate the broker boots
+      # concurrently with checkout, JDK setup and compilation, and the bounded
+      # wait below collects the result, normally on its first iteration.
+      #
+      # Two values differ from docker-compose.yml, and both are corrections
+      # rather than adaptations: compose says `1@kafka:9093` and
+      # `PLAINTEXT://kafka:19092`, which are self-referential on a single-node
+      # KRaft cluster. Depending on a service alias to resolve to itself from
+      # inside its own container is an avoidable coin flip. localhost is what
+      # those two lines actually mean.
+      kafka:
+        image: apache/kafka:3.8.0
+        ports: ['9092:9092']
+        env:
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+          KAFKA_LISTENERS: PLAINTEXT://:19092,CONTROLLER://:9093,EXTERNAL://:9092
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:19092,EXTERNAL://localhost:9092
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          # lesson 3 subscribes to "payments" and nothing in the test creates it
+          KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: compile while the broker boots
+        working-directory: ledger-service
+        run: mvn -B -ntp -DskipTests test-compile
+
+      - name: wait for the broker to answer a real metadata request
+        run: |
+          id=$(docker ps --filter ancestor=apache/kafka:3.8.0 --format '{{.ID}}' | head -1)
+          if [ -z "$id" ]; then echo "no kafka container found"; docker ps; exit 1; fi
+          for i in $(seq 1 60); do
+            if docker exec "$id" /opt/kafka/bin/kafka-topics.sh \
+                 --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then
+              echo "broker answered after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          # The failure mode this exists to prevent is an hour of squinting at
+          # a timeout, so say what the broker itself thought was happening.
+          echo "kafka never answered"; docker logs "$id"; exit 1
+
+      - name: the outbox lesson
+        working-directory: ledger-service
+        run: mvn -B -ntp test -Dtest=OutboxLessonTest
+
+      - name: surefire reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-broker
+          path: ledger-service/target/surefire-reports/

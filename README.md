@@ -123,8 +123,29 @@ The same image runs anywhere: every address it needs (shards, directory, Kafka) 
 ## Run
 
 ```bash
-docker compose up -d                    # postgres :5433 + kafka :9092
+docker compose up -d --wait             # 3x postgres, pgbouncer, kafka · --wait blocks until healthy
 cd ledger-service
-mvn test                                # 14 lessons, all proven
+mvn test                                # 95 tests, all proven
 mvn exec:java                           # the bank: http://localhost:8080
 ```
+
+PowerShell is the same two commands: `docker compose up -d --wait` then
+`cd ledger-service; mvn test`.
+
+`--wait` matters. The lessons assert real database behaviour (a lost update, a
+deadlock Postgres resolves itself, a CHECK constraint refusing an overdraft), so
+they need a real Postgres that is actually accepting connections, not merely a
+container that has been created. Without `--wait` the first run after a cold
+start is a race you win most of the time, which is the worst kind.
+
+**Why not mocks.** A mock cannot lose an update, and a fake cannot raise SQLSTATE
+40P01 from a real deadlock detector. An in-memory database in
+PostgreSQL-compatibility mode is the tempting middle road and the worst of the
+three: different MVCC, no real deadlock detection, no `SKIP LOCKED`, so it goes
+green on things production Postgres fails. A test that passes without exercising
+the mechanism does not just fail to help, it launders the claim the test exists
+to make.
+
+CI runs the identical thing on the identical ports: [`.github/workflows/lessons.yml`](.github/workflows/lessons.yml)
+provides them as service containers, in two parallel jobs. Only `OutboxLessonTest`
+needs a live broker, so the other 91 tests never wait for Kafka to boot.

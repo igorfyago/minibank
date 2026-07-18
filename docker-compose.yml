@@ -9,6 +9,13 @@ services:
       - "5433:5432"   # 5433 on the host: 5432 is taken by another project
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `docker compose up -d --wait` blocks on this, which is what makes
+      # "one command, then run the tests" actually true rather than a race.
+      test: ["CMD-SHELL", "pg_isready -U minibank -d minibank"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   # STAGE 5 · sharding. Two MORE Postgres servers, deliberately separate
   # containers: a shard is a different MACHINE. You cannot JOIN across them,
@@ -23,6 +30,13 @@ services:
       - "5434:5432"
     volumes:
       - shard0data:/var/lib/postgresql/data
+    healthcheck:
+      # `docker compose up -d --wait` blocks on this, which is what makes
+      # "one command, then run the tests" actually true rather than a race.
+      test: ["CMD-SHELL", "pg_isready -U minibank -d minibank"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   shard1:
     image: postgres:16-alpine
@@ -34,9 +48,16 @@ services:
       - "5435:5432"
     volumes:
       - shard1data:/var/lib/postgresql/data
+    healthcheck:
+      # `docker compose up -d --wait` blocks on this, which is what makes
+      # "one command, then run the tests" actually true rather than a race.
+      test: ["CMD-SHELL", "pg_isready -U minibank -d minibank"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   pgbouncer:
-    image: edoburu/pgbouncer:latest
+    image: edoburu/pgbouncer:v1.23.1-p2   # pinned: a floating tag can break the pool lesson overnight
     environment:
       DB_HOST: postgres
       DB_USER: minibank
@@ -49,7 +70,8 @@ services:
     ports:
       - "6432:5432"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
 
   kafka:
     image: apache/kafka:3.8.0
@@ -65,7 +87,16 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"   # OutboxLessonTest subscribes to "payments"; nothing creates it
+    healthcheck:
+      # A real metadata round trip, not a port probe. An accepted TCP
+      # connection proves a socket is listening, not that the broker will
+      # answer, and the difference is a flaky test that only fails in CI.
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
 
 volumes:
   pgdata:
