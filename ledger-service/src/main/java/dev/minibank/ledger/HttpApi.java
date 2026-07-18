@@ -1093,6 +1093,21 @@ public final class HttpApi {
      * true.
      */
     private static Response issuerInstrument(HttpExchange ex) throws Exception {
+        // POST issues a card to a customer. That is a CARDHOLDER action, not an
+        // acquirer one, and it sits on this route family only because the
+        // instrument is what the route is about. An acquirer has no business
+        // minting instruments and would have nothing to name a customer with
+        // if it tried.
+        if ("POST".equals(ex.getRequestMethod())) {
+            String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            String customer = Json.num(body, "customer");
+            if (customer == null) return Response.json(400, "{\"error\":\"need customer\"}");
+            Issuer.Instrument i = Issuer.issueCard(Long.parseLong(customer));
+            return Response.json(200, "{\"token\":\"" + Json.esc(i.token())
+                    + "\",\"brand_label\":\"" + Json.esc(i.brandLabel())
+                    + "\",\"last4\":\"" + Json.esc(i.last4())
+                    + "\",\"status\":\"" + Json.esc(i.status()) + "\"}");
+        }
         String path = ex.getRequestURI().getPath();
         String token = path.substring(path.lastIndexOf('/') + 1);
         if (token.isBlank() || token.equals("instruments"))
