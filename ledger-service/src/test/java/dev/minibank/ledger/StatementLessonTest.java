@@ -137,8 +137,30 @@ class StatementLessonTest {
     /** the biggest "actual rows" any node of the SHIPPED statement query
      *  touches · EXPLAIN ANALYZE is the only honest witness here */
     private static long rowsRead(Shard home, long account) throws Exception {
-        try (Connection c = home.open();
-             var ps = c.prepareStatement("EXPLAIN (ANALYZE, FORMAT JSON) " + HttpApi.STATEMENT_SQL)) {
+        try (Connection c = home.open()) {
+            // Gather statistics before asking the planner to choose, because a
+            // planner with no statistics is not the planner anything runs in
+            // production. This test failed in CI and passed on a laptop for
+            // exactly that reason: a developer's database has been analysed by
+            // autovacuum hours ago, a CI database is forty seconds old.
+            //
+            // The difference is not academic and not about table size. With no
+            // statistics Postgres estimates 4 matching rows, picks a Bitmap Heap
+            // Scan, and materialises EVERY matching row before the Sort and the
+            // LIMIT: 240 rows read to show 40. Once analysed it walks the index
+            // backwards and stops at 40. Same data, same query, same index.
+            //
+            // What this lesson claims is that the page costs what it shows. That
+            // is a claim about the query's shape and the index behind it, and it
+            // cannot be demonstrated while withholding the statistics the
+            // planner needs in order to act on either.
+            try (var st = c.createStatement()) { st.execute("ANALYZE entries"); }
+            return maxActualRows(c, account);
+        }
+    }
+
+    private static long maxActualRows(Connection c, long account) throws Exception {
+        try (var ps = c.prepareStatement("EXPLAIN (ANALYZE, FORMAT JSON) " + HttpApi.STATEMENT_SQL)) {
             ps.setLong(1, account);
             try (var rs = ps.executeQuery()) {
                 rs.next();

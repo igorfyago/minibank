@@ -389,6 +389,13 @@
 
   /* the guide */
   .guide { max-height:640px; overflow:auto; }
+  /* The trace sits at the TOP of the right column, beside the map, and sticks
+     there. It used to live under the map, which meant pressing "replay" scrolled
+     the thing being replayed off screen: the pulses travel along the edges in
+     the diagram, so a trace you can read and a diagram you can watch have to be
+     on screen at the same time. */
+  #trace-card { position:sticky; top:12px; z-index:2; }
+  #trace-steps { max-height:40vh; overflow:auto; }
   .guide-head { display:flex; align-items:center; margin-bottom:8px; }
   .guide-head h3 { font-size:15px; }
   .guide-tabs { display:flex; gap:6px; margin:8px 0 12px; }
@@ -406,7 +413,7 @@
   .xcol { display:flex; flex-direction:column; gap:14px; min-width:0; }
   .xray-grid .card { padding:14px 16px; }
   #xsvg { display:block; }
-  @media (max-width:1180px) { .xray-grid { grid-template-columns:1fr; } .guide { position:static; max-height:none; } }
+  @media (max-width:1180px) { .xray-grid { grid-template-columns:1fr; } .guide { position:static; max-height:none; } /* stacked, the trace would sit on top of the map it describes */ #trace-card { position:static; } }
   svg text { font-family:system-ui; }
   .node { cursor:pointer; }
   .node rect, .node ellipse, .node path { fill:#1c2330; stroke:var(--line); stroke-width:1.5; }
@@ -717,17 +724,6 @@
             every box is a real running process · raw Java 21, zero frameworks · PostgreSQL ×4 · Kafka · Redis · Prometheus ·
             38 executable proofs in the repo</div>
         </div>
-        <div class="card" id="trace-card" hidden>
-          <h2>Trace <span class="muted" id="trace-tx"></span>
-            <button class="ghost" style="float:right;padding:2px 10px" id="trace-clear">✕</button>
-            <button class="ghost" style="float:right;padding:2px 10px;margin-right:8px" id="replay-btn">▶ replay 3s</button></h2>
-          <div id="trace-head" class="muted" style="font-size:12.5px;margin-bottom:6px"></div>
-          <div id="play-wrap" hidden>
-            <div id="play-bar"><div id="play-fill"></div></div>
-            <div id="play-caption"></div>
-          </div>
-          <div id="trace-steps"></div>
-        </div>
         <div class="card">
           <h2>The ecosystem, live</h2>
           <div class="eco-grid">
@@ -755,6 +751,17 @@
       </div>
 
       <div class="xcol">
+        <div class="card" id="trace-card" hidden>
+          <h2>Trace <span class="muted" id="trace-tx"></span>
+            <button class="ghost" style="float:right;padding:2px 10px" id="trace-clear">✕</button>
+            <button class="ghost" style="float:right;padding:2px 10px;margin-right:8px" id="replay-btn">▶ replay 3s</button></h2>
+          <div id="trace-head" class="muted" style="font-size:12.5px;margin-bottom:6px"></div>
+          <div id="play-wrap" hidden>
+            <div id="play-bar"><div id="play-fill"></div></div>
+            <div id="play-caption"></div>
+          </div>
+          <div id="trace-steps"></div>
+        </div>
         <div class="card guide" id="guide">
           <div class="guide-head"><span class="live-dot"></span><h3 id="guide-title">The Guide</h3></div>
           <div class="guide-tabs">

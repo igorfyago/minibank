@@ -88,6 +88,14 @@ class SsoIdentityLessonTest {
         for (Shard s : Shards.all()) s.createSchema();
         Shards.nameRegions("eu", "uk");
         Directory.createOwnDatabase();          // applies db/directory/V5__sso_customers.sql
+        // lesson 2 asks /api/notifications for a 200, so the notifications
+        // database has to exist. It used to, by accident: OutboxLessonTest
+        // creates it and sorts before this class, so when every test shared one
+        // run this class inherited a world someone else had built. Splitting the
+        // broker tests into their own CI job removed that neighbour and the
+        // hidden dependency turned into a 500. A test that cannot stand up the
+        // world it asserts on is not independent, it is just lucky.
+        Notifications.createOwnDatabase();
 
         // start from an empty link table · these lessons assert on exactly who
         // a subject resolves to, and a run that inherits yesterday's links can
