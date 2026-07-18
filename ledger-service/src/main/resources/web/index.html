@@ -238,7 +238,7 @@
   .spark { width:100%; height:16px; margin-top:7px; }
   .eco-sub { font-size:10px; color:var(--dim); opacity:.7; margin-top:2px; }
 
-  /* inspector + interview map */
+  /* inspector + deep-dive map */
   .insp-title { color:var(--dim); font-size:11.5px; font-weight:600; text-transform:uppercase;
     letter-spacing:.04em; margin:12px 0 6px; }
   .acc { border:1px solid var(--line); border-radius:12px; background:rgba(255,255,255,.02); min-width:0;
@@ -688,7 +688,7 @@
           <div class="guide-tabs">
             <button data-d="plain" class="on">Plainly</button>
             <button data-d="how">Mechanism</button>
-            <button data-d="win">Interview</button>
+            <button data-d="win">Deep dive</button>
           </div>
           <div id="guide-body"><p class="muted">Click anything on the map · this panel answers for it: three depths, live numbers, and its actual database rows.</p></div>
           <div id="guide-stats"></div>
@@ -860,11 +860,11 @@
     </div>
 
     <div class="card" style="margin-top:14px">
-      <h2>The interview map · 16 questions, and where this bank answers them</h2>
-      <div class="muted" style="font-size:12px;margin-bottom:8px">Run the hour like the interviewer runs it:
+      <h2>The deep-dive map · 16 questions, and where this bank answers them</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">The 16 questions a payments system has to survive, worked the way you'd actually reason about one:
         <b>clarify</b> (requirements, throughput, consistency needs) → <b>high-level</b> (the map above)
         → <b>deep dive</b> (any question here · the full answer opens in place, at three depths)
-        → <b>trade-offs</b> (each answer's Interview tab) → <b>wrap-up</b>.
+        → <b>trade-offs</b> (each answer's Deep dive tab) → <b>what it costs</b>.
         Strong consistency where money moves, eventual where echoes ripple · say it early.</div>
       <div id="qmap"></div>
     </div>
@@ -1557,7 +1557,7 @@ async function refreshInspect() {
 function closeInspect() { inspectNode = null; prevInspSig = ''; $('#inspect-wrap').hidden = true; }
 $('#inspect-clear').onclick = closeInspect;
 
-/* ---- the interview map: 16 real questions -> answered in place ---- */
+/* ---- the deep-dive map: 16 real questions -> answered in place ---- */
 function Shard0Name(s) { return s === 0 ? 'eu' : 'uk'; }
 const QUESTIONS = [
   { short: 'the lost update', q: 'Two requests update the same balance at once · what goes wrong?',
@@ -1658,7 +1658,7 @@ $('#qmap').innerHTML = QUESTIONS.map((qq, i) => `
       <div class="guide-tabs">
         <button class="on" onclick="event.stopPropagation();qDepth(${i},'plain',this)">Plainly</button>
         <button onclick="event.stopPropagation();qDepth(${i},'how',this)">Mechanism</button>
-        <button onclick="event.stopPropagation();qDepth(${i},'win',this)">Interview</button></div>
+        <button onclick="event.stopPropagation();qDepth(${i},'win',this)">Deep dive</button></div>
       <p class="q-ans" id="qans-${i}">${qq.plain}</p>
       <button class="mini" onclick="event.stopPropagation();qOnMap(${i})">show on the map ↑</button>
     </div>
@@ -2434,10 +2434,24 @@ async function kafkaTick() {
 }
 // turn a raw event payload into a one-line human summary · the same story the
 // X-ray tells, here on the broker's exact bytes
+// system accounts and the fixed product offsets · the same map the server
+// uses, so the broker's raw bytes read as people and products, never as
+// primary keys ("user 112" means nothing · "oscar's savings" does)
+const KF_SYSTEM = { 1: 'world', 3: 'in transit', 4: 'broker', 5: 'broker', 6: 'broker', 7: 'cafe' };
+const KF_PRODUCT = { 100: 'savings', 200: 'bitcoin', 300: 'apple stock',
+                     400: 'card', 500: 'loan', 600: 'card hold' };
 function kfName(id) {
   if (id == null) return '?';
-  const a = (typeof accounts !== 'undefined' && accounts) ? accounts.find(x => x.id === Number(id)) : null;
-  return a ? a.owner : (String(id) === '1' ? 'world' : 'user ' + id);
+  const n = Number(id);
+  if (KF_SYSTEM[n]) return KF_SYSTEM[n];
+  const a = (typeof accounts !== 'undefined' && accounts) ? accounts.find(x => x.id === n) : null;
+  if (a) return a.owner;
+  const customer = n % 100, product = KF_PRODUCT[n - customer];
+  if (product) {
+    const c = (typeof accounts !== 'undefined' && accounts) ? accounts.find(x => x.id === customer) : null;
+    return c ? `${c.owner}'s ${product}` : product;
+  }
+  return 'account ' + n;
 }
 function kfSummary(val) {
   let o; try { o = JSON.parse(val); } catch (e) { return { ic: '·', type: '', text: val }; }

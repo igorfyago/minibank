@@ -319,12 +319,48 @@ public final class HttpApi {
         return null;
     }
 
+    /** The system accounts, by their seeded owner names. */
+    private static String systemName(long id) {
+        if (id == Shard.WORLD) return "world";
+        if (id == Shard.IN_TRANSIT) return "in transit";
+        if (id == Shard.BROKER_EUR || id == Shard.BROKER_BTC || id == Shard.BROKER_AAPL) return "broker";
+        if (id == Shard.CAFE) return "cafe";
+        return null;
+    }
+
+    /** Product accounts live at fixed offsets from the customer id. */
+    private static String productName(long offset) {
+        if (offset == Products.SAVINGS) return "savings";
+        if (offset == Products.BTC) return "bitcoin";
+        if (offset == Products.AAPL) return "apple stock";
+        if (offset == Products.CARD) return "card";
+        if (offset == Products.LOAN) return "loan";
+        if (offset == Products.HOLDS) return "card hold";
+        return null;
+    }
+
+    /**
+     * A human label for ANY account id · a customer, one of their product
+     * accounts, or a system account. The primary key is plumbing: it never
+     * belongs on screen ("user 112" means nothing · "oscar's savings" does).
+     */
     private static String ownerName(String idStr) {
         if (idStr == null) return "Transfer";
+        long id;
         try {
-            return Directory.owner(Long.parseLong(idStr));
+            id = Long.parseLong(idStr.trim());
+        } catch (NumberFormatException e) {
+            return "Transfer";
+        }
+        String sys = systemName(id);
+        if (sys != null) return sys;
+        long customer = id % 100, offset = id - customer;   // customers are id < 100
+        String product = productName(offset);
+        try {
+            String owner = Directory.owner(customer);
+            return product == null ? owner : owner + "'s " + product;
         } catch (Exception e) {
-            return "user " + idStr;
+            return product == null ? "account " + id : product;
         }
     }
 
