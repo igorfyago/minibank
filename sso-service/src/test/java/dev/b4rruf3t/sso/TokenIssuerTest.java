@@ -70,8 +70,9 @@ class TokenIssuerTest {
             "usr_abc", List.of("bank.b4rruf3t.com"), "Igor", "i@b.c", 900);
 
         String[] parts = jwt.split("\\.");
+        String forgedPayload = "{\"iss\":\"" + ISSUER + "\",\"sub\":\"usr_admin\",\"exp\":9999999999}";
         String forged = Base64.getUrlEncoder().withoutPadding()
-            .encodeToString("{\"iss\":\"" + ISSUER + "\",\"sub\":\"usr_admin\",\"exp\":9999999999}".getBytes());
+            .encodeToString(forgedPayload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
         Signature sig = Signature.getInstance("SHA256withRSA");
         sig.initVerify(keys.publicKey());
