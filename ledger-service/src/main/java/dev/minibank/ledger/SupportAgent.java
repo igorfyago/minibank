@@ -19,7 +19,7 @@ import java.util.Map;
  *              recent ledger rows and the cast list, queried at request
  *              time and injected into the prompt.
  *   TOOLED     Rita has the same verbs as the app's buttons: send, top
- *              up, savings, card lifecycle, trade, mortgage, relocate.
+ *              up, savings, card lifecycle, trade, loan, relocate.
  *              She PROPOSES a tool call; she never executes.
  *   APPROVED   the proposal renders as an Allow/Deny card in the chat.
  *              On Allow, the CUSTOMER'S BROWSER makes the same public
@@ -49,7 +49,7 @@ public final class SupportAgent {
         {"type":"function","function":{"name":"savings_move","description":"Move euros between main and savings.","parameters":{"type":"object","properties":{"direction":{"type":"string","enum":["to_savings","to_main"]},"amount":{"type":"string"}},"required":["direction","amount"]}}},
         {"type":"function","function":{"name":"card_action","description":"Credit card operations. pay_cafe spends at the cafe; hold authorizes (reserves); capture pays the most recent hold to the merchant; release undoes the most recent hold; repay pays the card debt from main.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["pay_cafe","hold","capture","release","repay"]},"amount":{"type":"string","description":"EUR amount for pay_cafe, hold or repay"}},"required":["action"]}}},
         {"type":"function","function":{"name":"trade","description":"Buy or sell bitcoin (btc) or Apple stock (aapl) at the live price, for a EUR amount.","parameters":{"type":"object","properties":{"asset":{"type":"string","enum":["btc","aapl"]},"side":{"type":"string","enum":["buy","sell"]},"eur":{"type":"string","description":"EUR amount, e.g. 50.00"}},"required":["asset","side","eur"]}}},
-        {"type":"function","function":{"name":"mortgage","description":"apply for a mortgage (instant decision, up to 20000) or repay part of it from main.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["apply","repay"]},"amount":{"type":"string"}},"required":["action","amount"]}}},
+        {"type":"function","function":{"name":"loan","description":"apply for a loan (instant decision, up to 20000) or repay part of it from main.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["apply","repay"]},"amount":{"type":"string"}},"required":["action","amount"]}}},
         {"type":"function","function":{"name":"relocate","description":"Move the customer to the other region · the balance travels as one saga, then the directory pointer flips.","parameters":{"type":"object","properties":{"region":{"type":"string","enum":["eu","uk"]}},"required":["region"]}}}
         ]""";
 

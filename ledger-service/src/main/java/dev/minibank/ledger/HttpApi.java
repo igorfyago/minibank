@@ -134,8 +134,19 @@ public final class HttpApi {
                 case Ledger.InsufficientFunds i -> "insufficient_funds";
                 case Ledger.NoSuchAccount n -> "no_such_account";
             };
-            Metrics.inc("minibank_ledger_events_total",
-                    "kind=\"" + (plan.crossShard() ? "saga_depart" : "transfer_local") + "\"");
+            // Counted by what actually happened, not by what was attempted. This
+            // used to increment saga_depart / transfer_local unconditionally, so
+            // a transfer refused for insufficient funds was published to the
+            // dashboard as a completed money movement. A rejection is a real
+            // event and worth counting, but it is a DIFFERENT event, and a
+            // graph that cannot tell them apart is worse than no graph.
+            String eventKind = switch (result) {
+                case Ledger.Ok ok -> plan.crossShard() ? "saga_depart" : "transfer_local";
+                case Ledger.AlreadyProcessed a -> "replayed";
+                case Ledger.InsufficientFunds i -> "declined_funds";
+                case Ledger.NoSuchAccount n -> "declined_no_account";
+            };
+            Metrics.inc("minibank_ledger_events_total", "kind=\"" + eventKind + "\"");
             return Response.json(200, "{\"result\":\"" + kind +
                     "\",\"crossShard\":" + plan.crossShard() + "}");
         } catch (Directory.CustomerMoving e) {
@@ -157,6 +168,9 @@ public final class HttpApi {
             return Response.json(400, "{\"error\":\"need customer, to\"}");
         try {
             Relocation.relocate(Long.parseLong(customer), Integer.parseInt(to));
+            // A relocation moves a real balance through the standard saga, so it
+            // belongs on the money-path graph. It was invisible there.
+            Metrics.inc("minibank_ledger_events_total", "kind=\"relocation\"");
             return Response.json(200, "{\"result\":\"ok\",\"region\":\"" +
                     Shards.regionName(Integer.parseInt(to)) + "\"}");
         } catch (Directory.CustomerMoving e) {

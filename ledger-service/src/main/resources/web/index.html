@@ -643,61 +643,61 @@
           <svg viewBox="0 0 720 600" width="100%" id="xsvg">
             <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
               <path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker></defs>
-            <line class="edge" data-edge="browser_api"   x1="96"  y1="40"  x2="112" y2="40"/>
-            <line class="edge" data-edge="caddy_api"     x1="216" y1="40"  x2="232" y2="40"/>
-            <line class="edge"                            x1="290" y1="62"  x2="160" y2="100"/>
-            <line class="edge" data-edge="api_shard0"    x1="410" y1="44"  x2="452" y2="94"/>
-            <line class="edge" data-edge="api_shard1"    x1="350" y1="62"  x2="452" y2="212"/>
-            <line class="edge" data-edge="shard0_kafka"  x1="488" y1="156" x2="479" y2="330"/>
-            <line class="edge" data-edge="shard1_kafka"  x1="492" y1="268" x2="484" y2="330"/>
-            <line class="edge" data-edge="kafka_applier" x1="400" y1="356" x2="350" y2="356"/>
-            <line class="edge" data-edge="applier_shard0" x1="260" y1="330" x2="452" y2="150"/>
-            <line class="edge" data-edge="applier_shard1" x1="262" y1="336" x2="452" y2="260"/>
-            <line class="edge" data-edge="kafka_notif"   x1="590" y1="356" x2="600" y2="356"/>
+            <line class="edge" data-edge="browser_api"    x1="96"  y1="40"  x2="128" y2="40"/>
+            <line class="edge" data-edge="caddy_api"      x1="232" y1="40"  x2="271" y2="40"/>
+            <line class="edge" data-edge="api_directory"  x1="293" y1="62"  x2="186" y2="100"/>
+            <line class="edge" data-edge="api_shard0"     x1="336" y1="62"  x2="265" y2="192"/>
+            <line class="edge" data-edge="api_shard1"     x1="384" y1="62"  x2="455" y2="192"/>
+            <line class="edge" data-edge="shard0_kafka"   x1="265" y1="268" x2="305" y2="328"/>
+            <line class="edge" data-edge="shard1_kafka"   x1="455" y1="268" x2="415" y2="328"/>
+            <line class="edge" data-edge="kafka_applier"  x1="265" y1="356" x2="213" y2="356"/>
+            <line class="edge" data-edge="applier_shard0" x1="140" y1="328" x2="222" y2="266"/>
+            <line class="edge" data-edge="applier_shard1" x1="178" y1="328" x2="396" y2="268"/>
+            <line class="edge" data-edge="kafka_notif"    x1="455" y1="356" x2="507" y2="356"/>
             <g class="node" data-node="browser" transform="translate(8,18)">
               <rect width="88" height="44" rx="9"/><text x="44" y="20" text-anchor="middle">Browser</text>
               <text x="44" y="34" text-anchor="middle" class="sub">PWA · vanilla JS</text></g>
-            <g class="node" data-node="caddy" transform="translate(112,18)">
+            <g class="node" data-node="caddy" transform="translate(128,18)">
               <rect width="104" height="44" rx="9"/><text x="52" y="20" text-anchor="middle">Caddy 2</text>
               <text x="52" y="34" text-anchor="middle" class="sub">TLS · :443 → :8080</text></g>
-            <g class="node" data-node="api" transform="translate(232,18)">
+            <g class="node" data-node="api" transform="translate(271,18)">
               <rect width="178" height="44" rx="9"/><text x="89" y="20" text-anchor="middle">API + Router</text>
               <text x="89" y="34" text-anchor="middle" class="sub">JDK HttpServer · vthreads · bucket 60/25s</text></g>
             <g class="node" data-node="directory" transform="translate(26,100)">
               <rect width="190" height="48" rx="9"/><text x="95" y="21" text-anchor="middle">Directory</text>
               <text x="95" y="36" text-anchor="middle" class="sub">pg-control :5433 · customer → region</text></g>
-            <g class="node" data-node="intransit" transform="translate(248,112)">
+            <g class="node" data-node="intransit" transform="translate(537,101)">
               <rect width="124" height="46" rx="23"/><text x="62" y="21" text-anchor="middle">in flight</text>
               <text x="62" y="37" text-anchor="middle" class="sub" id="inflight-num">€0.00</text></g>
-            <g class="node" data-node="shard0" transform="translate(430,84)">
+            <g class="node" data-node="shard0" transform="translate(198,196)">
               <path d="M0,12 a67,12 0 0 1 134,0 v46 a67,12 0 0 1 -134,0 z"/>
               <ellipse cx="67" cy="12" rx="67" ry="12"/>
               <text x="67" y="40" text-anchor="middle">eu · PostgreSQL 16</text>
               <text x="67" y="55" text-anchor="middle" class="sub" id="shard0-sub">:5434 · pool · outbox</text></g>
-            <g class="node" data-node="shard1" transform="translate(430,196)">
+            <g class="node" data-node="shard1" transform="translate(388,196)">
               <path d="M0,12 a67,12 0 0 1 134,0 v46 a67,12 0 0 1 -134,0 z"/>
               <ellipse cx="67" cy="12" rx="67" ry="12"/>
               <text x="67" y="40" text-anchor="middle">uk · PostgreSQL 16</text>
               <text x="67" y="55" text-anchor="middle" class="sub" id="shard1-sub">:5435 · pool · outbox</text></g>
-            <g class="node" data-node="applier" transform="translate(182,330)">
+            <g class="node" data-node="applier" transform="translate(45,330)">
               <rect width="168" height="52" rx="9"/><text x="84" y="22" text-anchor="middle">Applier</text>
               <text x="84" y="38" text-anchor="middle" class="sub">group shard-applier · idempotent</text></g>
-            <g class="node" data-node="kafka" transform="translate(400,330)">
+            <g class="node" data-node="kafka" transform="translate(265,330)">
               <rect width="190" height="52" rx="9"/><text x="95" y="22" text-anchor="middle">Kafka 3.8 · KRaft</text>
               <text x="95" y="38" text-anchor="middle" class="sub">topic payments · acks=all</text></g>
-            <g class="node" data-node="notif" transform="translate(600,330)">
+            <g class="node" data-node="notif" transform="translate(507,330)">
               <rect width="114" height="52" rx="9"/><text x="57" y="22" text-anchor="middle">Notifications</text>
               <text x="57" y="38" text-anchor="middle" class="sub">own DB · dedupe</text></g>
-            <g class="node" data-node="rita" transform="translate(96,470)">
+            <g class="node" data-node="rita" transform="translate(60,470)">
               <rect width="200" height="52" rx="9"/><text x="100" y="22" text-anchor="middle">Rita · support agent</text>
               <text x="100" y="38" text-anchor="middle" class="sub">gpt-4o-mini · 7 tools · Allow/Deny</text></g>
-            <g class="node" data-node="pricefeed" transform="translate(430,470)">
+            <g class="node" data-node="pricefeed" transform="translate(422,470)">
               <rect width="168" height="52" rx="9"/><text x="84" y="22" text-anchor="middle">PriceFeed</text>
               <text x="84" y="38" text-anchor="middle" class="sub">CoinGecko · Yahoo · 60s</text></g>
             <g class="node" data-node="fx" transform="translate(610,470)">
               <rect width="104" height="52" rx="9"/><text x="52" y="22" text-anchor="middle">FX</text>
               <text x="52" y="38" text-anchor="middle" class="sub">own process :8090</text></g>
-            <g class="node" data-node="redis" transform="translate(300,470)">
+            <g class="node" data-node="redis" transform="translate(280,470)">
               <rect width="122" height="52" rx="9"/><text x="61" y="22" text-anchor="middle">Redis</text>
               <text x="61" y="38" text-anchor="middle" class="sub" id="redis-sub">cache · warming</text></g>
             <g class="node" data-node="prometheus" transform="translate(8,548)">
@@ -1030,7 +1030,10 @@
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
-const api = (p, opt) => fetch(p, opt).then(r => r.json());
+/* Non-2xx is not data. 400 and 409 are answers and still come back as bodies;
+   429 and 5xx throw, so `x = await api(...)` never overwrites good state with
+   an error object. Contract and reasoning live in lib.js, unit-tested there. */
+const api = MB.makeApi(fetch);
 
 /* ---------------- tabs ---------------- */
 document.querySelectorAll('.tab-btn[data-tab]').forEach(b => b.onclick = () => {
@@ -1378,13 +1381,18 @@ async function loadStatement() {
 }
 
 /* ---------------- x-ray tab: the living map ---------------- */
+/* The pulse paths. These are the SAME coordinates as the <line> elements in the
+   markup above, and they have to stay that way: the lines are what you see, and
+   this is what the travelling dots follow. Move one without the other and the
+   dots fly through empty space. Kept in the order the money moves. */
 const EDGES = {
-  browser_api:[96,40,112,40], caddy_api:[216,40,232,40],
-  api_shard0:[410,44,452,94], api_shard1:[350,62,452,212],
-  shard0_kafka:[488,156,479,330], shard1_kafka:[492,268,484,330],
-  kafka_applier:[400,356,350,356],
-  applier_shard0:[260,330,452,150], applier_shard1:[262,336,452,260],
-  kafka_notif:[590,356,600,356]
+  browser_api:[96,40,128,40], caddy_api:[232,40,271,40],
+  api_directory:[293,62,186,100],
+  api_shard0:[336,62,265,192], api_shard1:[384,62,455,192],
+  shard0_kafka:[265,268,305,328], shard1_kafka:[455,268,415,328],
+  kafka_applier:[265,356,213,356],
+  applier_shard0:[140,328,222,266], applier_shard1:[178,328,396,268],
+  kafka_notif:[455,356,507,356]
 };
 function pulse(edge, color = 'var(--accent)', delay = 0) {
   const e = EDGES[edge]; if (!e) return;
@@ -2497,10 +2505,7 @@ _phone.addEventListener('change', () => {
   ritaOpen(open);
 });
 
-$('#chat-fab').onclick = () => {
-  ritaOpen($('#chat-panel').classList.contains('hidden'));
-  if (false) { if (!chatLog.length) chatHello(); $('#chat-in').focus(); }
-};
+$('#chat-fab').onclick = () => ritaOpen($('#chat-panel').classList.contains('hidden'));
 $('#chat-close').onclick = () => ritaOpen(false);
 $('#chat-in').addEventListener('keydown', e => { if (e.key === 'Enter') $('#chat-send').click(); });
 $('#chat-send').onclick = async () => {
@@ -2520,11 +2525,25 @@ $('#chat-send').onclick = async () => {
   } catch (e) { r = { reply: 'I lost my connection mid-sentence · try again?' }; }
   chatLog = chatLog.filter(m => m.role !== 'typing');
   if (r.reply) chatLog.push({ role: 'rita', text: r.reply });
-  if (r.action && AGENT_TOOLS[r.action.tool]) {
+  /* The account was renamed mortgage -> loan and the rename crossed the
+     database and this registry but not the agent's tool schema, so the server
+     kept emitting tool "mortgage" while the only key here was "loan". The
+     lookup missed, the action was dropped, and because a tool call arrives
+     with empty content the user was told "✗ no answer" for the one suggestion
+     chip the page offers by default. Both sides say "loan" now; the alias
+     keeps older deployments working through a rolling restart. */
+  const TOOL_ALIAS = { mortgage: 'loan' };
+  const toolName = r.action && (TOOL_ALIAS[r.action.tool] || r.action.tool);
+  if (r.action && AGENT_TOOLS[toolName]) {
     let args = {};
     try { args = JSON.parse(r.action.args); } catch (e) {}
-    chatLog.push({ role: 'action', tool: r.action.tool, args,
-      summary: AGENT_TOOLS[r.action.tool].sum(args), status: 'pending' });
+    chatLog.push({ role: 'action', tool: toolName, args,
+      summary: AGENT_TOOLS[toolName].sum(args), status: 'pending' });
+  } else if (r.action) {
+    /* An action we cannot render is reported, never dropped. Silence is what
+       made the rename above invisible: the failure looked like the model
+       simply had nothing to say. */
+    chatLog.push({ role: 'rita', text: '✗ I cannot perform "' + r.action.tool + '" from here.' });
   } else if (!r.reply) {
     chatLog.push({ role: 'rita', text: '✗ ' + (r.error || 'no answer') });
   }
@@ -2547,13 +2566,32 @@ async function initStudio() {
   runStudio();
 }
 function renderRail() {
+  // The rail cannot be drawn before the catalog arrives. Guarding here rather
+  // than at each call site means no future caller can reintroduce the null
+  // dereference below, which is exactly how gotoStudio broke.
+  if (!catalog) return;
   $('#db-rail').innerHTML = catalog.dbs.map(db => `
     <div class="db-name">🗄 ${db.title}</div>
     ${db.queries.map(q => `<button class="db-q ${db.id === studioDb && q.id === studioQ ? 'on' : ''}"
         onclick="openStudio('${db.id}','${q.id}')">${q.id.startsWith('audit') ? '⚖ ' : q.id === 'in_flight' ? '✈ ' : '𝍖 '}${q.title.split(' · ')[0]}</button>`).join('')}`).join('');
 }
 window.openStudio = (db, q) => { studioDb = db; studioQ = q; renderRail(); runStudio(); };
-window.gotoStudio = (db, q) => { document.querySelector('[data-tab="console"]').click(); openStudio(db, q); };
+/* "SQL ▸" from the X-ray tab. It used to click the Console tab and then call
+   openStudio immediately, which raced initStudio: that function is async and
+   assigns `catalog` only after its await, so renderRail ran against a null
+   catalog and threw. It appeared to work because initStudio's continuation
+   repainted a moment later using the values openStudio had already assigned,
+   so the recovery was real but accidental. If the catalog fetch was slow, or
+   answered 429 off the token bucket, the rail stayed on "loading catalog…"
+   and the query the user actually asked for silently never ran.
+   Setting the target first and awaiting the catalog makes the repaint the
+   intended path rather than a lucky one. */
+window.gotoStudio = async (db, q) => {
+  studioDb = db; studioQ = q;
+  document.querySelector('[data-tab="console"]').click();
+  try { await initStudio(); } catch (e) { /* the next Console click retries */ }
+  renderRail(); runStudio();
+};
 async function runStudio() {
   const d = await api(`/api/explorer/run?db=${studioDb}&q=${studioQ}`);
   if (d.error) { $('#ed-stat').textContent = d.error; return; }
@@ -2828,9 +2866,19 @@ function drawChart(svgId, legId, panelKey, fmt, opts = {}) {
   }
   svg.innerHTML = `<line x1="0" y1="${H - 0.5}" x2="${W}" y2="${H - 0.5}" stroke="var(--line)" stroke-width="1"/>` + paths;
   const leg = document.querySelector('#' + legId);
-  if (leg) leg.innerHTML = names.length
-    ? names.map(n => `<span class="dp-leg"><span class="dp-sw" style="background:${dashColor(n)}"></span>${n.replace(/</g, '&lt;')} <b>${fmt(s[n][s[n].length - 1] || 0)}</b></span>`).join('')
-    : `<span style="color:#4a5568">${opts.quiet || 'quiet · no activity in this window'}</span>`;
+  if (!leg) return;
+  const state = MB.panelLegend(names, opts.totals);
+  if (state.mode === 'live') {
+    leg.innerHTML = names.map(n => `<span class="dp-leg"><span class="dp-sw" style="background:${dashColor(n)}"></span>${n.replace(/</g, '&lt;')} <b>${fmt(s[n][s[n].length - 1] || 0)}</b></span>`).join('');
+  } else if (state.mode === 'total') {
+    // Nothing in this window, but the process has been counting since it
+    // started. Labelled as a total so it can never be misread as a live rate.
+    leg.innerHTML = `<span style="color:#4a5568">no events in this window · since start:</span> `
+      + state.kinds.map(n => `<span class="dp-leg"><span class="dp-sw" style="background:${dashColor(n)}"></span>${n.replace(/</g, '&lt;')} <b>${Math.round(opts.totals[n])}</b></span>`).join('')
+      + (state.hiddenCount ? ` <span style="color:#4a5568">+${state.hiddenCount} more</span>` : '');
+  } else {
+    leg.innerHTML = `<span style="color:#4a5568">${opts.quiet || 'quiet · no activity in this window'}</span>`;
+  }
 }
 
 async function dashTick() {
@@ -2867,8 +2915,17 @@ async function dashTick() {
   pushSeries('pool', gaugeByLabel(m, 'minibank_pool_busy', 'region'));
   const f2 = v => v.toFixed(v < 10 ? 1 : 0), f0 = v => Math.round(v).toString();
   drawChart('d-routes', 'd-routes-leg', 'routes', f2);
-  drawChart('d-events', 'd-events-leg', 'events', f2);
-  drawChart('d-outbox', 'd-outbox-leg', 'outbox', f0, { gauge: true, floor: 1, quiet: 'waiting for the first scrape…' });
+  // The cumulative counter behind the rate. When no money moved in the last
+  // three seconds the panel shows these instead of going blank.
+  drawChart('d-events', 'd-events-leg', 'events', f2,
+    { totals: gaugeByLabel(m, 'minibank_ledger_events_total', 'kind') });
+  // A drained outbox is the healthy state and the most likely one, so it says
+  // so in words. A flat line at zero with no explanation reads as broken.
+  const outboxNow = gaugeByLabel(m, 'minibank_outbox_pending', 'region');
+  const backlog = Object.values(outboxNow).reduce((a, b) => a + b, 0);
+  drawChart('d-outbox', 'd-outbox-leg', 'outbox', f0, { gauge: true, floor: 1,
+    quiet: backlog === 0 ? 'drained · every region has published everything it committed'
+                         : 'waiting for the first scrape…' });
   drawChart('d-pool', 'd-pool-leg', 'pool', f0, { gauge: true, floor: 1, quiet: 'waiting for the first scrape…' });
 
   const c = document.querySelector('#dash-clock'); if (c) c.textContent = 'updated ' + new Date(now).toLocaleTimeString();
@@ -2887,11 +2944,19 @@ dashTick();
   });
   el.innerHTML = '<span style="color:var(--dim)">' + head + '</span>\n' + rows.join('\n');
 })();
-loadAccounts(); loadStatement(); loadPortfolio(); renderQuiz(); gShow('welcome');
+/* Every poller runs through this. api() now throws on 429 and 5xx instead of
+   returning an error body as data, and a rejected promise from a bare
+   setInterval callback is an unhandled rejection that tells nobody anything.
+   A refresh that fails is not an event worth shouting about: the tick simply
+   does not repaint, the last good numbers stay on screen, and the next tick
+   two seconds later almost always succeeds. That is the whole recovery. */
+const tick = fn => { try { const p = fn(); if (p && p.catch) p.catch(() => {}); } catch (e) {} };
+
+tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); renderQuiz(); gShow('welcome');
 $('#homelink').onclick = () => switchTab('app');
 if (['#xray', '#quiz', '#console'].includes(location.hash)) document.querySelector('[data-tab="' + location.hash.slice(1) + '"]').click();
 if (location.hash === '#send') { $('#send-panel').classList.remove('hidden'); segPaint(); }
-setInterval(() => { loadAccounts(); loadStatement(); loadPortfolio(); renderExt(); if (!$('#tab-xray').classList.contains('hidden')) xrayTick(); if (!$('#tab-console').classList.contains('hidden')) kafkaTick(); }, 2000);
+setInterval(() => { tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); tick(renderExt); if (!$('#tab-xray').classList.contains('hidden')) tick(xrayTick); if (!$('#tab-console').classList.contains('hidden')) tick(kafkaTick); }, 2000);
 </script>
 </body>
 </html>

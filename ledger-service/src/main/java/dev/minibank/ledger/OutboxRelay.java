@@ -48,9 +48,15 @@ public final class OutboxRelay implements AutoCloseable {
                     // send synchronously: only after the broker acks do we mark.
                     producer.send(new ProducerRecord<>(e.topic(), e.key(), e.payload())).get();
                 } catch (Exception ex) {
+                    Metrics.inc("minibank_ledger_events_total", "kind=\"publish_failed\"");
                     throw new RuntimeException("publish failed for outbox id " + e.id(), ex);
                 }
                 Outbox.markPublishedOn(c, e.id());   // crash before this line -> resent later. At-least-once.
+                // Counted AFTER the mark, not after the send. A row that reached
+                // the broker but was not marked will be sent again, and the
+                // honest reading of that is two publishes, because that is what
+                // at-least-once actually does to the topic.
+                Metrics.inc("minibank_ledger_events_total", "kind=\"outbox_publish\"");
             }
             return events.size();
         }

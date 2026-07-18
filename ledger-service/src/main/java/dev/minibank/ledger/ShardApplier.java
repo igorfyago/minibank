@@ -41,7 +41,15 @@ public final class ShardApplier {
         Ledger.TransferResult r = Shards.forCustomer(to).arrive(txId, to, amount);
         if (r instanceof Ledger.NoSuchAccount) {
             Shards.forCustomer(from).refund(txId, from, amount);
+            Metrics.inc("minibank_ledger_events_total", "kind=\"saga_refund\"");
+            return;
         }
+        // A redelivery lands here as AlreadyProcessed, and it is counted under
+        // its own kind rather than as another arrival. Idempotency that is
+        // invisible on the dashboard looks exactly like duplicate money, and
+        // the whole point of this consumer is that it is neither.
+        Metrics.inc("minibank_ledger_events_total",
+                r instanceof Ledger.AlreadyProcessed ? "kind=\"saga_redelivered\"" : "kind=\"saga_arrive\"");
     }
 
     /** Production mode: the consumer loop, on a virtual thread. */

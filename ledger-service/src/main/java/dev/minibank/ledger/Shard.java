@@ -245,6 +245,10 @@ public final class Shard {
                         "\",\"from\":" + fromId +
                         ",\"amount\":\"" + amount.toPlainString() + "\"}");
                 conn.commit();
+                // After the commit, never before: a refund that rolled back is
+                // not a refund, and a counter that says otherwise is a lie that
+                // outlives the exception in a graph nobody re-reads.
+                Metrics.inc("minibank_ledger_events_total", "kind=\"saga_compensate\"");
                 return new Ledger.Ok();
             } catch (Exception e) {
                 conn.rollback();

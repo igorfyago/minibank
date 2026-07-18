@@ -274,3 +274,123 @@ test('tapeLayout: the frame loop performs no measurement · place() is the only 
   for (let i = 0; i < 1000; i++) t.advance(16);
   assert.ok(Number.isFinite(t.x), 'pure arithmetic, 1000 frames, still a number');
 });
+
+// ==================================================================== makeApi
+/**
+ * THE BUG THESE WERE WRITTEN FOR.
+ *
+ * const api = (p, opt) => fetch(p, opt).then(r => r.json());
+ *
+ * That helper never looked at r.ok, so a non-2xx body was handed back as if it
+ * were data. The server's error shape is {"error": "..."}, so:
+ *
+ *   loadAccounts   accounts = await api('/api/accounts')   then accounts.filter(...)
+ *                  -> TypeError: accounts.filter is not a function, every 2s,
+ *                     and the module-global accounts was left holding the error
+ *                     object so later reads failed too.
+ *   loadPortfolio  Number(pf.main) + Number(pf.savings) + ...
+ *                  -> the total tile rendered NaN.
+ *
+ * Reproduced live: 90 concurrent GET /api/accounts returned 48 x 429 from the
+ * token bucket, which is exactly what clicking around the demo quickly does.
+ *
+ * The fix turns on a distinction worth stating: 400 and 409 are ANSWERS about
+ * the request ("insufficient funds", "relocating, retry"), and their bodies are
+ * meaningful, so callers keep receiving them. 429 and 5xx are not answers at
+ * all: the token bucket never looked at the request and the 500 never finished
+ * it. Returning those bodies as data is the bug.
+ */
+test('makeApi returns the parsed body on success', async () => {
+  const api = MB.makeApi(async () => ({ ok: true, status: 200, json: async () => ({ a: 1 }) }));
+  assert.deepEqual(await api('/api/x'), { a: 1 });
+});
+
+test('makeApi returns the body for 400 and 409, which are real answers about the request', async () => {
+  for (const status of [400, 409]) {
+    const api = MB.makeApi(async () => ({ ok: false, status, json: async () => ({ result: 'relocating', error: 'moving' }) }));
+    const r = await api('/api/transfer', { method: 'POST' });
+    assert.equal(r.result, 'relocating', status + ' must still reach the caller that reads .result');
+  }
+});
+
+test('makeApi THROWS on 429 rather than handing the error body back as data', async () => {
+  const api = MB.makeApi(async () => ({ ok: false, status: 429, json: async () => ({ error: 'rate limited' }) }));
+  await assert.rejects(() => api('/api/accounts'), e => {
+    assert.equal(e.status, 429);
+    assert.match(e.message, /rate limited/);
+    return true;
+  });
+});
+
+test('makeApi throws on 500, so a NaN total is impossible', async () => {
+  const api = MB.makeApi(async () => ({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }));
+  await assert.rejects(() => api('/api/portfolio?customer=abc'), { status: 500 });
+});
+
+test('makeApi survives a non-JSON error body instead of throwing a parse error', async () => {
+  // A 502 from the proxy is HTML, not JSON. The caller should still get a
+  // usable error rather than "Unexpected token < in JSON".
+  const api = MB.makeApi(async () => ({ ok: false, status: 502, json: async () => { throw new Error('bad json'); } }));
+  await assert.rejects(() => api('/api/accounts'), e => {
+    assert.equal(e.status, 502);
+    assert.match(e.message, /502/);
+    return true;
+  });
+});
+
+test('a thrown api call leaves the last good value in place, which is the point', async () => {
+  // This is the behaviour that matters to someone looking at the page: the
+  // account list keeps showing the last known good data instead of breaking.
+  // Stale and correct beats fresh and garbage.
+  let accounts = [{ id: 1, kind: 'customer' }];
+  const api = MB.makeApi(async () => ({ ok: false, status: 429, json: async () => ({ error: 'rate limited' }) }));
+  try { accounts = await api('/api/accounts'); } catch (e) { /* poller swallows */ }
+  assert.ok(Array.isArray(accounts), 'the assignment never happened, so accounts is still an array');
+  assert.equal(accounts[0].kind, 'customer');
+});
+
+// =============================================================== panelLegend
+/**
+ * WHY A PANEL IS ALLOWED TO SAY SOMETHING WHEN NOTHING IS HAPPENING.
+ *
+ * "Ledger events by kind" plots a RATE over a 3 second window. This bank has no
+ * background scheduler: nothing moves money unless a person clicks. So the
+ * honest rate is almost always zero, the series are dropped as empty, and the
+ * panel renders "quiet · no activity in this window" forever. Two very
+ * different states, a bank that is idle and a counter nobody wired up, looked
+ * identical from the outside, which is exactly how the counter stayed dead.
+ *
+ * The fix is NOT to invent traffic. It is to fall back to the cumulative
+ * totals, which are real numbers the process has been keeping all along, and to
+ * say plainly that they are totals since start rather than a current rate.
+ * A panel may be quiet. It may not be blank when it has something true to say.
+ */
+test('panelLegend prefers the live series whenever anything is actually moving', () => {
+  const r = MB.panelLegend(['transfer_local'], { transfer_local: 412, trade: 88 });
+  assert.equal(r.mode, 'live');
+});
+
+test('panelLegend falls back to cumulative totals when the window is quiet', () => {
+  const r = MB.panelLegend([], { transfer_local: 412, trade: 88, saga_arrive: 5 });
+  assert.equal(r.mode, 'total');
+  assert.deepEqual(r.kinds, ['transfer_local', 'trade', 'saga_arrive'], 'biggest first, so the legend leads with the real story');
+});
+
+test('panelLegend ignores kinds that have never happened, rather than listing a row of zeros', () => {
+  const r = MB.panelLegend([], { transfer_local: 3, trade: 0, saga_refund: 0 });
+  assert.deepEqual(r.kinds, ['transfer_local']);
+});
+
+test('panelLegend reports empty only when the counter genuinely has nothing, which is the dead-instrumentation case', () => {
+  assert.equal(MB.panelLegend([], {}).mode, 'empty');
+  assert.equal(MB.panelLegend([], { trade: 0 }).mode, 'empty');
+  assert.equal(MB.panelLegend([], null).mode, 'empty');
+});
+
+test('panelLegend caps the fallback so one busy kind cannot push the legend off the panel', () => {
+  const many = {}; for (let i = 0; i < 20; i++) many['kind' + i] = 20 - i;
+  const r = MB.panelLegend([], many);
+  assert.equal(r.kinds.length, 6);
+  assert.equal(r.kinds[0], 'kind0', 'the largest survives the cap');
+  assert.equal(r.hiddenCount, 14, 'and the panel says how many it is not showing, rather than silently truncating');
+});

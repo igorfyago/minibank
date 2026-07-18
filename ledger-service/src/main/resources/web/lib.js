@@ -236,7 +236,78 @@
     };
   }
 
+  // ==================================================================== api
+
+  /**
+   * The fetch helper, with the one line that was missing.
+   *
+   * It used to be `fetch(p, opt).then(r => r.json())`, which never looked at
+   * r.ok and so handed a non-2xx body back as if it were data. The server's
+   * error shape is {"error": "..."}, so an account list became an object with
+   * no .filter and a portfolio total became NaN. It reproduced under nothing
+   * more exotic than clicking around quickly, because the token bucket starts
+   * answering 429 at 25 requests a second.
+   *
+   * The distinction it now makes is the useful part:
+   *
+   *   400, 409  are ANSWERS about the request. "insufficient funds",
+   *             "relocating, retry in a moment". The body is the point, and
+   *             callers read .error and .result deliberately, so it is returned.
+   *   429, 5xx  are not answers about the request at all. The bucket never
+   *             looked at it; the 500 never finished it. There is no data here,
+   *             and pretending otherwise is what broke the page.
+   *
+   * Throwing rather than returning also means `x = await api(...)` simply does
+   * not assign, so the caller keeps its last good value. Stale and correct is a
+   * much better failure than fresh and garbage.
+   */
+  function makeApi(fetchImpl) {
+    return async function api(path, opt) {
+      var r = await fetchImpl(path, opt);
+      var body = null;
+      try { body = await r.json(); } catch (e) { body = null; }
+      if (r.ok || r.status === 400 || r.status === 409) return body;
+      var err = new Error((body && body.error) || ('HTTP ' + r.status));
+      err.status = r.status;
+      err.body = body;
+      throw err;
+    };
+  }
+
+  /**
+   * What a panel should say when its live window is quiet.
+   *
+   * "Ledger events by kind" plots a rate. This bank has no background
+   * scheduler, so nothing moves money unless a person clicks, and the honest
+   * rate is zero almost all the time. The panel therefore sat on
+   * "quiet · no activity in this window" permanently, which is precisely why
+   * nobody noticed the counter behind it had never been incremented at all.
+   * A dead metric and an idle bank looked exactly the same.
+   *
+   * So when there is no live series, fall back to the cumulative totals the
+   * process has been keeping since it started. Those are real numbers, and the
+   * caller labels them as totals rather than as a rate. This does not invent
+   * traffic; it stops a panel being blank when it has something true to say.
+   *
+   * Returns 'live' (draw the series), 'total' (show cumulative kinds, biggest
+   * first, capped) or 'empty' (genuinely nothing, which now means the
+   * instrumentation is dead rather than the bank being quiet).
+   */
+  function panelLegend(activeNames, totals, cap) {
+    if (activeNames && activeNames.length) return { mode: 'live' };
+    var keys = [];
+    for (var k in (totals || {})) if (totals[k] > 0) keys.push(k);
+    if (!keys.length) return { mode: 'empty' };
+    keys.sort(function (a, b) { return totals[b] - totals[a]; });
+    var limit = cap || 6;
+    // Say how many are hidden rather than truncating silently. A legend that
+    // quietly drops rows reads as "this is everything", which it is not.
+    return { mode: 'total', kinds: keys.slice(0, limit), hiddenCount: Math.max(0, keys.length - limit) };
+  }
+
   return {
+    makeApi: makeApi,
+    panelLegend: panelLegend,
     parseProm: parseProm,
     gaugeByLabel: gaugeByLabel,
     rateByLabel: rateByLabel,
