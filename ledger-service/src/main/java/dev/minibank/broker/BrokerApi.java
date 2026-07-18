@@ -12,6 +12,7 @@ import java.math.RoundingMode;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 
 /**
@@ -27,9 +28,29 @@ import java.util.concurrent.Executors;
 public final class BrokerApi {
 
     private final Broker broker;
+    private final CallerIdentity identity;
 
+    /** Anonymous: the behaviour this service shipped with. */
     public BrokerApi(Broker broker) {
+        this(broker, CallerIdentity.ANONYMOUS);
+    }
+
+    public BrokerApi(Broker broker, CallerIdentity identity) {
         this.broker = broker;
+        this.identity = identity;
+    }
+
+    /**
+     * Which book this request is allowed to touch.
+     *
+     * A token identifies its own customer and that wins; without one the
+     * query parameter stands, exactly as before. See CallerIdentity.resolve
+     * for why this is settled now rather than on activation day.
+     */
+    private Long caller(HttpExchange ex, Long requested) {
+        Optional<Long> identified = identity.customerFor(ex.getRequestHeaders().getFirst("Authorization"));
+        if (identified.isPresent()) return identified.get();
+        return requested;
     }
 
     public HttpServer start(int port) throws IOException {
@@ -68,7 +89,7 @@ public final class BrokerApi {
     /** POST places an order, GET lists them. */
     private void orders(HttpExchange ex) throws Exception {
         if ("GET".equals(ex.getRequestMethod())) {
-            Long customer = longParam(ex, "customer");
+            Long customer = caller(ex, longParam(ex, "customer"));
             if (customer == null) { json(ex, 400, "{\"error\":\"need ?customer=id\"}"); return; }
             StringBuilder b = new StringBuilder("[");
             boolean first = true;
@@ -97,7 +118,7 @@ public final class BrokerApi {
         String symbol = Json.str(body, "symbol");
         String side = Json.str(body, "side");
         String type = Json.str(body, "type");
-        Long customer = asLong(Json.num(body, "customer"));
+        Long customer = caller(ex, asLong(Json.num(body, "customer")));
         if (clientOrderId == null || symbol == null || side == null || customer == null) {
             json(ex, 400, "{\"error\":\"need clientOrderId, customer, symbol, side\"}");
             return;
@@ -144,7 +165,7 @@ public final class BrokerApi {
      * opinion is how a stale one gets believed.
      */
     private void positions(HttpExchange ex) throws Exception {
-        Long customer = longParam(ex, "customer");
+        Long customer = caller(ex, longParam(ex, "customer"));
         if (customer == null) { json(ex, 400, "{\"error\":\"need ?customer=id\"}"); return; }
 
         StringBuilder b = new StringBuilder("[");
@@ -170,7 +191,7 @@ public final class BrokerApi {
 
     private void watchlist(HttpExchange ex) throws Exception {
         if ("GET".equals(ex.getRequestMethod())) {
-            Long customer = longParam(ex, "customer");
+            Long customer = caller(ex, longParam(ex, "customer"));
             if (customer == null) { json(ex, 400, "{\"error\":\"need ?customer=id\"}"); return; }
             StringBuilder b = new StringBuilder("[");
             boolean first = true;
@@ -183,7 +204,7 @@ public final class BrokerApi {
             return;
         }
         String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        Long customer = asLong(Json.num(body, "customer"));
+        Long customer = caller(ex, asLong(Json.num(body, "customer")));
         String symbol = Json.str(body, "symbol");
         String action = Json.str(body, "action");
         if (customer == null || symbol == null) { json(ex, 400, "{\"error\":\"need customer, symbol\"}"); return; }
