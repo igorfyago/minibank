@@ -30,7 +30,7 @@ public final class Metrics {
     private static final double[] BUCKETS =
             {0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5};
     private static final LongAdder[] bucketCounts = newAdders(BUCKETS.length + 1); // +Inf
-    private static final LongAdder httpSumMillis = new LongAdder();
+    private static final LongAdder httpSumNanos = new LongAdder();   // exact, not ms-rounded
     private static final LongAdder httpCount = new LongAdder();
 
     private static LongAdder[] newAdders(int n) {
@@ -49,10 +49,11 @@ public final class Metrics {
         gauges.computeIfAbsent(key(name, labels), k -> new AtomicLong()).set(value);
     }
 
-    /** Record one HTTP request's latency into the histogram. */
+    /** Record one HTTP request's latency into the histogram. The sum is
+     *  accumulated in nanoseconds (same precision the buckets classify on),
+     *  so sub-millisecond requests are not rounded away. */
     public static void observeHttp(double seconds) {
-        long ms = Math.round(seconds * 1000);
-        httpSumMillis.add(ms);
+        httpSumNanos.add(Math.round(seconds * 1e9));
         httpCount.increment();
         for (int i = 0; i < BUCKETS.length; i++) {
             if (seconds <= BUCKETS[i]) { bucketCounts[i].increment(); return; }
@@ -80,17 +81,21 @@ public final class Metrics {
         b.append("# TYPE minibank_cache_total counter\n");
         emit(b, "minibank_cache_total");
 
-        b.append("# HELP minibank_fx_lookups_total FX rate lookups, by source (live/cached/fallback/down).\n");
+        b.append("# HELP minibank_fx_lookups_total FX upstream fetches (cache misses), by outcome (live or down).\n");
         b.append("# TYPE minibank_fx_lookups_total counter\n");
         emit(b, "minibank_fx_lookups_total");
 
+        // each gauge family must be contiguous: HELP + TYPE immediately
+        // followed by ITS OWN samples, or a strict parser drops the type
         b.append("# HELP minibank_inflight_eur Money in flight across regions, right now.\n");
         b.append("# TYPE minibank_inflight_eur gauge\n");
+        emitGauge(b, "minibank_inflight_eur");
         b.append("# HELP minibank_pool_busy Busy pooled connections, by region.\n");
         b.append("# TYPE minibank_pool_busy gauge\n");
+        emitGauge(b, "minibank_pool_busy");
         b.append("# HELP minibank_outbox_pending Unpublished outbox rows, by region.\n");
         b.append("# TYPE minibank_outbox_pending gauge\n");
-        for (var e : gauges.entrySet()) b.append(e.getKey()).append(' ').append(e.getValue().get()).append('\n');
+        emitGauge(b, "minibank_outbox_pending");
 
         b.append("# HELP minibank_http_request_duration_seconds Request latency.\n");
         b.append("# TYPE minibank_http_request_duration_seconds histogram\n");
@@ -103,7 +108,7 @@ public final class Metrics {
         cumulative += bucketCounts[BUCKETS.length].sum();
         b.append("minibank_http_request_duration_seconds_bucket{le=\"+Inf\"} ").append(cumulative).append('\n');
         b.append("minibank_http_request_duration_seconds_sum ")
-         .append(httpSumMillis.sum() / 1000.0).append('\n');
+         .append(httpSumNanos.sum() / 1e9).append('\n');
         b.append("minibank_http_request_duration_seconds_count ").append(httpCount.sum()).append('\n');
 
         return b.toString();
@@ -116,13 +121,20 @@ public final class Metrics {
         }
     }
 
+    private static void emitGauge(StringBuilder b, String name) {
+        for (var e : gauges.entrySet()) {
+            String k = e.getKey();
+            if (k.equals(name) || k.startsWith(name + "{")) b.append(k).append(' ').append(e.getValue().get()).append('\n');
+        }
+    }
+
     /** A compact snapshot for the X-ray UI (not the Prometheus body). */
     public static String uiJson() {
         long hits = sum("minibank_cache_total", "result=\"hit\"");
         long misses = sum("minibank_cache_total", "result=\"miss\"");
         long total = hits + misses;
         long httpN = httpCount.sum();
-        double avgMs = httpN == 0 ? 0 : (double) httpSumMillis.sum() / httpN;
+        double avgMs = httpN == 0 ? 0 : (httpSumNanos.sum() / 1e6) / httpN;
         return "{\"cacheHits\":" + hits + ",\"cacheMisses\":" + misses +
                ",\"cacheHitRate\":" + (total == 0 ? 0 : Math.round(hits * 100.0 / total)) +
                ",\"httpRequests\":" + httpN +

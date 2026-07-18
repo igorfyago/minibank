@@ -54,6 +54,7 @@ public final class Cache {
     public static String getOrLoad(String cacheName, String key, int ttlSeconds, Supplier<String> loader) {
         JedisPool p = pool;
         String full = "mb:" + cacheName + ':' + key;
+        // try the read; a Redis error just means "not a hit", never a throw
         if (p != null) {
             try (Jedis j = p.getResource()) {
                 String hit = j.get(full);
@@ -61,18 +62,16 @@ public final class Cache {
                     Metrics.inc("minibank_cache_total", "cache=\"" + cacheName + "\",result=\"hit\"");
                     return hit;
                 }
-                String val = loader.get();
-                if (val != null) j.setex(full, ttlSeconds, val);
-                Metrics.inc("minibank_cache_total", "cache=\"" + cacheName + "\",result=\"miss\"");
-                return val;
-            } catch (Exception e) {
-                // Redis hiccup · fall through to a direct load, count it as a miss
-                Metrics.inc("minibank_cache_total", "cache=\"" + cacheName + "\",result=\"miss\"");
-                return loader.get();
-            }
+            } catch (Exception ignored) { /* degrade to a load */ }
         }
+        // miss: load EXACTLY once (the loader may be the money-path price fetch),
+        // then best-effort write it back · a null result is never cached
         Metrics.inc("minibank_cache_total", "cache=\"" + cacheName + "\",result=\"miss\"");
-        return loader.get();
+        String val = loader.get();
+        if (p != null && val != null) {
+            try (Jedis j = p.getResource()) { j.setex(full, ttlSeconds, val); } catch (Exception ignored) {}
+        }
+        return val;
     }
 
     /** Invalidate one key · used when the directory pointer flips on relocation. */

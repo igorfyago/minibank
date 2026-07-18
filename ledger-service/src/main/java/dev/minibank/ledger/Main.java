@@ -57,6 +57,27 @@ public final class Main {
         ShardApplier.start(kafka);
         NotificationsConsumer.start(kafka);
 
+        // metrics sampler · keeps the Prometheus gauges fresh on their own
+        // interval, so a scrape is accurate whether or not anyone is looking
+        // at the X-ray. The counters and histogram update on the request path.
+        Thread.ofVirtual().name("metrics-sampler").start(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    for (Shard s : Shards.all()) {
+                        String region = Shards.regionName(s.index);
+                        Metrics.gauge("minibank_pool_busy", "region=\"" + region + "\"", s.pool().borrowedCount());
+                        try (var c = s.open(); var st = c.createStatement();
+                             var rs = st.executeQuery("SELECT COUNT(*) FROM outbox WHERE published_at IS NULL")) {
+                            rs.next();
+                            Metrics.gauge("minibank_outbox_pending", "region=\"" + region + "\"", rs.getLong(1));
+                        }
+                    }
+                    Metrics.gauge("minibank_inflight_eur", "", Shards.inFlight().longValue());
+                } catch (Exception ignored) { /* transient · next tick retries */ }
+                try { Thread.sleep(5000); } catch (InterruptedException e) { return; }
+            }
+        });
+
         // THE FX SERVICE · its own container in production (FX_URL set);
         // the one-command dev run embeds it on :8090
         if (System.getenv("FX_URL") == null) dev.minibank.fx.FxService.start(8090);

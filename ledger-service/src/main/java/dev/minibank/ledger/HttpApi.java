@@ -782,21 +782,33 @@ public final class HttpApi {
             r = Response.json(500, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");
         }
         // every request is one Prometheus observation: a labeled counter and
-        // a latency histogram · this is what /metrics exposes and Grafana graphs
-        double seconds = (System.nanoTime() - start) / 1e9;
-        Metrics.observeHttp(seconds);
-        Metrics.inc("minibank_http_requests_total",
-                "route=\"" + routeClass(ex.getRequestURI().getPath()) + "\",status=\"" + r.status() + "\"");
+        // a latency histogram · this is what /metrics exposes and Grafana graphs.
+        // The scrape endpoint does not measure itself.
+        String path = ex.getRequestURI().getPath();
+        if (!"/metrics".equals(path)) {
+            double seconds = (System.nanoTime() - start) / 1e9;
+            Metrics.observeHttp(seconds);
+            Metrics.inc("minibank_http_requests_total",
+                    "route=\"" + routeClass(path) + "\",status=\"" + r.status() + "\"");
+        }
         ex.getResponseHeaders().set("Content-Type", r.contentType());
         ex.sendResponseHeaders(r.status(), r.body().length);
         ex.getResponseBody().write(r.body());
         ex.close();
     }
 
-    /** Collapse a path to a low-cardinality label · /api/xray/summary -> /api/xray. */
+    // a fixed set of route classes · the label is drawn ONLY from here, so a
+    // hostile client cannot mint unbounded label values (a Prometheus
+    // cardinality bomb) or inject a quote into the exposition by crafting a path
+    private static final java.util.Set<String> ROUTES = java.util.Set.of(
+            "accounts", "transfer", "relocate", "statement", "portfolio", "trade",
+            "mortgage", "card", "signup", "support", "prices", "explorer", "kafka",
+            "xray", "notifications");
+
+    /** Collapse a path to one of a FIXED set of labels · /api/xray/summary -> /api/xray. */
     private static String routeClass(String path) {
         String[] p = path.split("/");
-        if (p.length >= 3 && "api".equals(p[1])) return "/api/" + p[2];
+        if (p.length >= 3 && "api".equals(p[1])) return ROUTES.contains(p[2]) ? "/api/" + p[2] : "/api/other";
         return path.isEmpty() || "/".equals(path) ? "/" : "/static";
     }
 

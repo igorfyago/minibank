@@ -45,17 +45,23 @@ public final class PriceFeed {
         if (hit != null && System.currentTimeMillis() - (long) hit[1] < 60_000) return (Px) hit[0];
         // L2: Redis · SHARED across every pod, so one call to CoinGecko/Yahoo
         // warms the price for the whole fleet, not once per pod.
+        // the loader returns null on upstream failure · a failed price is NOT
+        // cached, so a recovered feed is picked up on the next call instead of
+        // a stale fallback being pinned for 60s across the whole fleet
         String enc = Cache.getOrLoad("prices:live", symbol, 60, () -> {
             try {
                 Px f = fetch(symbol);
                 return f.price().toPlainString() + '|' + f.usd().toPlainString() + "|live";
-            } catch (Exception e) {
-                Object[] h = cache.get(symbol);
-                if (h != null) return ((Px) h[0]).price().toPlainString() + '|' + ((Px) h[0]).usd().toPlainString() + "|cached";
-                return FALLBACK.get(symbol).toPlainString() + '|' + FALLBACK_USD.get(symbol).toPlainString() + "|fallback";
-            }
+            } catch (Exception e) { return null; }
         });
-        Px px = decode(enc, symbol);
+        Px px;
+        if (enc != null) {
+            px = decode(enc, symbol);
+        } else if (hit != null) {          // upstream down: last good price, honestly labeled
+            px = new Px(((Px) hit[0]).price(), ((Px) hit[0]).usd(), "cached");
+        } else {
+            px = new Px(FALLBACK.get(symbol), FALLBACK_USD.get(symbol), "fallback");
+        }
         cache.put(symbol, new Object[]{px, System.currentTimeMillis()});
         return px;
     }
