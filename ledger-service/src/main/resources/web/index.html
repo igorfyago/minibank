@@ -196,12 +196,15 @@
   /* Where the money has already been. The bright .hot is the CURRENT step; this
      is the trail behind it, so a replay reads as a journey with a history
      rather than one lamp moving around in the dark. */
+  /* GREEN means the money has been here. Blue is the ball and blue is the
+     click selection, so illumination had to leave that colour alone or the
+     three would keep saying different things in the same voice. */
   .node.visited rect, .node.visited ellipse, .node.visited path {
-    stroke:var(--accent); stroke-width:2; opacity:1;
+    stroke:var(--green); stroke-width:2; opacity:1;
   }
   .node.visited text { fill:var(--text); }
-  .node.hot rect, .node.hot ellipse, .node.hot path { stroke:var(--accent); stroke-width:3;
-    filter:drop-shadow(0 0 7px var(--accent)); transition:filter .2s; }
+  .node.hot rect, .node.hot ellipse, .node.hot path { stroke:var(--green); stroke-width:3;
+    filter:drop-shadow(0 0 8px var(--green)); transition:filter .2s; }
   .node.hot-amber rect { stroke:var(--amber); stroke-width:3; filter:drop-shadow(0 0 7px var(--amber)); }
   .pulse-dot { filter:drop-shadow(0 0 5px currentColor); }
   /* No transform here, ever. This class lands on a <g> that is positioned with
@@ -2011,6 +2014,24 @@ const STEP_EDGES = {
 /* Every node a step actually passes through, not just where it ends up.
    `arrive` used to name only the destination shard, so the Applier, which is
    the component doing the work in that step, never lit at all. */
+/* An edge is named source_target, but both halves can contain an underscore
+   ("api_shard0", "shard0_kafka"), so the target is found by matching the
+   longest known node name the edge name ends with. */
+const NODE_NAMES = ['browser','caddy','api','directory','intransit','shard0','shard1',
+                    'applier','kafka','notif','rita','pricefeed','fx','redis'];
+function edgeTarget(edge) {
+  let best = null;
+  for (const n of NODE_NAMES)
+    if (edge.endsWith('_' + n) && (!best || n.length > best.length)) best = n;
+  return best;
+}
+function edgeSource(edge) {
+  let best = null;
+  for (const n of NODE_NAMES)
+    if (edge.startsWith(n + '_') && (!best || n.length > best.length)) best = n;
+  return best;
+}
+
 const STEP_NODES = {
   transfer: st => ['api', st.region === 'eu' ? 'shard0' : 'shard1'],
   depart: st => ['api', st.region === 'eu' ? 'shard0' : 'shard1', 'intransit'],
@@ -2028,22 +2049,42 @@ const STEP_NODES = {
 let playTimers = [], following = null, playedSteps = 0;
 function stopPlay() { playTimers.forEach(clearTimeout); playTimers = []; following = null; }
 
+/** Light a node, now, and leave it marked. */
+function reach(nd, holdMs) {
+  if (!nd) return;
+  glow(nd, 'hot', Math.max(600, holdMs || 700));
+  const el = document.querySelector(`.node[data-node="${nd}"]`);
+  if (el) el.classList.add('visited');
+}
+
 function playSegment(st, i, n, window = 700) {
   document.querySelectorAll('.trace-step').forEach((el, j) => el.classList.toggle('active', j === i));
   const edges = (STEP_EDGES[st.step] || (() => []))(st);
-  // ONE colour for the whole journey. It used to change per step, amber then
-  // blue then green, which made it look like different balls rather than the
-  // same money being followed from one end to the other.
+  // ONE colour for the ball, the whole way. It used to change per step, which
+  // made it look like different balls rather than the same money.
   const slice = edges.length ? window / edges.length : window;
-  edges.forEach((e2, j) => pulse(e2, 'var(--accent)', j * slice, slice * 0.88));
 
-  const nodes = (STEP_NODES[st.step] || (() => []))(st);
-  nodes.forEach(nd => {
-    glow(nd, 'hot', Math.max(600, window));
-    // and it stays marked, so the path so far is visible behind the bright one
-    const el = document.querySelector(`.node[data-node="${nd}"]`);
-    if (el) el.classList.add('visited');
+  const arrived = new Set();
+  edges.forEach((e2, j) => {
+    const start = j * slice, flight = slice * 0.88;
+    pulse(e2, 'var(--accent)', start, flight);
+    // A node lights when the ball GETS there, not when the step begins. Lighting
+    // the whole step at once lit uk and the Applier together while the ball had
+    // not left the Applier yet, which says the money is in two places.
+    const target = edgeTarget(e2);
+    if (target) {
+      arrived.add(target);
+      playTimers.push(setTimeout(() => reach(target, slice), start + flight));
+    }
   });
+
+  // Nodes this step touches that no hop delivers to. `intransit` is the one
+  // that matters: it is a STATE the money enters on departure, not somewhere a
+  // ball travels to, so it lights when the step's last hop lands.
+  const named = (STEP_NODES[st.step] || (() => []))(st);
+  named.filter(nd => !arrived.has(nd))
+       .forEach(nd => playTimers.push(setTimeout(() => reach(nd, window), Math.max(0, window - slice))));
+
   $('#play-caption').textContent = `step ${i + 1}/${n} · ${st.detail} · ${st.region}`;
 }
 
@@ -2092,9 +2133,35 @@ function playTrace(tr) {
   const fill = $('#play-fill');
   fill.style.transition = 'none'; fill.style.width = '0%';
   void fill.getBoundingClientRect();
+  /* THE FORK. Kafka holds ONE message and two independent consumer groups read
+     it: the shard-applier, which lands the money in uk, and the notifications
+     service. They are not a chain, and drawing them as one is what made the
+     ball appear to jump from uk back to Kafka to fetch the notification.
+     Nothing publishes on arrival, so a uk -> kafka ball would be a lie.
+     Steps that leave the SAME node start at the same moment instead, so both
+     balls visibly depart Kafka together. That is what a topic with two
+     consumer groups actually looks like. */
+  const originOf = s2 => {
+    const es = (STEP_EDGES[s2.step] || (() => []))(s2);
+    return es.length ? edgeSource(es[0]) : null;
+  };
+  const startAt = [];
+  let cursor = 0;
+  steps.forEach((s2, i) => {
+    const sameOrigin = i > 0 && originOf(s2) && originOf(s2) === originOf(steps[i - 1]);
+    if (sameOrigin) {
+      startAt.push(startAt[i - 1]);                 // same wave, same launch
+      durs[i - 1] = Math.max(durs[i - 1], durs[i]); // the wave lasts as long as its longest branch
+    } else {
+      startAt.push(cursor);
+    }
+    cursor = Math.max(cursor, startAt[i] + durs[i]);
+  });
+  const total2 = Math.max(cursor, 1);
+
   let acc = 0;
   steps.forEach((s2, i) => {
-    const at = acc, w = ((acc + durs[i]) / total * 100);
+    const at = startAt[i], w = ((startAt[i] + durs[i]) / total2 * 100);
     playTimers.push(setTimeout(() => {
       playSegment(s2, i, steps.length, durs[i]);
       // The money is in the pipe from the moment it departs until it arrives,
@@ -2104,7 +2171,7 @@ function playTrace(tr) {
       fill.style.transition = `width ${durs[i]}ms linear`;
       fill.style.width = w + '%';
     }, at));
-    acc += durs[i];
+    acc = Math.max(acc, startAt[i] + durs[i]);
   });
   playTimers.push(setTimeout(() => {
     document.querySelectorAll('.trace-step').forEach(el => el.classList.remove('active'));
