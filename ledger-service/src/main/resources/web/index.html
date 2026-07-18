@@ -257,15 +257,17 @@
   .c-ic { font-size:16px; flex:none; }
   .c-one { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
     color:var(--dim); font-size:11.5px; line-height:1.45; margin-top:3px; font-weight:400; height:2.9em; }
-  .c-acc > .acc-head { min-height:74px; }
-  .q-acc > .acc-head { min-height:52px; }
-  .q-acc .q-text { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .c-acc > .acc-head { min-height:74px; cursor:default; }
+  .c-acc .acc-chev { display:none; }
+  .q-acc > .acc-head { min-height:60px; }
+  .q-acc .q-text { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+    line-height:1.4; height:2.8em; }
   .c-block { margin:8px 0; }
   .c-block p { font-size:12.5px; line-height:1.5; margin-top:3px; }
   .c-tag { font-size:9.5px; font-weight:700; letter-spacing:.1em; padding:2px 8px; border-radius:999px; text-transform:uppercase; }
   .c-tag.now { background:rgba(46,204,113,.15); color:var(--green); }
   .c-tag.big { background:rgba(139,148,255,.18); color:var(--accent); }
-  #cgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr)); gap:10px; margin-top:12px; }
+  #cgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr)); gap:10px; margin-top:12px; grid-auto-rows:1fr; }
   #qmap { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(420px,100%),1fr)); gap:10px; align-items:start; }
   #txgroups { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr)); gap:10px; }
   .insp-divider { border-top:1px solid var(--line); margin-top:10px; padding-top:9px; font-weight:600; font-size:13px; }
@@ -332,7 +334,7 @@
     justify-content:center; font:800 16px system-ui; color:#fff;
     background:linear-gradient(135deg, var(--accent), var(--violet)); margin-top:2px; }
   .pipe-link { text-align:center; color:var(--dim); font-size:12.5px; margin:16px 0; line-height:1.6; }
-  .studio { display:flex; gap:12px; min-height:430px; }
+  .studio { display:flex; gap:12px; align-items:flex-start; min-height:320px; }
   .db-rail { width:200px; flex:none; border-right:1px solid var(--line); padding-right:10px; overflow-y:auto; }
   .db-name { font-size:11px; font-weight:700; color:var(--dim); text-transform:uppercase; letter-spacing:.05em;
     margin:12px 0 4px; } .db-name:first-child { margin-top:0; }
@@ -348,7 +350,7 @@
   .ed .ln { display:inline-block; width:34px; text-align:right; padding-right:12px; color:#39414f; user-select:none; }
   .ed .k { color:#ff7b72; font-weight:600; } .ed .s { color:#a5d6ff; } .ed .n { color:#79c0ff; }
   .ed .c { color:#7ee787; }
-  .grid-wrap { overflow:auto; max-height:280px; border:1px solid var(--line); border-radius:10px; }
+  .grid-wrap { overflow:auto; max-height:calc(100vh - 300px); min-height:180px; border:1px solid var(--line); border-radius:10px; }
   .rgrid { width:100%; border-collapse:collapse; font:11.5px 'Cascadia Code', Consolas, monospace; }
   .rgrid th { position:sticky; top:0; background:#141a24; color:var(--dim); text-align:left; padding:6px 10px;
     font-weight:600; border-bottom:1px solid var(--line); white-space:nowrap; }
@@ -356,15 +358,19 @@
   .rgrid tr:nth-child(even) td { background:rgba(255,255,255,.015); }
   .rgrid td.neg { color:var(--red); } .rgrid td.pos { color:var(--green); }
   .kf-groups { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
-  .kf-g { border:1px solid var(--line); border-radius:10px; padding:8px 12px; font-size:12px; }
+  .kf-g { border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:12.5px; flex:1; min-width:240px; }
   .kf-g b { font-family:Consolas, monospace; }
   .kf-lag0 { color:var(--green); } .kf-lagN { color:var(--amber); }
-  .kf-r { font:11.5px 'Cascadia Code', Consolas, monospace; padding:5px 8px; border-radius:8px; cursor:pointer;
-    display:flex; gap:10px; align-items:baseline; }
+  .kf-r { font:12px system-ui; padding:6px 8px; border-radius:8px; cursor:pointer;
+    display:flex; gap:11px; align-items:center; }
   .kf-r:hover { background:rgba(255,255,255,.04); }
-  .kf-off { color:#39414f; min-width:70px; } .kf-key { color:var(--accent); min-width:150px;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .kf-val { color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+  .kf-off { color:#39414f; min-width:64px; font:11px 'Cascadia Code', Consolas, monospace; flex:none; }
+  .kf-ic { flex:none; font-size:14px; }
+  .kf-sum { flex:1; min-width:0; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .kf-type { color:#4a5568; font:10.5px 'Cascadia Code', Consolas, monospace; flex:none; }
+  .kf-more { color:#4a5568; font-size:10px; flex:none; }
+  .kf-g-role { color:var(--dim); font-size:11px; font-weight:400; }
+  .kf-g-stat { color:var(--dim); font-size:11.5px; margin-top:4px; }
   .kf-json { background:#0a0e15; border:1px solid var(--line); border-radius:10px; margin:2px 0 8px;
     padding:10px 12px; font:11.5px/1.6 Consolas, monospace; color:#a5d6ff; white-space:pre; overflow-x:auto; }
 
@@ -1710,29 +1716,19 @@ const CONCEPTS = [
     demo: 'The two properties that make rolling deploys safe already hold: the app tier is stateless and every handler is idempotent. Readiness probes gate traffic; config is env vars, one image everywhere.',
     prod: 'Canary first: 1% of pods, watch p99 and lag, then 100%; rollback is a repoint. Schema changes go expand → migrate → contract so old and new code run against the same database mid-deploy.' },
 ];
+// the scaling concepts are always shown (no click needed) and every card is
+// the same height · grid-auto-rows:1fr equalises the whole grid
 $('#cgrid').innerHTML = CONCEPTS.map(c => `
-  <div class="acc c-acc" data-k="${c.k}">
+  <div class="acc c-acc open" data-k="${c.k}">
     <div class="acc-head"><span class="c-ic">${c.ic}</span>
-      <span class="q-text"><b>${c.t}</b><span class="c-one">${c.one}</span></span><span class="acc-chev">›</span></div>
+      <span class="q-text"><b>${c.t}</b><span class="c-one">${c.one}</span></span></div>
     <div class="acc-body">
       <div class="c-block"><span class="c-tag now">in this demo</span><p>${c.demo}</p></div>
       <div class="c-block"><span class="c-tag big">at 100M</span><p>${c.prod}</p></div>
     </div>
   </div>`).join('');
-// concept cards open/close BY ROW · every card in the same visual row shares
-// the same top, so a group opens together and all stay the same height (the
-// grid stretches them). No lonely half-empty card, ever.
-function conceptRow(card) {
-  const top = card.getBoundingClientRect().top;
-  return [...document.querySelectorAll('.c-acc')].filter(c => Math.abs(c.getBoundingClientRect().top - top) < 6);
-}
-document.querySelectorAll('.c-acc .acc-head').forEach(h => h.onclick = () => {
-  const card = h.parentNode, willOpen = !card.classList.contains('open');
-  conceptRow(card).forEach(c => c.classList.toggle('open', willOpen));
-});
 function openConcept(k) {
   const el = document.querySelector(`.c-acc[data-k="${k}"]`); if (!el) return;
-  conceptRow(el).forEach(c => c.classList.add('open'));
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   el.classList.remove('acc-flash'); void el.getBoundingClientRect(); el.classList.add('acc-flash');
 }
@@ -2413,20 +2409,50 @@ async function kafkaTick() {
   let d;
   try { d = await api('/api/kafka/console'); } catch (e) { return; }
   if (d.error) { $('#kf-records').innerHTML = `<span class="muted">${d.error}</span>`; return; }
+  const KF_ROLE = {
+    'shard-applier': 'reads each departed event and lands the money in the destination region',
+    'notifications': 'reads every event and stores a notification · a read model, never the ledger' };
   $('#kf-groups').innerHTML = d.groups.map(g => `
-    <div class="kf-g">group <b>${g.group}</b> · p${g.partition}<br>
-      committed <b>${g.committed}</b> / end <b>${g.end}</b> ·
-      <span class="${g.lag === 0 ? 'kf-lag0' : 'kf-lagN'}">lag ${g.lag}</span></div>`).join('')
-    || '<span class="muted">consumer groups forming…</span>';
-  $('#kf-records').innerHTML = d.records.map((r, i) => {
+    <div class="kf-g">
+      <div>group <b>${g.group}</b></div>
+      <div class="kf-g-role">${KF_ROLE[g.group] || 'a consumer group'}</div>
+      <div class="kf-g-stat">partition ${g.partition} · read up to offset <b>${g.committed}</b> of <b>${g.end}</b> ·
+        <span class="${g.lag === 0 ? 'kf-lag0' : 'kf-lagN'}">lag ${g.lag}${g.lag === 0 ? ' · caught up' : ' · ' + g.lag + ' behind'}</span></div>
+    </div>`).join('') || '<span class="muted">consumer groups forming…</span>';
+  $('#kf-records').innerHTML = d.records.map((r) => {
+    const s = kfSummary(r.value);
     let pretty = r.value;
     try { pretty = JSON.stringify(JSON.parse(r.value), null, 2); } catch (e) {}
     return `<div class="kf-r" onclick="this.nextElementSibling.classList.toggle('hidden')">
       <span class="kf-off">p${r.partition}·${r.offset}</span>
-      <span class="kf-key">${r.key.replace(/</g, '&lt;')}</span>
-      <span class="kf-val">${r.value.replace(/</g, '&lt;')}</span>
+      <span class="kf-ic">${s.ic}</span>
+      <span class="kf-sum">${s.text.replace(/</g, '&lt;')}</span>
+      <span class="kf-type">${s.type.replace(/</g, '&lt;')}</span>
+      <span class="kf-more">raw ▾</span>
     </div><pre class="kf-json hidden">${pretty.replace(/</g, '&lt;')}</pre>`;
   }).join('') || '<span class="muted">no records on the topic yet</span>';
+}
+// turn a raw event payload into a one-line human summary · the same story the
+// X-ray tells, here on the broker's exact bytes
+function kfName(id) {
+  if (id == null) return '?';
+  const a = (typeof accounts !== 'undefined' && accounts) ? accounts.find(x => x.id === Number(id)) : null;
+  return a ? a.owner : (String(id) === '1' ? 'world' : 'user ' + id);
+}
+function kfSummary(val) {
+  let o; try { o = JSON.parse(val); } catch (e) { return { ic: '·', type: '', text: val }; }
+  const t = o.type || 'event';
+  const eur = v => v == null ? '' : '€' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const from = kfName(o.from), to = kfName(o.to), amt = eur(o.amount);
+  const map = {
+    'transfer.departed': () => ({ ic: '🛫', text: `${from} → ${to} · ${amt} · left its region, settling over Kafka` }),
+    'transfer.bounced': () => ({ ic: '↩️', text: `no destination · ${amt} refunded to ${from}` }),
+    'payment.completed': () => ({ ic: '💸', text: `${from} → ${to} · ${amt} · settled` }),
+    'trade.executed': () => ({ ic: o.asset === 'btc' ? '₿' : '🍏', text: `${kfName(o.customer)} ${o.side === 'buy' ? 'bought' : 'sold'} ${eur(o.eur)} of ${o.asset === 'btc' ? 'Bitcoin' : 'Apple'}` }),
+    'mortgage.approved': () => ({ ic: '🏦', text: `loan of ${eur(o.amount)} disbursed to ${kfName(o.customer)}` }),
+  };
+  const r = map[t] ? map[t]() : { ic: '📨', text: t };
+  return { ic: r.ic, type: t, text: r.text };
 }
 
 /* ---------------- quiz tab ---------------- */
