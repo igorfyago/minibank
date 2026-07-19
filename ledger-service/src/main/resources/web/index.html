@@ -2171,6 +2171,9 @@ const LOOP_PAUSE_MS = 2000;   // long enough to read the caption before it resta
 function setLooping(on) {
   looping = on;
   clearTimeout(loopTimer); loopTimer = null;
+  // stop means stop: sweep whatever is still in flight rather than letting the
+  // last hops finish crossing after the button says the loop has ended
+  if (!on) stopPlay();
   const b = $('#loop-btn');
   if (b) { b.classList.toggle('on', on); b.textContent = on ? '⏹ stop' : '↻ loop'; }
   if (on && activeTrace) playTrace(activeTrace);
@@ -2250,6 +2253,12 @@ function playTrace(tr) {
     fill.style.transition = `width ${j.total}ms linear`;
     fill.style.width = '100%';
   });
+  /* A replay OWNS the map while it runs. xrayTick animates the newest live
+     event unless Date.now() is still inside playingUntil, and nothing in the
+     replay path was setting that, so live traffic drew straight over a running
+     replay: measured at nine balls on screen at once during a loop. The replay
+     is the thing being watched, so it claims the canvas for its duration. */
+  playingUntil = Date.now() + j.total + 400;
   const firstHopOf = {};
   j.hops.forEach(h => { if (firstHopOf[h.step] === undefined) firstHopOf[h.step] = h.start; });
   steps.forEach((s2, i) => {
