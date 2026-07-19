@@ -68,6 +68,37 @@ public final class Accounts {
         }
     }
 
+    /**
+     * ADOPT A WHOLE LIST AT ONCE · the migration path off localStorage.
+     *
+     * A browser that has been keeping its own list for months arrives with a
+     * hundred and twenty symbols. Sending those one at a time is a hundred
+     * and twenty round trips through the desk's proxy on first load, and a
+     * half-finished migration if the tenth one times out. One statement, one
+     * commit, all or nothing.
+     *
+     * ON CONFLICT DO NOTHING is what makes this safe to call twice, and it is
+     * the reason the caller does not have to remember whether it ran: adding
+     * a symbol that is already watched is not an error and does not disturb
+     * added_at, so the order the list was built in survives a re-import.
+     * Nothing is ever REMOVED here · adopting a browser's list must not
+     * delete what another browser already contributed.
+     */
+    public static void watchAll(long customerId, List<String> symbols) throws SQLException {
+        if (symbols == null || symbols.isEmpty()) return;
+        try (Connection c = BrokerDb.open();
+             PreparedStatement ps = c.prepareStatement(
+                     "INSERT INTO watchlist(customer_id, symbol) VALUES (?,?) ON CONFLICT DO NOTHING")) {
+            for (String s : symbols) {
+                if (s == null || s.isBlank()) continue;
+                ps.setLong(1, customerId);
+                ps.setString(2, s.trim().toUpperCase());
+                ps.addBatch();
+            }
+            ps.executeBatch();
+        }
+    }
+
     public static void unwatch(long customerId, String symbol) throws SQLException {
         try (Connection c = BrokerDb.open();
              PreparedStatement ps = c.prepareStatement(
@@ -82,7 +113,12 @@ public final class Accounts {
         List<String> out = new ArrayList<>();
         try (Connection c = BrokerDb.open();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT symbol FROM watchlist WHERE customer_id = ? ORDER BY added_at")) {
+                     // ORDER BY seq, not added_at. now() is the TRANSACTION's
+                     // timestamp in Postgres, so every row of a batched import
+                     // shares one added_at and ordering by it is undefined ·
+                     // which is how an imported [SPY, QQQ] read back as
+                     // [QQQ, SPY]. seq is per-INSERT and therefore a fact.
+                     "SELECT symbol FROM watchlist WHERE customer_id = ? ORDER BY seq")) {
             ps.setLong(1, customerId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) out.add(rs.getString(1));

@@ -64,6 +64,126 @@ public final class PriceFeed {
 
     private PriceFeed() {}
 
+    /**
+     * WHEN THE FEED SAID NOTHING, STOP ASKING FOR A WHILE.
+     *
+     * This is a NEGATIVE cache and it is deliberately not the price cache.
+     * It holds a timestamp and never a number, so it can never become the
+     * `hit` that the upstream-down branch below relabels as 'cached' · which
+     * is the exact laundering route unavailable() was written to close, and
+     * closing it is why a failed price was never cached at all.
+     *
+     * Not caching the FACT of the failure, though, turned out to cost more
+     * than it saved. An unpriced symbol re-hit upstream on every single call,
+     * with a 3s connect and 4s read timeout, and nothing anywhere absorbed
+     * it: the shared watchlist prices a hundred and nine tickers, so the
+     * desk's rail took upwards of five seconds to answer against a two-second
+     * client budget even when every upstream call failed fast. It timed out
+     * on every load, forever, and the migration that runs behind it therefore
+     * never ran.
+     *
+     * The window matches the positive TTL exactly, so recovery is detected on
+     * the same schedule a price change is. That is the honest cost and it is
+     * stated rather than tuned away: a feed that comes back is served up to
+     * 60 seconds later than it could have been, and in exchange a feed that
+     * is down costs one upstream call per symbol per minute instead of one
+     * per symbol per request.
+     */
+    private static final long UNPRICED_BACKOFF_MS = 60_000;
+    private static final Map<String, Long> unpricedAt = new ConcurrentHashMap<>();
+
+    /**
+     * How many times this process has actually gone UPSTREAM for a mark.
+     *
+     * The thing worth counting about a price feed is not how often it is
+     * asked · that is a property of the screens · but how often the asking
+     * escapes the caches and costs a real request to CoinGecko or Yahoo, with
+     * a real timeout attached. That number is what made the shared watchlist
+     * unanswerable, it is what the backoff exists to bound, and until now
+     * nothing anywhere reported it. It is also the only way to assert the
+     * backoff: wall-clock timing cannot tell a cached miss from an upstream
+     * one on a machine where the upstream fails instantly.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong upstreamAttempts =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    public static long upstreamAttempts() {
+        return upstreamAttempts.get();
+    }
+
+    private static boolean backingOff(String symbol) {
+        Long t = unpricedAt.get(symbol);
+        return t != null && System.currentTimeMillis() - t < UNPRICED_BACKOFF_MS;
+    }
+
+    /**
+     * Drop every in-process cache · the positive one and the backoff.
+     *
+     * For tests, which need to observe what this class does on a cold start
+     * and would otherwise be reading whatever the previous test warmed. It
+     * does NOT touch Redis: the shared cache is shared on purpose, and a
+     * test that cleared it would be reaching outside its own process to
+     * change what another one sees.
+     */
+    public static void resetLocalCaches() {
+        cache.clear();
+        unpricedAt.clear();
+        histCache.clear();
+    }
+
+    /**
+     * MANY MARKS, CONCURRENTLY · the shape a list screen actually asks in.
+     *
+     * Sequentially this is O(symbols) round trips and there is no request
+     * budget it fits inside at rail size. Each get() is independent and
+     * already thread-safe (both caches are concurrent, the HttpClient is
+     * shared), so the whole batch is one round trip's worth of latency on a
+     * virtual thread per symbol · which is what this runtime is for, and the
+     * same executor the HTTP server itself runs on.
+     *
+     * Duplicates collapse before the fan-out, so a list that names a symbol
+     * twice costs one call and not two.
+     */
+    public static Map<String, Px> getAll(java.util.Collection<String> symbols) {
+        return fanOut(symbols, PriceFeed::get);
+    }
+
+    /**
+     * THE FAN-OUT ITSELF · one virtual thread per key, every result collected.
+     *
+     * Separated from getAll so that the CONCURRENCY can be asserted against a
+     * function whose cost a test chooses, rather than against a live feed
+     * whose latency it cannot. Timing the real thing does not discriminate:
+     * on a machine with no network every upstream call fails in microseconds,
+     * so forty sequential calls and forty parallel ones finish equally fast
+     * and a wall-clock assertion passes whether or not the fan-out is there.
+     * With a seam, a test can hand this a function that sleeps and watch the
+     * difference that actually matters in production, where the calls are
+     * slow and there are a hundred of them.
+     *
+     * A key whose function throws is simply absent from the result. One symbol
+     * that blew up is one gap on the screen, not a failed page, and every
+     * caller already renders a gap for anything missing.
+     */
+    public static <T> Map<String, T> fanOut(java.util.Collection<String> keys,
+                                            java.util.function.Function<String, T> of) {
+        Map<String, T> out = new ConcurrentHashMap<>();
+        java.util.Set<String> distinct = new java.util.LinkedHashSet<>(keys);
+        if (distinct.isEmpty()) return out;
+        try (var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            for (String k : distinct)
+                pool.submit(() -> {
+                    try {
+                        T v = of.apply(k);
+                        if (v != null) out.put(k, v);
+                    } catch (Exception ignored) {
+                        // see the docstring · absent, not fatal
+                    }
+                });
+        }   // close() waits for every task, so the map is complete on return
+        return out;
+    }
+
     public static Px get(String symbol) {
         // L1: in-process (a single pod serving the same price for 60s).
         Object[] hit = cache.get(symbol);
@@ -76,8 +196,13 @@ public final class PriceFeed {
         // the cache namespace is versioned: the encoding grew a fourth field
         // and a half-rolled fleet reading the old three-field form would
         // silently serve a null prevClose for 60s
-        String enc = Cache.getOrLoad("prices:live2", symbol, 60, () -> {
+        String enc = backingOff(symbol) ? null : Cache.getOrLoad("prices:live2", symbol, 60, () -> {
             try {
+                // counted HERE, inside the loader, because this is the only
+                // line in the class that reaches the internet · Redis serving
+                // the answer means the loader never runs and nothing upstream
+                // was asked
+                upstreamAttempts.incrementAndGet();
                 Px f = fetch(symbol);
                 // f.source(), NOT the literal "live". An equity mark converted
                 // at a stale FX rate comes back from fetch() as 'cached', and
@@ -88,6 +213,12 @@ public final class PriceFeed {
                         + (f.prevClose() == null ? "" : f.prevClose().toPlainString());
             } catch (Exception e) { return null; }
         });
+        // the ATTEMPT is recorded, never the answer · see UNPRICED_BACKOFF_MS.
+        // put and not putIfAbsent: the window has to restart on each failed
+        // attempt, or the first timestamp ages out and never refreshes, and
+        // the backoff silently stops backing off.
+        if (enc == null) { if (!backingOff(symbol)) unpricedAt.put(symbol, System.currentTimeMillis()); }
+        else unpricedAt.remove(symbol);
         Px px;
         if (enc != null) {
             px = decode(enc, symbol);

@@ -303,6 +303,11 @@ public final class Backfill {
             Broker.Position before = Broker.positionOn(c, customerId, symbol);
             Broker.Position p = new Broker.Position(customerId, symbol,
                     BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+            // read ONCE, outside the loop, and passed to every advance ·
+            // replaying a fill history has to reproduce the same considerations
+            // the incremental path produced, and the contract size is part of
+            // that arithmetic now
+            BigDecimal multiplier = Broker.multiplierOf(symbol);
             try (PreparedStatement ps = c.prepareStatement("""
                     SELECT o.side, f.qty, f.price, f.fee, f.kind
                     FROM fills f JOIN orders o ON o.id = f.order_id
@@ -316,7 +321,7 @@ public final class Backfill {
                         boolean reversal = "compensation".equals(rs.getString(5));
                         if (reversal) side = "buy".equals(side) ? "sell" : "buy";
                         p = Broker.advance(p, side, rs.getBigDecimal(2), rs.getBigDecimal(3),
-                                reversal ? BigDecimal.ZERO : rs.getBigDecimal(4));
+                                reversal ? BigDecimal.ZERO : rs.getBigDecimal(4), multiplier);
                     }
                 }
             }

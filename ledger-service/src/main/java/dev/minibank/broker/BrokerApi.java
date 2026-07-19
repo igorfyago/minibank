@@ -89,18 +89,37 @@ public final class BrokerApi {
     // ------------------------------------------------------------------ routes
 
     private void instruments(HttpExchange ex) throws Exception {
+        List<Catalog.Instrument> shelf = Catalog.all();
+        LocalDate asOf = LocalDate.now(ZoneOffset.UTC);
+        // the same fan-out the watchlist uses, and for the same reason · an
+        // expired contract is not asked about at all, because Yahoo answers
+        // 404 for one and PriceFeed's upstream-down branch would hand back its
+        // final premium labelled 'cached'
+        Map<String, PriceFeed.Px> marks = PriceFeed.getAll(shelf.stream()
+                .filter(i -> !i.expiredAsOf(asOf))
+                .map(i -> i.symbol().toLowerCase(Locale.ROOT)).toList());
         StringBuilder b = new StringBuilder("[");
         boolean first = true;
-        for (Catalog.Instrument i : Catalog.all()) {
+        for (Catalog.Instrument i : shelf) {
             if (!first) b.append(',');
             first = false;
+            boolean expired = i.expiredAsOf(asOf);
+            PriceFeed.Px px = expired ? null : marks.get(i.symbol().toLowerCase(Locale.ROOT));
             b.append("{\"symbol\":\"").append(i.symbol())
              .append("\",\"name\":").append(text(i.displayName()))
              .append(",\"exchange\":").append(text(i.exchange()))
              .append(",\"kind\":\"").append(i.kind())
              .append("\",\"assetCode\":\"").append(i.assetCode())
              .append("\",\"settleCcy\":\"").append(i.settleCcy())
-             .append("\",\"price\":").append(money(mark(i.symbol()))).append("}");
+             .append("\",\"price\":").append(money(px == null ? null : px.price()))
+             // the shelf offers these for purchase, so "what is this worth"
+             // and "when did we last really see that" have to travel together
+             .append(",\"priceSource\":").append(text(
+                     expired ? "expired" : px == null ? "unavailable" : px.source()))
+             .append(",\"multiplier\":\"").append(plain(i.multiplier())).append('"')
+             .append(",\"expiresOn\":").append(i.expiresOn() == null
+                     ? "null" : "\"" + i.expiresOn() + "\"")
+             .append("}");
         }
         json(ex, 200, b.append(']').toString());
     }
@@ -147,7 +166,22 @@ public final class BrokerApi {
             return;
         }
         symbol = symbol.toUpperCase();
-        if (!Catalog.exists(symbol)) { json(ex, 400, "{\"error\":\"not a listed instrument: " + Json.esc(symbol) + "\"}"); return; }
+        // LISTED IS NOT THE SAME AS TRADABLE, and this used to ask only the
+        // first question. The row is not deleted when a contract expires · it
+        // cannot be, because a customer may still hold the position and every
+        // screen needs its name, its contract size and its expiry date to say
+        // so. So Catalog.exists stayed true for a dead contract and it went on
+        // being buyable. Broker.place holds the authoritative gate; this one
+        // is the pre-flight, and it exists for the same reason the registry
+        // check in the bank's /api/trade does: refusing here costs the
+        // customer a 400 instead of a rejected order they have to go and read.
+        Catalog.Instrument listed = Catalog.find(symbol);
+        if (listed == null) { json(ex, 400, "{\"error\":\"not a listed instrument: " + Json.esc(symbol) + "\"}"); return; }
+        if (listed.expiredAsOf(LocalDate.now(ZoneOffset.UTC))) {
+            json(ex, 400, "{\"error\":\"" + Json.esc(symbol) + " expired on " + listed.expiresOn()
+                    + " · an expired contract no longer trades\"}");
+            return;
+        }
 
         BigDecimal qty = decimal(Json.str(body, "qty"));
         BigDecimal notional = decimal(Json.str(body, "notional"));
@@ -189,21 +223,46 @@ public final class BrokerApi {
 
         StringBuilder b = new StringBuilder("[");
         boolean first = true;
+        Map<String, Catalog.Instrument> catalog = Catalog.bySymbol();
+        LocalDate asOf = LocalDate.now(ZoneOffset.UTC);
         for (Broker.Position p : Broker.positions(customer)) {
             Portfolio.Quote q = quote(p.symbol());
-            // an unknown price is NOT zero · valuing a holding at 0.00 and
-            // reporting a 100% loss because a feed was down is a lie the
-            // portfolio path already refuses to tell, and this endpoint
-            // should not tell it either
-            BigDecimal px = q.priced() ? q.price() : null;
-            BigDecimal value = px == null ? null : p.qty().multiply(px).setScale(2, RoundingMode.HALF_UP);
+            Catalog.Instrument meta = catalog.get(p.symbol());
+            // THE SAME THREE REFUSALS THE PORTFOLIO PATH MAKES, and they have
+            // to be made here too: this endpoint is a second consumer, and a
+            // multiplier honoured in one valuation and not the other is how a
+            // 100x error survives being fixed once. No mark, no known contract
+            // size, or an expired contract · each of them means we cannot state
+            // a value, and none of them means the value is zero.
+            boolean expired = meta != null && meta.expiredAsOf(asOf);
+            BigDecimal px = q.priced() && !expired ? q.price() : null;
+            BigDecimal value = (px == null || meta == null) ? null
+                    : p.qty().multiply(px).multiply(meta.multiplier()).setScale(2, RoundingMode.HALF_UP);
             BigDecimal unrealized = value == null ? null : value.subtract(p.costBasis()).setScale(2, RoundingMode.HALF_UP);
             if (!first) b.append(',');
             first = false;
             b.append("{\"symbol\":\"").append(p.symbol())
              .append("\",\"qty\":\"").append(plain(p.qty()))
+             // AVG COST IS PER UNIT OF THE INSTRUMENT · costBasis/qty, and
+             // costBasis carries the multiplier because Broker.consideration
+             // applied it at fill time. So for an option this is euros per
+             // CONTRACT while `price` one field down is the premium per
+             // SHARE, and the two differ by the contract size. They are
+             // adjacent and both denominated in euros, which is exactly how a
+             // reader concludes a flat position has collapsed 99%.
+             //
+             // multiplier and expiresOn are shipped so that is checkable:
+             // without them a consumer of this endpoint cannot reconcile
+             // qty * price against value by any means, and /api/portfolio has
+             // carried both all along. The field names cannot be changed
+             // without breaking every caller, so the reconciliation has to be
+             // possible from the payload instead.
              .append("\",\"avgCost\":\"").append(plain(p.averageCost().setScale(2, RoundingMode.HALF_UP)))
-             .append("\",\"costBasis\":\"").append(plain(p.costBasis().setScale(2, RoundingMode.HALF_UP)))
+             .append("\",\"multiplier\":").append(meta == null
+                     ? "null" : "\"" + plain(meta.multiplier()) + "\"")
+             .append(",\"expiresOn\":").append(meta == null || meta.expiresOn() == null
+                     ? "null" : "\"" + meta.expiresOn() + "\"")
+             .append(",\"costBasis\":\"").append(plain(p.costBasis().setScale(2, RoundingMode.HALF_UP)))
              .append("\",\"price\":").append(money(px))
              .append(",\"value\":").append(money(value))
              .append(",\"unrealized\":").append(money(unrealized))
@@ -212,7 +271,7 @@ public final class BrokerApi {
              // (a hardcoded constant used when every feed is down) is
              // indistinguishable from a live one, and the value beside it
              // looks like a fact
-             .append("\",\"priceSource\":\"").append(q.source())
+             .append("\",\"priceSource\":\"").append(expired ? "expired" : q.source())
              .append("\"}");
         }
         json(ex, 200, b.append(']').toString());
@@ -243,11 +302,34 @@ public final class BrokerApi {
         Instant since = dayStart();
         Map<String, Broker.DayFlow> flows = Broker.flowsSince(customer, since);
 
+        // WHAT NEEDS A QUOTE IS NOT THE SAME AS WHAT IS DRAWN, and gating on
+        // qty alone made the closed-position day-change branch in
+        // Portfolio.build unreachable in production.
+        //
+        // Broker.positions deliberately returns qty=0 rows (WHERE qty <> 0 OR
+        // realized_pnl <> 0), because a position sold to flat today still
+        // moved money today and its day P&L belongs in the headline. That
+        // branch needs a mark and a prior close to compute the leg it traded
+        // out of. Skipping the quote handed it Quote.none(), which failed
+        // q.observed(), which incremented withoutPrevClose, which nulls the
+        // WHOLE book's day change for the rest of the UTC day · while the
+        // remaining holdings each displayed their own day change perfectly
+        // well, because the per-row block computes independently. The page
+        // then blamed the missing headline on "1 holding(s) had no prior
+        // close" and drew no such holding, because there is no row for a
+        // position you no longer hold.
+        //
+        // So: quote anything still held, and anything that TRADED inside the
+        // window, which is exactly the set Portfolio.build asks about. flows
+        // is already in hand above, so this costs no extra query.
         Map<String, Portfolio.Quote> quotes = new HashMap<>();
-        for (Broker.Position p : positions)
-            if (p.qty().signum() != 0) quotes.put(p.symbol(), quote(p.symbol()));
+        for (String symbol : symbolsNeedingQuotes(positions, flows)) quotes.put(symbol, quote(symbol));
 
-        Portfolio.Snapshot snap = Portfolio.build(positions, Catalog.bySymbol(), quotes, flows);
+        // the SAME day boundary the flows were taken from · asking the clock a
+        // second time here would let a request straddling UTC midnight expire
+        // a contract against one date while valuing its day against another
+        LocalDate asOf = LocalDate.ofInstant(since, ZoneOffset.UTC);
+        Portfolio.Snapshot snap = Portfolio.build(positions, Catalog.bySymbol(), quotes, flows, asOf);
         Portfolio.Aggregate a = snap.aggregate();
 
         StringBuilder b = new StringBuilder();
@@ -262,6 +344,10 @@ public final class BrokerApi {
          .append(",\"unrealizedPct\":").append(money(a.unrealizedPct()))
          .append(",\"realized\":").append(money(a.realized()))
          .append(",\"dayChange\":").append(money(a.dayChange()))
+         // the day as a percentage of the prior close's value · withheld with
+         // dayChange, and also when the book was opened entirely today and so
+         // has no prior-close value to be a fraction of
+         .append(",\"dayChangePct\":").append(money(a.dayChangePct()))
          .append(",\"cash\":null")
          .append(",\"cashNote\":\"cash is a ledger balance and the broker cannot read the ledger's "
                  + "database · totals below are securities only\"")
@@ -272,6 +358,9 @@ public final class BrokerApi {
          .append(",\"fabricated\":").append(a.fabricated())
          .append(",\"stale\":").append(a.stale())
          .append(",\"closedPositions\":").append(a.closedPositions())
+         // contracts past their expiry · held, not valued, and the reason a
+         // total may be withheld even when every feed answered
+         .append(",\"expired\":").append(a.expired())
          .append("},\"holdings\":[");
 
         boolean first = true;
@@ -295,6 +384,44 @@ public final class BrokerApi {
              .append(",\"dayChange\":").append(money(h.dayChange()))
              .append(",\"dayChangePct\":").append(money(h.dayChangePct()))
              .append(",\"dayBasis\":").append(text(h.dayBasis()))
+             // how many units of the underlying one unit of this instrument
+             // controls · a screen needs it to explain why value is not
+             // qty * price, and it is 1 for everything that is not a contract
+             .append(",\"multiplier\":").append(h.multiplier() == null
+                     ? "null" : "\"" + plain(h.multiplier()) + "\"")
+             .append(",\"expiresOn\":").append(h.expiresOn() == null
+                     ? "null" : "\"" + h.expiresOn() + "\"")
+             .append('}');
+        }
+
+        // THE BANDS. Subtotals travel with the rows in the same response for
+        // the same reason the aggregate does: a screen that reduced the rows
+        // itself would be summing a column of already-rounded cents and would
+        // have to re-implement the withholding rule in JavaScript, where it
+        // would eventually be re-implemented slightly differently. Note there
+        // are no holdings nested in here · a group names its kind and the rows
+        // carry theirs, so nothing is serialised twice and the two cannot
+        // disagree about which band a row is in.
+        b.append("],\"groups\":[");
+        first = true;
+        for (Portfolio.Group g : snap.groups()) {
+            if (!first) b.append(',');
+            first = false;
+            b.append("{\"kind\":").append(text(g.kind()))
+             .append(",\"label\":\"").append(Json.esc(g.label())).append('"')
+             .append(",\"holdings\":").append(g.holdings())
+             .append(",\"marketValue\":").append(money(g.marketValue()))
+             .append(",\"costBasis\":").append(money(g.costBasis()))
+             .append(",\"unrealized\":").append(money(g.unrealized()))
+             .append(",\"unrealizedPct\":").append(money(g.unrealizedPct()))
+             .append(",\"dayChange\":").append(money(g.dayChange()))
+             .append(",\"dayChangePct\":").append(money(g.dayChangePct()))
+             // why THIS band's subtotal is missing, when it is · the aggregate's
+             // counts cannot answer that, they are about the whole book
+             .append(",\"unpriced\":").append(g.unpriced())
+             .append(",\"withoutPrevClose\":").append(g.withoutPrevClose())
+             .append(",\"stale\":").append(g.stale())
+             .append(",\"expired\":").append(g.expired())
              .append('}');
         }
         json(ex, 200, b.append("]}").toString());
@@ -314,6 +441,39 @@ public final class BrokerApi {
         return LocalDate.now(ZoneOffset.UTC).atStartOfDay(ZoneOffset.UTC).toInstant();
     }
 
+    /**
+     * WHICH SYMBOLS NEED A MARK · everything held, and everything that traded
+     * inside the day window.
+     *
+     * Pure and package-visible so it can be asserted directly, because this
+     * one-line predicate is what made a carefully-written branch of
+     * Portfolio.build unreachable in production for as long as it existed.
+     *
+     * Gating on qty alone looks obviously right: you cannot value what you do
+     * not hold. But Broker.positions deliberately returns qty=0 rows, and
+     * Portfolio.build has a whole branch for them, because a position sold to
+     * flat today still moved money today and its day P&L belongs in the
+     * headline. That branch needs a mark and a prior close. Without a quote it
+     * got Quote.none(), fell to `agg.withoutPrevClose++`, and Acc.day()
+     * returns null whenever that counter is non-zero · so ONE position closed
+     * to flat withheld the whole book's day change for the rest of the UTC
+     * day, while every remaining holding displayed its own day change
+     * perfectly well, and the page blamed a holding that was never drawn.
+     *
+     * The existing day-honesty test passed throughout, because it hands
+     * Portfolio.build a quotes map directly and never exercises this line.
+     */
+    static java.util.Set<String> symbolsNeedingQuotes(List<Broker.Position> positions,
+                                                      Map<String, Broker.DayFlow> flows) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        for (Broker.Position p : positions) {
+            Broker.DayFlow f = flows.get(p.symbol());
+            boolean tradedToday = f != null && f.qty().signum() != 0;
+            if (p.qty().signum() != 0 || tradedToday) out.add(p.symbol());
+        }
+        return out;
+    }
+
     /** A quote, or an admission that there is not one. Never a zero. */
     private static Portfolio.Quote quote(String symbol) {
         try {
@@ -325,25 +485,98 @@ public final class BrokerApi {
         }
     }
 
+    /**
+     * THE WATCHLIST · one list, however many browsers.
+     *
+     * WATCHING IS NOT TRADING, and the schema says so before this handler
+     * does. positions.symbol and fills.symbol both REFERENCE instruments;
+     * watchlist.symbol is bare TEXT with no foreign key, on purpose. So a
+     * customer can follow SPY forever on a shelf that lists two things, and
+     * the gate that matters · Catalog.exists in orders() · still refuses to
+     * route an order for it.
+     *
+     * DO NOT ADD A CATALOG CHECK TO THE WRITE PATH BELOW. It looks like a
+     * correctness improvement and it is a data-loss bug: the desk's rail is
+     * roughly a hundred and twenty tickers against a catalog of two, so
+     * validating on insert would silently drop about ninety-eight per cent of
+     * what a customer asked to watch. The catalog is consulted on the READ
+     * instead, to LABEL each row `tradable`, so a screen can offer "follow"
+     * on everything and "buy" only where a buy would actually fill.
+     */
     private void watchlist(HttpExchange ex) throws Exception {
         if ("GET".equals(ex.getRequestMethod())) {
             Long customer = caller(ex, longParam(ex, "customer"));
             if (customer == null) { json(ex, 400, "{\"error\":\"need ?customer=id\"}"); return; }
+            // one catalog read for the whole list, not one per row · the
+            // answer is the same for every symbol on the page
+            Map<String, Catalog.Instrument> shelf = Catalog.bySymbol();
+            List<String> watched = Accounts.watchlist(customer);
+            // ONE FAN-OUT, NOT ONE ROUND TRIP PER ROW.
+            //
+            // This loop used to call PriceFeed.get per symbol, sequentially,
+            // each one a live upstream call with a 3s connect and 4s read
+            // timeout. The desk's rail is a hundred and nine tickers and its
+            // client budget is two seconds, so the shared watchlist could not
+            // answer inside it even when every upstream call failed fast ·
+            // measured at 5.3s for that rail with every call failing in ~40ms,
+            // which is the floor and not the bad case. It timed out on every
+            // load, so the desk's bootstrap never reached the branch that
+            // adopts the shared list, and the migration behind it never ran.
+            // PriceFeed also now backs off symbols it could not price, so a
+            // rail full of unlistable indices stops re-asking upstream about
+            // every one of them on every poll.
+            Map<String, PriceFeed.Px> marks = PriceFeed.getAll(
+                    watched.stream().map(s -> s.toLowerCase(Locale.ROOT)).toList());
             StringBuilder b = new StringBuilder("[");
             boolean first = true;
-            for (String s : Accounts.watchlist(customer)) {
+            for (String s : watched) {
                 if (!first) b.append(',');
                 first = false;
-                b.append("{\"symbol\":\"").append(s).append("\",\"price\":").append(money(mark(s))).append("}");
+                Catalog.Instrument i = shelf.get(s);
+                PriceFeed.Px px = marks.get(s.toLowerCase(Locale.ROOT));
+                // price stays money(): null for an unpriceable symbol, never
+                // 0.00. An index the venue cannot fill is the ordinary case
+                // here, so "we have no mark" has to render as a gap
+                b.append("{\"symbol\":\"").append(Json.esc(s))
+                 .append("\",\"price\":").append(money(px == null ? null : px.price()))
+                 // WHERE THE MARK CAME FROM · this used to be thrown away, and
+                 // throwing it away is what made this panel the one liar on
+                 // the page. A 'cached' mark has no age bound: PriceFeed keeps
+                 // serving the last price it really saw for as long as the
+                 // upstream stays unreachable, which can be days. The holdings
+                 // rows on this same screen badge exactly that condition as
+                 // 'last known price'; the watchlist tiles rendered it as a
+                 // plain figure, indistinguishable from a live one. Two
+                 // honesty standards for one feed on one screen is not a
+                 // standard, so the source travels with the number here too.
+                 .append(",\"priceSource\":").append(text(px == null ? "unavailable" : px.source()))
+                 .append(",\"tradable\":").append(i != null)
+                 .append(",\"name\":").append(text(i == null ? null : i.displayName()))
+                 .append(",\"exchange\":").append(text(i == null ? null : i.exchange()))
+                 .append("}");
             }
             json(ex, 200, b.append(']').toString());
             return;
         }
         String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         Long customer = caller(ex, asLong(Json.num(body, "customer")));
-        String symbol = Json.str(body, "symbol");
         String action = Json.str(body, "action");
-        if (customer == null || symbol == null) { json(ex, 400, "{\"error\":\"need customer, symbol\"}"); return; }
+        if (customer == null) { json(ex, 400, "{\"error\":\"need customer\"}"); return; }
+
+        // "import" adopts a browser's existing list in one commit · see
+        // Accounts.watchAll for why it is additive and safe to repeat.
+        // Json.each is a scanner, not a parser, so the symbols arrive as
+        // [{"symbol":"SPY"},…] rather than a bare array of strings: the same
+        // shape every other batch in this bank uses, for the same reason.
+        if ("import".equals(action)) {
+            List<String> symbols = Json.each(body, "symbol");
+            Accounts.watchAll(customer, symbols);
+            json(ex, 200, "{\"result\":\"ok\",\"imported\":" + symbols.size() + "}");
+            return;
+        }
+
+        String symbol = Json.str(body, "symbol");
+        if (symbol == null) { json(ex, 400, "{\"error\":\"need customer, symbol\"}"); return; }
         if ("remove".equals(action)) Accounts.unwatch(customer, symbol);
         else Accounts.watch(customer, symbol);
         json(ex, 200, "{\"result\":\"ok\"}");
@@ -576,24 +809,12 @@ public final class BrokerApi {
         }
     }
 
-    /**
-     * The live mark, or NULL when there isn't one.
-     *
-     * This used to fail soft to ZERO, which is the wrong soft failure for a
-     * price: a watched symbol the feed cannot resolve rendered as "0.00",
-     * which reads as "worthless" rather than "unknown". It also NPE'd · an
-     * unpriced symbol returns a non-null Px whose price() is null, so this
-     * handed null to plain() and took the entire watchlist panel down with a
-     * 500 rather than dimming one row.
-     */
-    private static BigDecimal mark(String symbol) {
-        try {
-            PriceFeed.Px px = PriceFeed.get(symbol.toLowerCase());
-            return px == null ? null : px.price();
-        } catch (Exception e) {
-            return null;
-        }
-    }
+    // mark() lived here: one symbol, one upstream call, price only. Both of
+    // its callers now go through PriceFeed.getAll, which fans the batch out
+    // across virtual threads and keeps the Px so the SOURCE survives the trip
+    // to the screen. Dropping the source was the whole of the watchlist's
+    // honesty bug, and a helper that structurally could not carry it was the
+    // reason the bug was easy to write.
 
     private static String plain(BigDecimal v) {
         if (v == null) return null;

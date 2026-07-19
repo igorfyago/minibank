@@ -88,9 +88,40 @@ public final class AssetRegistry {
         }
     }
 
-    /** One listed instrument, as the LEDGER sees it. */
+    /**
+     * One listed instrument, as the LEDGER sees it.
+     *
+     * multiplier is how many units of the underlying ONE unit of this
+     * instrument controls: 1 for a share or a coin, 100 for an option
+     * contract. It is here, and not only in the broker's catalog, because
+     * HttpApi values a customer's holdings inside the ledger on a shard
+     * connection and cannot read the broker's database. See
+     * db/shard/V6__option_instruments.sql for why that duplication is the
+     * least-bad of the three available options.
+     *
+     * expiresOn is NULL for anything that does not expire, which is every
+     * instrument that is not an option. It is not a display field: it is what
+     * lets an expired contract stop reading as a live position, and what lets
+     * a 404 from the price feed be interpreted rather than guessed at.
+     */
     public record Asset(String symbol, String currency, String label, long slot, Long legacyOffset,
-                        long brokerAccount, long clearingAccount) {
+                        long brokerAccount, long clearingAccount,
+                        java.math.BigDecimal multiplier, String kind,
+                        java.time.LocalDate expiresOn) {
+
+        /**
+         * HAS THIS CONTRACT EXPIRED as at the given date?
+         *
+         * Inclusive of the expiry date itself · an option trades ON its
+         * expiry day and stops afterwards, so `isAfter` is the correct
+         * comparison and `!isBefore` would retire it a day early.
+         *
+         * Something with no expiry never expires. That is a fact about the
+         * instrument, not a missing value to be defaulted nervously.
+         */
+        public boolean expiredAsOf(java.time.LocalDate asOf) {
+            return expiresOn != null && asOf.isAfter(expiresOn);
+        }
 
         /** This customer's holding account for this instrument · the id the
          *  ternary used to guess. Legacy instruments keep their offset. */
@@ -144,9 +175,22 @@ public final class AssetRegistry {
             // a database migrated by an earlier build of this table has the
             // rows but not the column · add it before the seed needs it
             st.execute("ALTER TABLE asset_slots ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT ''");
+            // mirrors db/shard/V6__option_instruments.sql · a test that builds
+            // a shard through here must get the same columns Flyway builds, or
+            // the multiplier is exercised by nothing that runs in CI
+            st.execute("ALTER TABLE asset_slots ADD COLUMN IF NOT EXISTS multiplier NUMERIC(20,8) NOT NULL DEFAULT 1");
+            st.execute("ALTER TABLE asset_slots ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'equity'");
+            st.execute("ALTER TABLE asset_slots ADD COLUMN IF NOT EXISTS expires_on DATE");
+            st.execute("ALTER TABLE asset_slots DROP CONSTRAINT IF EXISTS asset_slots_multiplier_positive");
+            st.execute("ALTER TABLE asset_slots ADD CONSTRAINT asset_slots_multiplier_positive CHECK (multiplier > 0)");
+            st.execute("ALTER TABLE asset_slots DROP CONSTRAINT IF EXISTS asset_slots_expiry_only_dated");
+            st.execute("ALTER TABLE asset_slots ADD CONSTRAINT asset_slots_expiry_only_dated"
+                    + " CHECK (expires_on IS NULL OR kind = 'option')");
             st.execute("""
-                INSERT INTO asset_slots(symbol, currency, label, slot, legacy_offset, broker_account, clearing_account)
-                VALUES ('BTC','BTC','bitcoin',0,200,5,8), ('AAPL','AAPL','apple stock',1,300,6,9)
+                INSERT INTO asset_slots(symbol, currency, label, slot, legacy_offset, broker_account, clearing_account,
+                                        multiplier, kind, expires_on)
+                VALUES ('BTC','BTC','bitcoin',0,200,5,8,1,'crypto',NULL),
+                       ('AAPL','AAPL','apple stock',1,300,6,9,1,'equity',NULL)
                 ON CONFLICT (symbol) DO NOTHING""");
         }
     }
@@ -166,7 +210,8 @@ public final class AssetRegistry {
     // reads
     // ------------------------------------------------------------------
     private static final String COLS =
-            "SELECT symbol, currency, label, slot, legacy_offset, broker_account, clearing_account FROM asset_slots";
+            "SELECT symbol, currency, label, slot, legacy_offset, broker_account, clearing_account,"
+                    + " multiplier, kind, expires_on FROM asset_slots";
 
     /** THE lookup. Throws rather than guessing · there is no else-branch. */
     public static Asset bySymbol(Connection c, String symbol) throws SQLException {
@@ -258,7 +303,22 @@ public final class AssetRegistry {
         long slot = rs.getLong(4);
         long legacy = rs.getLong(5);
         Long legacyOffset = rs.wasNull() ? null : legacy;
-        return new Asset(symbol, currency, label, slot, legacyOffset, rs.getLong(6), rs.getLong(7));
+        long broker = rs.getLong(6);
+        long clearing = rs.getLong(7);
+        // multiplier is NOT NULL with a DEFAULT of 1, so this cannot come back
+        // null from a migrated database · but a null here would mean "unknown
+        // contract size", and valuing on an unknown contract size is the 100x
+        // error this column exists to prevent. Refuse rather than assume 1.
+        java.math.BigDecimal multiplier = rs.getBigDecimal(8);
+        if (multiplier == null || multiplier.signum() <= 0)
+            throw new IllegalStateException("'" + symbol + "' has multiplier " + multiplier
+                    + " · a holding cannot be valued without a positive contract size");
+        String kind = rs.getString(9);
+        // getDate answers null for SQL NULL directly, so no wasNull() dance is
+        // needed here · unlike legacy_offset above, whose getLong returns 0
+        java.sql.Date exp = rs.getDate(10);
+        return new Asset(symbol, currency, label, slot, legacyOffset, broker, clearing,
+                multiplier, kind, exp == null ? null : exp.toLocalDate());
     }
 
     // ------------------------------------------------------------------
@@ -285,8 +345,33 @@ public final class AssetRegistry {
     }
 
     public static void register(String symbol, String currency, String label) throws SQLException {
+        // an instrument listed without saying otherwise is an ordinary spot
+        // one: one unit is one unit, and it does not expire
+        register(symbol, currency, label, java.math.BigDecimal.ONE, "equity", null);
+    }
+
+    /**
+     * LIST a contract · the full form, with the contract size and the expiry.
+     *
+     * multiplier is how many units of the underlying one unit of this
+     * instrument controls. A share's is 1. Note that this is NOT a special
+     * case for options bolted onto a stock-shaped model: every instrument has
+     * a multiplier, a stock's simply happens to be one, so there is no branch
+     * anywhere that asks "is this an option?" before deciding how to value it.
+     *
+     * expiresOn is null for anything that does not expire.
+     */
+    public static void register(String symbol, String currency, String label,
+                                java.math.BigDecimal multiplier, String kind,
+                                java.time.LocalDate expiresOn) throws SQLException {
         String s = normalize(symbol);
         String ccy = normalize(currency);
+        if (multiplier == null || multiplier.signum() <= 0)
+            throw new IllegalArgumentException("'" + s + "' needs a positive multiplier, not " + multiplier
+                    + " · a zero contract size values every holding of it at nothing");
+        if (expiresOn != null && !"option".equals(kind))
+            throw new IllegalArgumentException("'" + s + "' is kind '" + kind + "' and cannot expire"
+                    + " · an expiry on a spot instrument would retire a holding that nothing should retire");
         long slot = derivedSlot(s);
         long broker = ASSET_BASE + slot * SLOT_STRIDE + SUFFIX_BROKER;
         long clearing = ASSET_BASE + slot * SLOT_STRIDE + SUFFIX_CLEARING;
@@ -306,6 +391,18 @@ public final class AssetRegistry {
                         throw new IllegalStateException("'" + s + "' is already listed against currency "
                                 + existing.currency() + ", not " + ccy
                                 + " · customers may already hold balances under the old mapping");
+                    // The SAME argument as the currency check above, and it is
+                    // the more dangerous of the two. Re-listing an instrument
+                    // under a different contract size silently restates every
+                    // existing holding of it by the ratio · the balances do not
+                    // move, so the books still sum to zero in every currency,
+                    // and only the valuation is wrong. That is precisely the
+                    // shape of bug V4 exists to delete: wrong, and passing
+                    // every check the bank runs.
+                    if (existing.multiplier().compareTo(multiplier) != 0)
+                        throw new IllegalStateException("'" + s + "' is already listed with multiplier "
+                                + existing.multiplier().toPlainString() + ", not " + multiplier.toPlainString()
+                                + " · customers may already hold positions valued under the old contract size");
                     ensureSlotAccounts(c, existing);
                     continue;
                 }
@@ -318,14 +415,18 @@ public final class AssetRegistry {
                             + " is two instruments sharing one holding account.");
                 try (PreparedStatement ps = c.prepareStatement("""
                         INSERT INTO asset_slots(symbol, currency, label, slot, legacy_offset,
-                                                broker_account, clearing_account)
-                        VALUES (?,?,?,?,NULL,?,?) ON CONFLICT (symbol) DO NOTHING""")) {
+                                                broker_account, clearing_account,
+                                                multiplier, kind, expires_on)
+                        VALUES (?,?,?,?,NULL,?,?,?,?,?) ON CONFLICT (symbol) DO NOTHING""")) {
                     ps.setString(1, s);
                     ps.setString(2, ccy);
                     ps.setString(3, label);
                     ps.setLong(4, slot);
                     ps.setLong(5, broker);
                     ps.setLong(6, clearing);
+                    ps.setBigDecimal(7, multiplier);
+                    ps.setString(8, kind);
+                    ps.setDate(9, expiresOn == null ? null : java.sql.Date.valueOf(expiresOn));
                     ps.executeUpdate();
                 }
                 ensureSlotAccounts(c, bySymbol(c, s));

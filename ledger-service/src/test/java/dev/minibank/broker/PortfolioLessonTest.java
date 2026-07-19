@@ -46,7 +46,7 @@ class PortfolioLessonTest {
                 catalog(),
                 Map.of("BTC", quote("50000", "49000"),
                        "AAPL", quote("200", "190")),
-                Map.of());
+                Map.of(), TODAY);
 
         assertEquals(2, s.holdings().size());
         Portfolio.Aggregate a = s.aggregate();
@@ -73,7 +73,7 @@ class PortfolioLessonTest {
     @Test
     @DisplayName("lesson 2: an empty portfolio is worth ZERO · not null, because nothing is not unknown")
     void lesson2_emptyPortfolioIsZeroNotNull() {
-        Portfolio.Snapshot s = Portfolio.build(List.of(), catalog(), Map.of(), Map.of());
+        Portfolio.Snapshot s = Portfolio.build(List.of(), catalog(), Map.of(), Map.of(), TODAY);
 
         Portfolio.Aggregate a = s.aggregate();
         assertTrue(s.holdings().isEmpty());
@@ -99,7 +99,7 @@ class PortfolioLessonTest {
                         position("AAPL", "10", "1800", "40")),
                 catalog(),
                 Map.of("AAPL", quote("200", "190")),
-                Map.of());
+                Map.of(), TODAY);
 
         assertEquals(1, s.holdings().size(), "you do not hold what you sold");
         assertEquals("AAPL", s.holdings().get(0).symbol());
@@ -123,7 +123,7 @@ class PortfolioLessonTest {
                 catalog(),
                 Map.of("BTC", quote("50000", null),              // feed gave no reference
                        "AAPL", quote("200", "190")),
-                Map.of());
+                Map.of(), TODAY);
 
         assertNull(holding(s, "BTC").dayChange(), "no reference price, no claim about today");
         assertNull(holding(s, "BTC").dayChangePct());
@@ -148,7 +148,7 @@ class PortfolioLessonTest {
                 List.of(position("AAPL", "10", "1950", "0")),
                 catalog(),
                 Map.of("AAPL", quote("200", "190")),
-                Map.of("AAPL", flow("10", "1950")));
+                Map.of("AAPL", flow("10", "1950")), TODAY);
 
         Portfolio.Holding h = holding(s, "AAPL");
         // 10 * (200 - 195) = 50 · what we actually made
@@ -169,7 +169,7 @@ class PortfolioLessonTest {
                 List.of(position("AAPL", "10", "1900", "0")),
                 catalog(),
                 Map.of("AAPL", quote("200", "190")),
-                Map.of("AAPL", flow("4", "780")));
+                Map.of("AAPL", flow("4", "780")), TODAY);
 
         // held:   6 * (200 - 190) = 60
         // traded: 4 * (200 - 195) = 20
@@ -189,7 +189,7 @@ class PortfolioLessonTest {
                         position("AAPL", "10", "1800", "0")),
                 catalog(),
                 Map.of("AAPL", quote("200", "190")),            // nothing for BTC at all
-                Map.of());
+                Map.of(), TODAY);
 
         Portfolio.Holding btc = holding(s, "BTC");
         assertNull(btc.price(), "a price we do not have is not zero");
@@ -225,10 +225,21 @@ class PortfolioLessonTest {
         return new Broker.DayFlow(new BigDecimal(qty), new BigDecimal(notional));
     }
 
+    /**
+     * The valuation date. Portfolio.build takes it rather than reading a clock,
+     * which is what keeps the class pure now that expiry is one of the things
+     * it decides. Nothing in THIS file expires, so any date works and a fixed
+     * one keeps the suite from depending on the day it runs.
+     */
+    private static final java.time.LocalDate TODAY = java.time.LocalDate.of(2026, 7, 19);
+
+    /** Both spot instruments: multiplier 1, no expiry. One share is one share. */
     private static Map<String, Catalog.Instrument> catalog() {
         return Map.of(
-                "BTC", new Catalog.Instrument("BTC", "crypto", "BTC", "EUR", "Bitcoin", "CRYPTO"),
-                "AAPL", new Catalog.Instrument("AAPL", "equity", "AAPL", "EUR", "Apple Inc.", "NASDAQ.NMS"));
+                "BTC", new Catalog.Instrument("BTC", "crypto", "BTC", "EUR", "Bitcoin", "CRYPTO",
+                        BigDecimal.ONE, null),
+                "AAPL", new Catalog.Instrument("AAPL", "equity", "AAPL", "EUR", "Apple Inc.", "NASDAQ.NMS",
+                        BigDecimal.ONE, null));
     }
 
     private static Portfolio.Holding holding(Portfolio.Snapshot s, String symbol) {

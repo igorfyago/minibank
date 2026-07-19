@@ -1477,7 +1477,23 @@ function ivHead(inv) {
   if (inv.holdings === 0) sub = 'stocks and crypto · start from €10';
   else if (day !== null) sub = `<span class="${cls(day)}">${sign(day)}${fmt(Math.abs(day))}${
     pct !== null ? ' · ' + sign(pct) + Math.abs(pct).toFixed(2) + '%' : ''}</span> today`;
-  else if (val === null) sub = 'a holding has no live price right now';
+  // WHY THE TOTAL IS MISSING, and it is not always the feed.
+  //
+  // This line said "a holding has no live price right now" for every withheld
+  // total, including the one case the option work exists to handle: an
+  // expired contract, which the server deliberately does not price and never
+  // will again. That sentence claims a price outage. On a day when the feed
+  // is working perfectly and simply was not asked, it is a false statement
+  // about the system's own health, and the truth existed only in a row the
+  // headline does not read. The server now ships the two counts apart.
+  else if (val === null) {
+    const exp = Number(inv.expired || 0), un = Number(inv.unpriced || 0);
+    sub = exp > 0 && un > 0
+        ? `${exp} expired and ${un} unpriced holding${un === 1 ? '' : 's'} · total withheld`
+      : exp > 0
+        ? `${exp} expired contract${exp === 1 ? '' : 's'} cannot be valued · total withheld`
+        : 'a holding has no live price right now';
+  }
   else sub = `${inv.holdings} holding${inv.holdings === 1 ? '' : 's'} · today's change not available`;
   return `<div class="prod-name">📈 Investments</div>
     <div class="prod-val">${val === null ? '<span class="prod-sub">not available</span>' : fmt(val)}</div>

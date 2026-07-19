@@ -113,6 +113,40 @@ public final class Broker {
                 c.setAutoCommit(true);
             }
 
+            // AN EXPIRED CONTRACT IS NOT TRADABLE, and this is the only gate
+            // that says so on the way IN.
+            //
+            // Every other mention of expiredAsOf in this service is a
+            // valuation read · Portfolio.build, BrokerApi.positions, the
+            // bank's investments tile. All three refuse to price a dead
+            // contract, and none of them ran before the money moved. The
+            // order path gated on Catalog.exists alone, and the row is not
+            // deleted at expiry, so a dead contract stayed buyable: the venue
+            // asked PriceFeed, Yahoo answered 404, PriceFeed's upstream-down
+            // branch handed back the contract's final premium relabelled
+            // 'cached' with no age bound, and the fill settled real euros out
+            // of the customer's account for an instrument this same codebase
+            // then refuses to value. The resulting position withholds their
+            // entire portfolio total forever, because Acc.whole() counts it.
+            //
+            // Selling is refused for the same reason and not as an oversight.
+            // There is no bid for a contract that has stopped existing, so a
+            // sell would fill at that same stale premium and pay out cash
+            // against a price nobody quoted. Unwinding an expired position is
+            // an expiry SETTLEMENT · a separate, deliberate act with a
+            // settlement price · and not an order.
+            //
+            // It sits HERE rather than only in the venue because it must hold
+            // for IbkrVenue too, and after the order row is committed because
+            // recording intent first is this method's whole ordering rule: the
+            // customer gets a rejected order with a reason, not a silent drop.
+            Catalog.Instrument listed = Catalog.find(symbol);
+            if (listed != null && listed.expiredAsOf(java.time.LocalDate.now(ZoneOffset.UTC))) {
+                reject(c, id, "'" + symbol + "' expired on " + listed.expiresOn()
+                        + " · an expired contract no longer trades");
+                return byId(c, id);
+            }
+
             BrokerPort.Ack ack;
             try {
                 ack = venue.place(new BrokerPort.OrderRequest(
@@ -185,7 +219,8 @@ public final class Broker {
             // compares quantities, and sum-zero cannot notice an entry that
             // was never written. One rule, called from both places, is the
             // only way those two numbers stay the same number.
-            BigDecimal cash = consideration(order.side(), fill.qty(), fill.price(), fill.fee());
+            BigDecimal cash = consideration(order.side(), fill.qty(), fill.price(), fill.fee(),
+                    multiplierOf(order.symbol()));
             BrokerDb.appendOutbox(c, TOPIC_ORDERS, "filled:" + fillId,
                     "{\"type\":\"order.filled\",\"fillId\":\"" + fillId +
                     "\",\"orderId\":\"" + orderId +
@@ -305,8 +340,28 @@ public final class Broker {
      */
     private static void applyToPosition(Connection c, long customerId, String symbol, String side,
                                         BigDecimal qty, BigDecimal price, BigDecimal fee) throws SQLException {
-        Position moved = advance(positionOn(c, customerId, symbol), side, qty, price, fee);
+        Position moved = advance(positionOn(c, customerId, symbol), side, qty, price, fee,
+                multiplierOf(symbol));
         store(c, moved);
+    }
+
+    /**
+     * The contract size for a symbol, or a refusal.
+     *
+     * FAILS CLOSED, exactly as AssetRegistry.bySymbol does, and for the same
+     * reason: an unlisted symbol has no known contract size, and the only
+     * available guess is 1, which is right for a share and wrong by a hundred
+     * for a contract. Guessing here would put the error in the customer's cash
+     * rather than in a stack trace, and a fill that cannot be priced correctly
+     * is one that must not settle at all.
+     */
+    static BigDecimal multiplierOf(String symbol) throws SQLException {
+        Catalog.Instrument i = Catalog.find(symbol);
+        if (i == null)
+            throw new IllegalStateException("'" + symbol + "' is not a listed instrument"
+                    + " · its contract size is unknown, and settling on a guessed one"
+                    + " misstates the cash leg by exactly that guess");
+        return i.multiplier();
     }
 
     /**
@@ -324,19 +379,22 @@ public final class Broker {
      * remove.
      */
     public static Position advance(Position p, String side, BigDecimal qty,
-                                   BigDecimal price, BigDecimal fee) {
+                                   BigDecimal price, BigDecimal fee, BigDecimal multiplier) {
         BigDecimal newQty, newBasis, newRealized = p.realizedPnl();
 
         if ("buy".equals(side)) {
             newQty = p.qty().add(qty);
-            newBasis = p.costBasis().add(consideration(side, qty, price, fee));
+            newBasis = p.costBasis().add(consideration(side, qty, price, fee, multiplier));
         } else {
             if (qty.compareTo(p.qty()) > 0)
                 throw new IllegalArgumentException("cannot sell " + qty.toPlainString()
                         + " " + p.symbol() + ": position is " + p.qty().toPlainString());
             BigDecimal avg = p.averageCost();
+            // averageCost is basis-per-CONTRACT (the basis already carries the
+            // multiplier, the quantity does not), so this needs no multiplier
+            // of its own · applying one here would double-count it
             BigDecimal costOut = avg.multiply(qty);
-            BigDecimal proceeds = consideration(side, qty, price, fee);
+            BigDecimal proceeds = consideration(side, qty, price, fee, multiplier);
             newRealized = p.realizedPnl().add(proceeds).subtract(costOut);
             newQty = p.qty().subtract(qty);
             newBasis = p.costBasis().subtract(costOut);
@@ -368,9 +426,34 @@ public final class Broker {
      * same considerations, so a rebuilt position and an incrementally
      * maintained one still cannot disagree.
      */
+    /**
+     * THE MULTIPLIER IS A REQUIRED ARGUMENT, not an optional one.
+     *
+     * One option contract controls 100 shares, so the money that changes hands
+     * is qty * price * multiplier. A share's multiplier is 1, which is why
+     * there is no branch here asking whether this is an option: a stock is the
+     * ordinary case with the ordinary contract size, not a special case that
+     * skips a multiplication.
+     *
+     * There is deliberately NO four-argument overload defaulting it to one.
+     * An overload would make "I forgot the contract size" and "this instrument
+     * has a contract size of one" the same call, and the two differ by a
+     * factor of a hundred in the customer's cash. Omitting it should be a
+     * compile error, and it is.
+     *
+     * The multiplier scales the MONEY leg only. The quantity leg is untouched:
+     * Reconciliation asserts that the ledger's asset balance equals the
+     * broker's position quantity, so the ledger holds CONTRACTS, not the
+     * shares they control. Multiplying units here would report a 100x
+     * divergence on every option position.
+     */
     public static BigDecimal consideration(String side, BigDecimal qty,
-                                           BigDecimal price, BigDecimal fee) {
-        BigDecimal gross = qty.multiply(price);
+                                           BigDecimal price, BigDecimal fee,
+                                           BigDecimal multiplier) {
+        if (multiplier == null || multiplier.signum() <= 0)
+            throw new IllegalArgumentException("consideration needs a positive contract size, not "
+                    + multiplier + " · a zero multiplier settles every fill for nothing");
+        BigDecimal gross = qty.multiply(price).multiply(multiplier);
         BigDecimal net = "buy".equals(side) ? gross.add(fee) : gross.subtract(fee);
         return net.setScale(2, RoundingMode.HALF_UP);
     }

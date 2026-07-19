@@ -1183,6 +1183,95 @@ public final class HttpApi {
         }
     }
 
+    /**
+     * WHAT TRADED THROUGH ONE HOLDING TODAY · this service's own flowsSince.
+     *
+     * units is the net movement on the customer's holding account, signed the
+     * way the ledger signs it (a buy credits units, so positive). cash is the
+     * net movement on the customer's EUR account across THOSE SAME
+     * transactions, signed the same way (a buy debits euros, so negative). It
+     * is scoped by tx_id rather than by time on the euro account, because the
+     * euro account also carries card spend, transfers and interest, and none
+     * of those bought an instrument.
+     *
+     * WHY IT IS NOT EXACTLY THE BROKER'S NUMBER, stated rather than hidden:
+     * the ledger moves the CONSIDERATION, which is qty*price*multiplier plus
+     * the commission, and Broker.DayFlow sums qty*price off the fills with no
+     * fee in it. So this figure is the broker's minus the commission on
+     * anything traded today · the two screens agree to within the fee the
+     * customer actually paid, rather than to within a whole day's move on a
+     * position that did not exist this morning. Separating the fee out is not
+     * possible from here: the fill's fee column lives in the broker's
+     * database, which this service cannot read, and inventing a split would
+     * be the same class of fabrication as inventing a price.
+     */
+    record DayFlow(BigDecimal units, BigDecimal cash) {
+        static final DayFlow NONE = new DayFlow(BigDecimal.ZERO, BigDecimal.ZERO);
+    }
+
+    /**
+     * THE DAY MOVE FOR ONE HOLDING, corrected for what traded inside the window.
+     *
+     *     qty_at_prior_close * (price - prevClose) * multiplier
+     *   + (qty_traded * price * multiplier - cash_paid)
+     *
+     * Pure, and package-visible, for the reason Portfolio is pure: the
+     * arithmetic is the product, and it has to be assertable against numbers a
+     * test chose rather than against whatever Apple happened to cost while the
+     * suite ran. The wrong version of this · qty_now * (price - prevClose) ·
+     * is plausible, is what this block used to do, and cannot be told apart
+     * from the right one by looking at the output on a day nobody traded.
+     */
+    static BigDecimal dayMove(BigDecimal unitsNow, BigDecimal price, BigDecimal prevClose,
+                              BigDecimal multiplier, DayFlow flow) {
+        BigDecimal qtyPrior = unitsNow.subtract(flow.units());
+        // cash is signed the way the ledger signs it · negative for a buy ·
+        // so it ADDS here and the subtraction in the formula above is the
+        // sign, not a second operation
+        return qtyPrior.multiply(price.subtract(prevClose)).multiply(multiplier)
+                .add(flow.units().multiply(price).multiply(multiplier).add(flow.cash()));
+    }
+
+    /**
+     * What that holding was worth at the PRIOR CLOSE · the only honest
+     * denominator for a day percentage.
+     *
+     * Zero for a position opened inside the window: it had no value at the
+     * prior close to be a percentage of, so it contributes to the numerator
+     * and not to this. A book made entirely of such positions therefore has a
+     * base of zero and gets no percentage at all, rather than a percentage of
+     * the money that bought it.
+     */
+    static BigDecimal dayBaseOf(BigDecimal unitsNow, BigDecimal prevClose,
+                                BigDecimal multiplier, DayFlow flow) {
+        BigDecimal qtyPrior = unitsNow.subtract(flow.units());
+        return qtyPrior.signum() > 0
+                ? qtyPrior.multiply(prevClose).multiply(multiplier) : BigDecimal.ZERO;
+    }
+
+    static DayFlow flowToday(Connection c, long assetAcct, long eurAcct,
+                             java.time.Instant since) throws Exception {
+        try (var ps = c.prepareStatement("""
+                SELECT COALESCE(SUM(CASE WHEN e.account_id = ? THEN e.amount END), 0),
+                       COALESCE(SUM(CASE WHEN e.account_id = ? THEN e.amount END), 0)
+                  FROM entries e
+                 WHERE e.account_id IN (?, ?)
+                   AND e.tx_id IN (SELECT e2.tx_id
+                                     FROM entries e2 JOIN transactions t ON t.id = e2.tx_id
+                                    WHERE e2.account_id = ? AND t.created_at >= ?)""")) {
+            ps.setLong(1, assetAcct);
+            ps.setLong(2, eurAcct);
+            ps.setLong(3, assetAcct);
+            ps.setLong(4, eurAcct);
+            ps.setLong(5, assetAcct);
+            ps.setObject(6, java.time.OffsetDateTime.ofInstant(since, java.time.ZoneOffset.UTC));
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return new DayFlow(BigDecimal.ZERO, BigDecimal.ZERO);
+                return new DayFlow(rs.getBigDecimal(1), rs.getBigDecimal(2));
+            }
+        }
+    }
+
     private static Response portfolio(HttpExchange ex) throws Exception {
         String q = ex.getRequestURI().getQuery();
         String cust = null;
@@ -1214,8 +1303,31 @@ public final class HttpApi {
         // Investments card counts whatever is listed, including instruments
         // registered after this code was written.
         List<Object[]> held = new ArrayList<>();   // [symbol, label, units, Px]
-        BigDecimal invested = BigDecimal.ZERO, prevValue = BigDecimal.ZERO;
-        int unpriced = 0, withoutPrevClose = 0;
+        BigDecimal invested = BigDecimal.ZERO;
+        // THE DAY, ACCUMULATED THE WAY Portfolio DOES IT · not as
+        // (value now - value at prior close).
+        //
+        // That subtraction is qty_now * (price - prevClose), which is the
+        // exact formula Broker.flowsSince was written to reject: qty_now is
+        // the CURRENT quantity, so a position opened this morning is credited
+        // with a whole day's move it was never exposed to. Buy 10 AAPL at
+        // 20.00 on a day whose prior close was 10.00 and this tile reported
+        // +100.00 and +100.00% against a prevValue of 100.00 the customer
+        // never held, while the broker's own portfolio screen reported +0.00
+        // for the same holding at the same instant. The bigger number was the
+        // invented one.
+        //
+        //   dayChange = qty_at_prior_close * (price - prevClose) * multiplier
+        //             + (qty_traded * price * multiplier - cash_paid)
+        //
+        // dayBase is the denominator and takes only the FIRST term's
+        // positions: a holding opened today had no value at the prior close to
+        // be a percentage of, which is why the percentage is withheld for a
+        // book made entirely of them rather than divided by a base of zero.
+        BigDecimal dayChange = BigDecimal.ZERO, dayBase = BigDecimal.ZERO;
+        int unpriced = 0, withoutPrevClose = 0, expiredCount = 0;
+        java.time.Instant dayStart = java.time.LocalDate.now(java.time.ZoneOffset.UTC)
+                .atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
         try (Connection c = home.open()) {
             for (AssetRegistry.Asset a : AssetRegistry.all(c)) {
                 // ASKED BY ACCOUNT ID, one asset at a time, rather than looked
@@ -1228,7 +1340,8 @@ public final class HttpApi {
                 // and silently reported every registered one as not held ·
                 // the same two-symbol blind spot this block exists to end,
                 // reintroduced by the shape of a query.
-                BigDecimal units = assetBalance(c, a.holdingFor(id));
+                long assetAcct = a.holdingFor(id);
+                BigDecimal units = assetBalance(c, assetAcct);
                 if (units == null || units.signum() == 0) continue;
                 // LOWERCASE, and it is not cosmetic. The registry stores
                 // symbols uppercase; PriceFeed keys them lowercase and routes
@@ -1237,36 +1350,90 @@ public final class HttpApi {
                 // equity that happens to share the ticker · which priced
                 // bitcoin at €24.82 here before this line said toLowerCase.
                 // BrokerApi.quote() has done it this way all along.
-                PriceFeed.Px px = PriceFeed.get(a.symbol().toLowerCase(java.util.Locale.ROOT));
-                held.add(new Object[]{a.symbol(), a.label() == null ? a.symbol() : a.label(), units, px});
+                //
+                // AN EXPIRED CONTRACT IS NOT PRICED HERE AT ALL, and the feed
+                // is not even asked. Yahoo answers 404 for an expired option,
+                // for a strike that never existed and for a typo alike, and
+                // PriceFeed's upstream-down branch relabels the last price it
+                // saw as 'cached' with no age bound · so asking would hand
+                // back a dead contract's final premium as a current mark and
+                // this total would carry it forever. The expiry date is the
+                // only thing that tells those 404s apart, which is why it is
+                // in the registry rather than in a screen.
+                boolean expired = a.expiredAsOf(java.time.LocalDate.now(java.time.ZoneOffset.UTC));
+                PriceFeed.Px px = expired ? null
+                        : PriceFeed.get(a.symbol().toLowerCase(java.util.Locale.ROOT));
+                held.add(new Object[]{a.symbol(), a.label() == null ? a.symbol() : a.label(), units, px,
+                        a.multiplier(), expired});
+                // EXPIRED IS COUNTED SEPARATELY FROM UNPRICED, because they
+                // are different facts and the screen states one of them out
+                // loud. Folding expiry into `unpriced` made this tile say the
+                // customer's net worth was unavailable "because a holding has
+                // no live price right now" · a claim that the feed is down,
+                // made on a day the feed was working and simply had not been
+                // asked. The row-level priceSource has said "expired" all
+                // along, in a row the tile's own headline does not read.
+                if (expired) { expiredCount++; continue; }
                 if (px == null || !px.priced()) { unpriced++; continue; }
-                invested = invested.add(units.multiply(px.price()));
+                // qty * price * MULTIPLIER · the ledger holds contracts, not
+                // the shares they control, so the contract size is applied to
+                // the money and never to the units. Without this the bank's
+                // own portfolio tile reports every option at a hundredth of
+                // its value, which is exactly why the multiplier is duplicated
+                // into asset_slots: this loop cannot read the broker's table.
+                invested = invested.add(units.multiply(px.price()).multiply(a.multiplier()));
                 // The day move needs BOTH ends. A holding with a mark but no
                 // prior close contributes to the value and to NEITHER end of
                 // the change · counting its current value against a missing
                 // opening one would report the whole position as today's gain.
                 if (px.prevClose() == null) { withoutPrevClose++; continue; }
-                prevValue = prevValue.add(units.multiply(px.prevClose()));
+                // WHAT MOVED THROUGH THIS HOLDING TODAY, out of the ledger's
+                // own entries. The broker has flowsSince over its fills; this
+                // service cannot read that database, but it does not need to ·
+                // the same trade wrote a units leg on the holding account and
+                // a euro leg on the customer's main account in one
+                // transaction, so the flow is recoverable from here.
+                DayFlow flow = flowToday(c, assetAcct, id, dayStart);
+                // the units legs are un-multiplied (the ledger holds contracts,
+                // not the shares they control) and the cash leg is already
+                // money, so the contract size applies to the price terms and
+                // never to the cash · see dayMove
+                dayChange = dayChange.add(dayMove(units, px.price(), px.prevClose(), a.multiplier(), flow));
+                dayBase = dayBase.add(dayBaseOf(units, px.prevClose(), a.multiplier(), flow));
             }
         }
         // A total is withheld outright when any leg of it is unknown, rather
         // than summed over the legs that happen to have a price. A partial sum
         // renders identically to a complete one and there is no way for the
         // reader to tell which they are looking at.
-        boolean valueKnown = unpriced == 0;
+        // `expired` withholds the value for exactly the reason `unpriced`
+        // does · the holding is held and cannot be valued, so a total that
+        // quietly omitted it would be a smaller, wrong number wearing the
+        // label of a bigger, right one. It is a SEPARATE count because the
+        // screen has to be able to say which of the two happened.
+        boolean valueKnown = unpriced == 0 && expiredCount == 0;
         boolean dayKnown = valueKnown && withoutPrevClose == 0 && !held.isEmpty();
-        BigDecimal dayChange = dayKnown ? invested.subtract(prevValue) : null;
-        BigDecimal dayPct = dayKnown && prevValue.signum() > 0
-                ? dayChange.multiply(new BigDecimal("100")).divide(prevValue, 2, java.math.RoundingMode.HALF_UP)
+        BigDecimal day = dayKnown ? dayChange : null;
+        // the denominator is what the contributing rows were worth at the
+        // PRIOR CLOSE, not what they are worth now · and a book opened
+        // entirely today has no such value, so it gets no percentage rather
+        // than a percentage of the money that bought it
+        BigDecimal dayPct = dayKnown && dayBase.signum() > 0
+                ? day.multiply(new BigDecimal("100")).divide(dayBase, 2, java.math.RoundingMode.HALF_UP)
                 : null;
 
         StringBuilder inv = new StringBuilder("{\"value\":")
                 .append(valueKnown ? "\"" + invested.setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() + "\"" : "null")
-                .append(",\"dayChange\":").append(dayChange == null ? "null"
-                        : "\"" + dayChange.setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() + "\"")
+                .append(",\"dayChange\":").append(day == null ? "null"
+                        : "\"" + day.setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() + "\"")
                 .append(",\"dayChangePct\":").append(dayPct == null ? "null" : "\"" + dayPct.toPlainString() + "\"")
                 .append(",\"holdings\":").append(held.size())
                 .append(",\"unpriced\":").append(unpriced)
+                // shipped so the tile can state the RIGHT reason a total is
+                // missing · the broker's aggregate has carried this count all
+                // along and the bank's did not, so the two screens disagreed
+                // about why the same figure was withheld and neither was right
+                .append(",\"expired\":").append(expiredCount)
                 .append(",\"withoutPrevClose\":").append(withoutPrevClose)
                 .append(",\"rows\":[");
         for (int i = 0; i < held.size(); i++) {
@@ -1274,15 +1441,24 @@ public final class HttpApi {
             PriceFeed.Px px = (PriceFeed.Px) h[3];
             boolean priced = px != null && px.priced();
             BigDecimal units = (BigDecimal) h[2];
+            BigDecimal multiplier = (BigDecimal) h[4];
+            boolean expired = (Boolean) h[5];
             if (i > 0) inv.append(',');
             inv.append("{\"asset\":\"").append(Json.esc((String) h[0]))
                .append("\",\"label\":\"").append(Json.esc((String) h[1]))
                .append("\",\"units\":\"").append(plain(units))
+               // the same multiplication the total above used · a row and the
+               // total it sums into must not disagree about the contract size
                .append("\",\"eur\":").append(priced
-                       ? "\"" + units.multiply(px.price()).setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() + "\""
+                       ? "\"" + units.multiply(px.price()).multiply(multiplier)
+                               .setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() + "\""
                        : "null")
                .append(",\"price\":").append(priced ? "\"" + plain(px.price()) + "\"" : "null")
-               .append(",\"priceSource\":\"").append(Json.esc(px == null ? "unavailable" : px.source()))
+               .append(",\"multiplier\":\"").append(plain(multiplier))
+               // "expired" is a STATE, not a feed failure · "unavailable"
+               // would say the price is coming back, and it is not
+               .append("\",\"priceSource\":\"").append(Json.esc(
+                       expired ? "expired" : px == null ? "unavailable" : px.source()))
                .append("\"}");
         }
         inv.append("]}");

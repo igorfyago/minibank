@@ -77,6 +77,35 @@
     border-top:1px solid rgba(255,255,255,.04); font-variant-numeric:tabular-nums; }
   .chip { font-size:10.5px; border:1px solid var(--line); border-radius:999px; padding:1.5px 8px; color:var(--dim); flex:none; }
 
+  /* THE BANK'S TRANSACTION LIST, copied across for the holdings.
+     A portfolio row is the same object the bank already draws for a payment:
+     an identity on the left, and money right-aligned with its reference
+     figure beneath in dim type. So these are index.html's rules verbatim ·
+     lines 177-190 and 270-278 and 409-410 · not a .hold-row invented to look
+     similar. If one of them changes in the bank it changes here too.
+     .tx-av (the 42px avatar) is the one member of the family left behind: a
+     portfolio row carries no icon, and pulling it in would mean inventing a
+     glyph per instrument. */
+  .tx-day { color:var(--dim); font-size:12px; font-weight:600; margin:14px 0 4px; }
+  .tx-row { display:flex; align-items:center; gap:12px; padding:9px 4px; cursor:pointer; border-radius:12px; }
+  .tx-row:hover { background:rgba(255,255,255,.035); }
+  .tx-main { flex:1; min-width:0; }
+  .tx-name { font-weight:600; font-size:14px; }
+  .tx-sub { color:var(--dim); font-size:12px; }
+  .tx-right { text-align:right; }
+  .tx-amt { font-weight:650; font-size:14px; font-variant-numeric:tabular-nums; }
+  .tx-after { color:var(--dim); font-size:11.5px; font-variant-numeric:tabular-nums; }
+  .txg-head { display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:650; }
+  .txg-head .muted { font-weight:400; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .acc-chev { margin-left:auto; flex:none; color:var(--dim); transition:transform .18s; font-size:15px; }
+  /* A BAND AND ITS ROWS ARE ONE SET OF COLUMNS. .txg-head and .tx-row are both
+     the bank's, and they disagree by 4px of gap, so a subtotal composed from
+     one drifted left of the figures it totals in the other · 16px out by the
+     value column. These two declarations are copied off .tx-row above, not
+     chosen: no colour, no font, no radius, nothing that is a look. It is the
+     statement that the subtotal sits over its own column. */
+  .tx-day.txg-head { gap:12px; padding-right:4px; }
+
   .sk { background:linear-gradient(90deg, #161c28 25%, #202939 37%, #161c28 63%);
     background-size:400% 100%; animation:skm 1.3s ease infinite; border-radius:7px; }
   @keyframes skm { 0% { background-position:100% 0; } 100% { background-position:0 0; } }
@@ -121,9 +150,13 @@
 
     <div class="card tx-card">
       <h2>Holdings</h2>
-      <div class="prod-grid" id="holdings">
-        <div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div>
-        <div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div>
+      <!-- the skeleton is ROW-shaped because the holdings are · a two-up grid
+           here would settle into a list a moment later and the card would
+           visibly change its mind about what it is -->
+      <div id="holdings">
+        <div class="sk" style="width:40%;height:12px;margin:14px 0 10px"></div>
+        <div class="tx-row"><div class="tx-main"><div class="sk" style="width:35%;height:13px"></div><div class="sk" style="width:60%;height:10px;margin-top:5px"></div></div><div class="tx-right"><div class="sk" style="width:70px;height:13px"></div><div class="sk" style="width:40px;height:10px;margin:5px 0 0 auto"></div></div></div>
+        <div class="tx-row"><div class="tx-main"><div class="sk" style="width:30%;height:13px"></div><div class="sk" style="width:55%;height:10px;margin-top:5px"></div></div><div class="tx-right"><div class="sk" style="width:70px;height:13px"></div><div class="sk" style="width:40px;height:10px;margin:5px 0 0 auto"></div></div></div>
       </div>
     </div>
 
@@ -276,8 +309,28 @@ async function api(path, opts) {
 function drawHeader(p) {
   const a = p.aggregate;
   const mv = fmtEur(a.marketValue);
+  // THE REASON HAS TO BE THE REASON.
+  //
+  // The backend withholds marketValue when unpriced, fabricated OR expired is
+  // non-zero · three conditions, and this line used to name one of them and
+  // print its count regardless. With a single expired contract and every feed
+  // answering, the biggest number on the screen went missing and the tooltip
+  // under it read "0 holding(s) have no live mark". The band tooltip a
+  // hundred and forty lines below has always used unpriced + expired; the
+  // headline, which is the one a customer actually reads, did not.
+  //
+  // Each clause is a different fact and they do not collapse into one:
+  // unpriced means the feed did not answer, expired means the contract has
+  // stopped existing and will never be marked again, fabricated means a
+  // constant stood in for a price. Naming the wrong one is worse than naming
+  // none, because it sends the reader to check a system that is fine.
+  const why = [];
+  if (Number(a.unpriced) > 0)    why.push(a.unpriced + ' with no live mark');
+  if (Number(a.expired) > 0)     why.push(a.expired + ' expired');
+  if (Number(a.fabricated) > 0)  why.push(a.fabricated + ' with no observed price');
   $('pv').innerHTML = mv !== null ? esc(mv)
-    : NA(a.unpriced + ' holding(s) have no live mark, so the total is withheld rather than partly summed');
+    : NA((why.length ? why.join(' · ') + ' holding(s), so the total is withheld rather than partly summed'
+                     : 'the total is withheld rather than partly summed'));
 
   // TODAY, in the bank's sub-line position · rendered only when the backend
   // actually established it. A withheld day change says so in one short line
@@ -288,9 +341,23 @@ function drawHeader(p) {
     dayHtml = `<span class="${signClass(a.dayChange)}">${esc(day)}${
       dayPct !== null ? ' · ' + esc(dayPct) : ''}</span> today`;
   } else if (a.holdings > 0) {
-    dayHtml = `<span class="muted" title="${esc(a.withoutPrevClose
-      + ' holding(s) had no prior close, so the day total is withheld rather than partly summed')
-      }">today's change not available</span>`;
+    // "had no prior close" is the wrong sentence about an expired contract.
+    // Its prior close is perfectly well known · what it does not have is a
+    // CURRENT price to compare one against, because it has stopped existing.
+    // Expired rows land in withoutPrevClose all the same (Portfolio.build
+    // gates the day block on `valuable`), so the count is right and the
+    // explanation was not.
+    //
+    // "position" and not "holding", deliberately: a position closed to flat
+    // today also contributes here and has no row on the screen to point at,
+    // so calling it a holding sends the reader hunting for a line that was
+    // never drawn.
+    const dayWhy = Number(a.expired) > 0
+      ? a.withoutPrevClose + ' position(s) could not be measured against a prior close · '
+        + a.expired + ' of them because the contract has expired and has no current price to compare'
+      : a.withoutPrevClose + ' position(s) had no prior close, so the day total is withheld'
+        + ' rather than partly summed';
+    dayHtml = `<span class="muted" title="${esc(dayWhy)}">today's change not available</span>`;
   } else {
     dayHtml = '';
   }
@@ -314,8 +381,12 @@ function drawHeader(p) {
     : '';
   $('day').innerHTML = [dayHtml, staleHtml].filter(Boolean).join(' · ');
 
+  // "Total P&L" was the wrong label on the right number: this is UNREALISED,
+  // and realised sits on its own line directly beneath it. A reader who added
+  // the two together to get the total was doing the arithmetic the first
+  // label had already claimed to have done.
   const rows = [];
-  rows.push(row('Total P&L', a.unrealized, a.unrealizedPct));
+  rows.push(row('Unrealized', a.unrealized, a.unrealizedPct));
   rows.push(row('Realized', a.realized, null));
   $('pnl').innerHTML = rows.join('');
 
@@ -343,69 +414,180 @@ function slider(k, min, max, step, dflt) {
     Number(v).toLocaleString('en-US')}</b></div>`;
 }
 
-function drawHoldings(p) {
-  const hs = sortHoldings(p.holdings || []);
-  if (!hs.length) {
-    // AN EMPTY PORTFOLIO IS A BEGINNING, NOT A FAULT. "No open positions" is
-    // a status report about a database; this is the one thing the customer
-    // can actually do next, in the tile shape the rest of the page uses.
-    $('holdings').className = '';
-    $('holdings').innerHTML = `<div class="muted" style="font-size:13px">Nothing invested yet.</div>
-      <div class="muted" style="margin-top:4px">Pick something from the watchlist below to make a start ·
-        orders settle into your bank account automatically.</div>`;
-    return;
-  }
-  $('holdings').className = 'prod-grid';
-  $('holdings').innerHTML = hs.map(h => tile(h)).join('');
+/**
+ * ONE RIGHT-ALIGNED NUMERIC ZONE · the shape the whole screen is built from.
+ *
+ * A currency figure, and directly beneath it in dim tabular type the thing it
+ * is a figure OF: the quantity under a value, the percentage under a P&L. That
+ * pairing repeats at row, at band and at header, which is the entire visual
+ * hierarchy · there is no second idea to learn further down the page.
+ *
+ * `after` empty is a deliberate state and not a gap to fill. A position opened
+ * today has a real day change and NO honest percentage, so the lower line is
+ * blank rather than '0.00%', which would be a specific claim that it did not
+ * move made about something that moved.
+ */
+function zone(main, after, klass) {
+  // &nbsp; RATHER THAN NOTHING when there is no reference figure. An empty
+  // .tx-after collapses to zero height, and .tx-row centres its children, so
+  // a zone missing its lower line floats its currency figure 8px below the
+  // ones beside it · the day column visibly sagging exactly on the rows whose
+  // percentage we are withholding. The blank line has to occupy space for the
+  // figures to share a baseline; the bank's own .prod-sub carries a
+  // min-height for the same reason.
+  return `<div class="tx-right"><div class="tx-amt ${klass || ''}">${main}</div>
+    <div class="tx-after">${after || '&nbsp;'}</div></div>`;
 }
 
-function tile(h) {
+/** A P&L zone: currency on top, percent beneath, both taking the sign colour. */
+function pnlZone(eur, pct) {
+  const s = fmtSignedEur(eur), p = fmtPct(pct);
+  return zone(s === null ? '<span class="muted">·</span>' : esc(s), p === null ? '' : esc(p),
+              signClass(eur));
+}
+
+function drawHoldings(p) {
+  const hs = p.holdings || [];
+  $('holdings').className = '';
+  if (!hs.length) {
+    // An empty portfolio is a state, not a fault and not an apology. One
+    // short line · the thing to do next is the Watchlist card directly below,
+    // which is an affordance and does not need a paragraph pointing at it.
+    $('holdings').innerHTML = `<div class="muted" style="font-size:13px">Nothing invested yet.</div>`;
+    return;
+  }
+
+  // THE BANDS COME FROM THE SERVER, subtotals already computed. The rows are
+  // filtered into them by kind rather than nested inside them in the payload,
+  // so a row appears under exactly one band and the two cannot disagree about
+  // which. If a band is somehow empty it is not drawn · Portfolio.build does
+  // not build one, and this is the second place that stays true.
+  const groups = Array.isArray(p.groups) ? p.groups : [];
+  const html = groups.map(g => {
+    const rows = sortHoldings(hs.filter(h => (h.kind || null) === (g.kind || null)));
+    if (!rows.length) return '';
+    return band(g) + rows.map(h => holdingRow(h)).join('');
+  }).join('');
+
+  $('holdings').innerHTML = html;
+}
+
+/**
+ * THE BAND · an asset class, and the subtotal of exactly the rows beneath it.
+ *
+ * Composed from two of the bank's classes rather than a third invented one:
+ * .tx-day supplies the dim colour and the spacing that separates one band
+ * from the last, .txg-head supplies the flex row. The middle .muted is the
+ * bank's own flexing spacer and carries the row count, so it is the first
+ * thing to truncate when the phone is narrow · which is the right priority,
+ * because the numbers on the right are the reason to look.
+ */
+function band(g) {
+  const value = fmtEur(g.marketValue);
+  return `<div class="tx-day txg-head">
+    <span>${esc(g.label)}</span>
+    <span class="muted">${g.holdings}</span>
+    ${zone(value === null
+             ? `<span class="muted" title="${esc(g.unpriced + g.expired
+                 + ' holding(s) here could not be valued, so this subtotal is withheld rather than partly summed')}">·</span>`
+             : esc(value), '')}
+    ${pnlZone(g.dayChange, g.dayChangePct)}
+    ${pnlZone(g.unrealized, g.unrealizedPct)}
+    <!-- the rows end in a chevron and the band does not, so without this the
+         subtotal hangs a chevron's width to the right of the very figures it
+         totals. Same class, so the reservation cannot drift from the thing it
+         is reserving for; hidden rather than absent so it takes up space, and
+         aria-hidden so a screen reader is not told about a '›' that means
+         nothing here. -->
+    <span class="acc-chev" aria-hidden="true" style="visibility:hidden">›</span>
+  </div>`;
+}
+
+/**
+ * THE ROW. Ticker and exchange on the first line, the company name beneath;
+ * then value over quantity, the day over its percentage, and the unrealised
+ * over its percentage. Both P&L numbers are on the row on purpose · burying
+ * unrealised behind a tap made the day look like the only P&L the position
+ * had, and a position can be up on the year and down on the morning.
+ */
+function holdingRow(h) {
   const isOpen = open === h.symbol;
   const value = fmtEur(h.value);
   const qty = fmtQty(h.qty);
-  const day = fmtSignedEur(h.dayChange), dayPct = fmtPct(h.dayChangePct);
 
-  // The value is the headline and the quantity is its reference figure ·
-  // exactly the bank's "₿0.0142 ≈ €1,204.10" shape, in the same element.
-  const head = `<div class="prod-name">${esc(h.symbol)}${
-      h.name ? ' · ' + esc(h.name) : ''}</div>
-    <div class="prod-val">${value === null ? NA('no live mark for this instrument') : esc(value)}${
-      qty === null ? '' : ` <span class="prod-sub">${esc(qty + unitFor(h.kind))}</span>`}</div>
-    <div class="prod-sub">${subLine(h, day, dayPct)}</div>`;
+  // What the row says when it cannot say a price · in the affordance, beside
+  // the number it is about, rather than in prose under the fold.
+  // A numeric column is too narrow for the words "not available", so an
+  // unvalued row shows a dim '·' up there · which is honest but silent, and
+  // on a phone there is no hover to explain it. The reason therefore goes on
+  // the sub-line, in the affordance, where the other two already are.
+  const note = h.priceSource === 'expired' ? 'expired'
+             : priceStale(h.priceSource) ? 'last known price'
+             : num(h.price) === null ? 'no live price'
+             : null;
+  const sub = [h.exchange, h.name, note].filter(Boolean).map(esc).join(' · ');
 
-  return `<div class="prod expandable${isOpen ? ' open' : ''}" onclick="tileOpen('${esc(h.symbol)}')">
-    <span class="prod-chev">›</span>${head}
-    ${isOpen ? `<div class="prod-x" onclick="event.stopPropagation()">${expansion(h)}</div>` : ''}</div>`;
-}
-
-/** The day move, or the reason there is not one · in the tile's own sub-line.
- *  This is where the page explains itself: in the affordance, at 11px, beside
- *  the number it is about. Not in a block of prose under the fold. */
-function subLine(h, day, dayPct) {
-  if (day !== null) {
-    return `<span class="${signClass(h.dayChange)}">${esc(day)}${
-      dayPct !== null ? ' · ' + esc(dayPct) : ''}</span> today${
-      priceStale(h.priceSource) ? ' · last known price' : ''}`;
-  }
-  if (num(h.price) === null) return 'no live price right now';
-  return `@ ${esc(fmtEur(h.price))}${priceStale(h.priceSource) ? ' · last known price' : ''}`;
+  return `<div class="tx-row" onclick="tileOpen('${esc(h.symbol)}')">
+      <div class="tx-main">
+        <div class="tx-name">${esc(h.symbol)}</div>
+        <div class="tx-sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sub}</div>
+      </div>
+      ${zone(value === null
+               ? `<span class="muted" title="${esc('no live mark for this instrument')}">·</span>`
+               : esc(value),
+             qty === null ? '' : esc(qty + unitFor(h.kind)))}
+      ${pnlZone(h.dayChange, h.dayChangePct)}
+      ${pnlZone(h.unrealized, h.unrealizedPct)}
+      <span class="acc-chev"${isOpen ? ' style="transform:rotate(90deg);color:var(--violet)"' : ''}>›</span>
+    </div>
+    ${isOpen ? `<div class="prod-x" onclick="event.stopPropagation()">${expansion(h)}</div>` : ''}`;
 }
 
 function expansion(h) {
   const k = h.symbol;
-  const unreal = fmtSignedEur(h.unrealized), unrealPct = fmtPct(h.unrealizedPct);
   const cell = (label, html, klass) =>
     `<div class="ph-row"><span>${esc(label)}</span><b class="${klass || ''}">${html}</b></div>`;
   const owned = isNum(num(h.qty)) && num(h.qty) > 0;
+  // A contract controls a hundred shares, so value is not qty * price and a
+  // reader who checks the arithmetic deserves to be told why rather than to
+  // conclude the page is wrong. 1 is the ordinary case and says nothing.
+  const mult = num(h.multiplier);
+
+  // Unrealised and the day are BOTH on the row now, so neither is repeated
+  // here. What is left is the stuff a row has no column for: what it cost,
+  // what it is marked at, and what has already been banked.
+  // THE TWO FIGURES ARE NOT IN THE SAME UNIT, AND THE LABELS NOW SAY SO.
+  //
+  // avgCost is costBasis/qty and costBasis carries the multiplier · it was
+  // accumulated from Broker.consideration, which applied the contract size at
+  // fill time. So for an option this is euros per CONTRACT. h.price is the raw
+  // premium, quoted per SHARE of the underlying. Rendered as two adjacent
+  // unlabelled euro figures they read as a collapse: one contract bought at a
+  // premium of 5.00 with a multiplier of 100 showed "Avg cost €500.00"
+  // directly over "Last €5.00" · a 99% fall on a position that is exactly
+  // flat, contradicting the €0.00 unrealised on the row above it, and the
+  // correct number was the one in the smaller type. The contract-size cell
+  // that explains it sat three rows lower and did not say which figure it
+  // applied to.
+  //
+  // 1 is the ordinary case and gets the ordinary labels: a share's cost and a
+  // share's price ARE in the same unit, and qualifying them would be noise.
+  const perContract = isNum(mult) && mult !== 1;
 
   return `<div class="ph">
-      ${cell('Avg cost', fmtEur(h.avgCost) === null ? NA('no cost basis recorded') : esc(fmtEur(h.avgCost)))}
-      ${cell('Last', fmtEur(h.price) === null ? NA('the feed did not return a mark') : esc(fmtEur(h.price)))}
+      ${cell(perContract ? 'Avg cost / contract' : 'Avg cost',
+        fmtEur(h.avgCost) === null ? NA('no cost basis recorded') : esc(fmtEur(h.avgCost)))}
+      ${cell(perContract ? 'Last · premium per share' : 'Last', fmtEur(h.price) === null
+          ? NA(h.priceSource === 'expired'
+                ? 'this contract has expired · its last premium is not a current price'
+                : 'the feed did not return a mark')
+          : esc(fmtEur(h.price)))}
+      ${perContract ? cell('Contract size', esc(fmtQty(h.multiplier)) + ' × underlying') : ''}
       ${cell('Cost basis', fmtEur(h.costBasis) === null ? NA('not recorded') : esc(fmtEur(h.costBasis)))}
-      ${cell('Total P&L', (unreal === null ? NA('needs a live mark')
-          : esc(unreal) + (unrealPct !== null ? ' · ' + esc(unrealPct) : '')), signClass(h.unrealized))}
       ${cell('Realized', fmtSignedEur(h.realized) === null ? NA('not recorded') : esc(fmtSignedEur(h.realized)),
         signClass(h.realized))}
+      ${h.expiresOn ? cell('Expires', esc(h.expiresOn)) : ''}
+      ${cell('Day measured over', h.dayBasis === '24h' ? 'the last 24 hours' : 'the prior session')}
     </div>
     ${slider(k, 10, 250, 5, 50)}
     <div class="prod-btns">
@@ -451,21 +633,44 @@ function drawWatchlist() {
       <div class="prod-grid">${offer.map(i => `<div class="prod">
         <div class="prod-name">${esc(i.symbol)}${i.name ? ' · ' + esc(i.name) : ''}</div>
         <div class="prod-val">${markUnavailable(i.price) ? NA('no live mark right now') : esc(fmtEur(i.price))}</div>
-        <div class="prod-sub">${esc(i.exchange || i.kind || '')}</div>
+        <!-- the shelf offers these for purchase, so the same rule applies:
+             a stale mark beside a buy button is the one place a customer acts
+             on the number rather than merely reads it -->
+        <div class="prod-sub">${[i.exchange || i.kind || '',
+            priceStale(i.priceSource) ? 'last known price' : ''].filter(Boolean).map(esc).join(' · ')}</div>
         <div class="prod-btns"><button class="mini" onclick="watchAdd('${esc(i.symbol)}')">＋ follow</button></div>
       </div>`).join('')}</div>`;
     return;
   }
 
+  // WATCHABLE AND TRADABLE ARE DIFFERENT PREDICATES, and the row says which
+  // one it is. The broker answers `tradable` per symbol from the catalog, so
+  // a followed index shows the chip instead of a buy button that would come
+  // straight back as "not a listed instrument". Offering the button and
+  // explaining the failure afterwards is the same discipline problem as
+  // pricing something at zero: the screen knew, and said it too late.
   el.innerHTML = `<div class="prod-grid">${items.map(w => `<div class="prod">
-      <div class="prod-name">${esc(w.symbol)}</div>
+      <div class="prod-name">${esc(w.symbol)}${w.name ? ' · ' + esc(w.name) : ''}</div>
       <div class="prod-val">${markUnavailable(w.price)
         ? NA('no live mark right now · this is not a price of zero')
         : esc(fmtEur(w.price))}</div>
+      <!-- THE SAME DISCLOSURE THE HOLDINGS ROWS MAKE, on the same screen,
+           about the same feed. A 'cached' mark is the last price actually
+           observed, served because the upstream is unreachable, and PriceFeed
+           puts NO age bound on it · if Yahoo stays down for days the same
+           figure keeps coming back. holdingRow badges that '· last known
+           price' and the 46px total is qualified too; these tiles printed a
+           plain €199.90 and looked live, because the endpoint discarded the
+           source before the page could see it. It ships priceSource now. -->
+      ${priceStale(w.priceSource)
+        ? `<div class="prod-sub" title="${esc('the upstream feed is unreachable · this is the last price actually observed, and it has no age bound')}">last known price</div>`
+        : ''}
       <div class="prod-sub" id="msg-${cssKey(w.symbol)}">${
         lastMsg && lastMsg.symbol === w.symbol ? lastMsg.html : ''}</div>
       <div class="prod-btns">
-        <button class="mini" onclick="placeOrder('${esc(w.symbol)}','buy',true)">buy €50</button>
+        ${w.tradable === false
+          ? `<span class="chip" title="followed here · not listed for trading">watch only</span>`
+          : `<button class="mini" onclick="placeOrder('${esc(w.symbol)}','buy',true)">buy €50</button>`}
         <button class="mini" onclick="watchRemove('${esc(w.symbol)}')">unfollow</button>
       </div>
     </div>`).join('')}</div>`;
@@ -568,11 +773,14 @@ async function load() {
   }
   redraw();
 
-  // THE ONE FOOTNOTE, and it is one line. Everything else the old page put
-  // down here (unpriced counts, prior-close counts, the day window, the
-  // pricing timestamp) now lives beside the figure it qualifies · in the
-  // header's sub-line or in a tile's, where it is read.
-  $('guide-hint').textContent = 'Cash sits in your bank account · this page values securities only.';
+  // NO FOOTNOTE. The last line of prose that lived here said cash is in the
+  // bank account and this page values securities only · which is what the
+  // header label already says, in two words, at the top, where the number it
+  // qualifies actually is. A sentence under the fold restating a label above
+  // it is read by nobody and is the first thing to go stale. #guide-hint
+  // stays in the markup because load() writes errors into it, and an error
+  // is the one thing down here worth a sentence.
+  $('guide-hint').textContent = '';
 }
 
 $('bank-link').href = bankHref();

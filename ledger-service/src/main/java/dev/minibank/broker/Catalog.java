@@ -23,8 +23,26 @@ import java.util.Map;
  */
 public final class Catalog {
 
+    /**
+     * multiplier is how many units of the underlying ONE unit of this
+     * instrument controls · 1 for a share or a coin, 100 for an option
+     * contract. Every money number a screen shows is qty * price * multiplier,
+     * so a stock is not a special case: it is the ordinary case with the
+     * ordinary multiplier of one, and no valuation anywhere asks "is this an
+     * option?" before deciding how to multiply.
+     *
+     * expiresOn is null for anything that does not expire.
+     */
     public record Instrument(String symbol, String kind, String assetCode, String settleCcy,
-                            String displayName, String exchange) {}
+                            String displayName, String exchange,
+                            java.math.BigDecimal multiplier, java.time.LocalDate expiresOn) {
+
+        /** Inclusive of the expiry date itself · a contract trades ON its
+         *  expiry day and stops afterwards. */
+        public boolean expiredAsOf(java.time.LocalDate asOf) {
+            return expiresOn != null && asOf.isAfter(expiresOn);
+        }
+    }
 
     private Catalog() {}
 
@@ -55,8 +73,12 @@ public final class Catalog {
         try (Connection c = BrokerDb.open()) {
             // no venue: bitcoin has no exchange, and naming one we do not use
             // would be a lie told in a column heading
-            put(c, "BTC", "crypto", "BTC", "Bitcoin", "CRYPTO");
-            put(c, "AAPL", "equity", "AAPL", "Apple Inc.", "NASDAQ.NMS");
+            //
+            // Both carry multiplier 1 and no expiry: one share is one share,
+            // one bitcoin is one bitcoin, and neither of them ever stops
+            // existing. No option is seeded here · see the class comment.
+            put(c, "BTC", "crypto", "BTC", "Bitcoin", "CRYPTO", java.math.BigDecimal.ONE, null);
+            put(c, "AAPL", "equity", "AAPL", "Apple Inc.", "NASDAQ.NMS", java.math.BigDecimal.ONE, null);
         }
     }
 
@@ -77,9 +99,35 @@ public final class Catalog {
      */
     public static void list(String symbol, String kind, String assetCode,
                             String displayName, String exchange) throws SQLException {
-        dev.minibank.ledger.AssetRegistry.register(symbol, assetCode, displayName.toLowerCase());
+        list(symbol, kind, assetCode, displayName, exchange, java.math.BigDecimal.ONE, null);
+    }
+
+    /**
+     * LIST a contract · the full form, with the contract size and the expiry.
+     *
+     * THE MULTIPLIER IS WRITTEN IN BOTH PLACES, BY THIS METHOD, DELIBERATELY.
+     *
+     * It has to be in the ledger's registry because HttpApi values a
+     * customer's holdings on a shard connection and cannot read this database.
+     * It has to be here because the broker is what computes the consideration
+     * of a fill. That is a duplicated fact across a service boundary, and the
+     * only thing keeping the two halves in step is that this method writes
+     * both of them in one call · exactly the argument the currency half of
+     * this method has always made. An instrument whose multiplier is 100 in
+     * one database and 1 in the other misvalues by a hundred on whichever side
+     * reads the stale copy, and the books still sum to zero either way.
+     *
+     * The ledger half goes FIRST, for the reason it always has: if the
+     * registry refuses the listing, nothing becomes tradable.
+     */
+    public static void list(String symbol, String kind, String assetCode,
+                            String displayName, String exchange,
+                            java.math.BigDecimal multiplier,
+                            java.time.LocalDate expiresOn) throws SQLException {
+        dev.minibank.ledger.AssetRegistry.register(
+                symbol, assetCode, displayName.toLowerCase(), multiplier, kind, expiresOn);
         try (Connection c = BrokerDb.open()) {
-            put(c, symbol, kind, assetCode, displayName, exchange);
+            put(c, symbol, kind, assetCode, displayName, exchange, multiplier, expiresOn);
         }
     }
 
@@ -91,24 +139,37 @@ public final class Catalog {
      * service has ever run against.
      */
     private static void put(Connection c, String symbol, String kind, String assetCode,
-                            String displayName, String exchange) throws SQLException {
+                            String displayName, String exchange,
+                            java.math.BigDecimal multiplier,
+                            java.time.LocalDate expiresOn) throws SQLException {
+        // multiplier and expires_on are upserted alongside the display fields
+        // and not left to DO NOTHING, for the same reason the display fields
+        // were: DO NOTHING would leave the contract size at its V1 default of
+        // 1 forever on every database that already has these rows, which is
+        // every database this service has ever run against.
         try (PreparedStatement ps = c.prepareStatement("""
-                INSERT INTO instruments(symbol, kind, asset_code, settle_ccy, display_name, exchange)
-                VALUES (?,?,?, 'EUR', ?,?)
+                INSERT INTO instruments(symbol, kind, asset_code, settle_ccy, display_name, exchange,
+                                        multiplier, expires_on)
+                VALUES (?,?,?, 'EUR', ?,?,?,?)
                 ON CONFLICT (symbol) DO UPDATE
                    SET display_name = EXCLUDED.display_name,
-                       exchange     = EXCLUDED.exchange""")) {
+                       exchange     = EXCLUDED.exchange,
+                       multiplier   = EXCLUDED.multiplier,
+                       expires_on   = EXCLUDED.expires_on""")) {
             ps.setString(1, symbol);
             ps.setString(2, kind);
             ps.setString(3, assetCode);
             ps.setString(4, displayName);
             ps.setString(5, exchange);
+            ps.setBigDecimal(6, multiplier);
+            ps.setDate(7, expiresOn == null ? null : java.sql.Date.valueOf(expiresOn));
             ps.executeUpdate();
         }
     }
 
     private static final String COLUMNS =
-            "SELECT symbol, kind, asset_code, settle_ccy, display_name, exchange FROM instruments";
+            "SELECT symbol, kind, asset_code, settle_ccy, display_name, exchange,"
+                    + " multiplier, expires_on FROM instruments";
 
     public static List<Instrument> all() throws SQLException {
         List<Instrument> out = new ArrayList<>();
@@ -128,8 +189,36 @@ public final class Catalog {
     }
 
     private static Instrument read(ResultSet rs) throws SQLException {
-        return new Instrument(rs.getString(1), rs.getString(2), rs.getString(3),
-                rs.getString(4), rs.getString(5), rs.getString(6));
+        String symbol = rs.getString(1);
+        // NOT NULL DEFAULT 1 in the schema, so this cannot be null · but a
+        // null contract size means "unknown", and valuing on an unknown
+        // contract size is the 100x error this column exists to prevent
+        java.math.BigDecimal multiplier = rs.getBigDecimal(7);
+        if (multiplier == null || multiplier.signum() <= 0)
+            throw new IllegalStateException("'" + symbol + "' has multiplier " + multiplier
+                    + " · a position cannot be valued without a positive contract size");
+        java.sql.Date exp = rs.getDate(8);
+        return new Instrument(symbol, rs.getString(2), rs.getString(3),
+                rs.getString(4), rs.getString(5), rs.getString(6),
+                multiplier, exp == null ? null : exp.toLocalDate());
+    }
+
+    /**
+     * ONE instrument, or null · a single-row lookup rather than bySymbol()'s
+     * whole-table scan.
+     *
+     * It exists because the settlement path asks for the contract size on
+     * every fill, and building a map of the entire catalog to read one number
+     * out of it is a table scan and a fresh connection per fill.
+     */
+    public static Instrument find(String symbol) throws SQLException {
+        try (Connection c = BrokerDb.open();
+             PreparedStatement ps = c.prepareStatement(COLUMNS + " WHERE symbol = ?")) {
+            ps.setString(1, symbol);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? read(rs) : null;
+            }
+        }
     }
 
     public static boolean exists(String symbol) throws SQLException {

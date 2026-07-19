@@ -39,6 +39,11 @@ class PortfolioDayHonestyLessonTest {
 
     private static final long IGOR = 10;
 
+    /** Portfolio.build takes the valuation date rather than reading a clock,
+     *  so that expiry is decided by an argument and not by the day the suite
+     *  happens to run. Nothing here expires. */
+    private static final java.time.LocalDate TODAY = java.time.LocalDate.of(2026, 7, 19);
+
     // ------------------------------------------------------------------
     /**
      * A customer sells out of a position today at a gain; the feed then goes
@@ -65,7 +70,7 @@ class PortfolioDayHonestyLessonTest {
                 new Broker.DayFlow(new BigDecimal("-5"), new BigDecimal("-1000.00")));
 
         Portfolio.Snapshot s = Portfolio.build(List.of(closed), Map.of(),
-                Map.of("AAPL", Portfolio.Quote.none()), flows);
+                Map.of("AAPL", Portfolio.Quote.none()), flows, TODAY);
 
         assertEquals(0, s.holdings().size(), "nothing is held, so nothing is drawn");
         assertEquals(1, s.aggregate().closedPositions(), "but the row is counted");
@@ -93,7 +98,7 @@ class PortfolioDayHonestyLessonTest {
                 BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("100.00"));
 
         Portfolio.Snapshot s = Portfolio.build(List.of(closedLongAgo), Map.of(),
-                Map.of("AAPL", Portfolio.Quote.none()), Map.of());   // nothing traded today
+                Map.of("AAPL", Portfolio.Quote.none()), Map.of(), TODAY);   // nothing traded today
 
         assertNotNull(s.aggregate().dayChange(),
                 "it did not trade today, so it owes today nothing and withholds nothing");
