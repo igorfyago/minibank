@@ -166,10 +166,12 @@ class BrokerLessonTest {
         VENUE.fillAt("50000.00");
         buy("o1", "BTC", "1000.00");
 
-        List<BrokerDb.Event> events;
-        try (Connection c = BrokerDb.open()) {
-            events = BrokerDb.pollUnpublished(c, 10);
-        }
+        // Read the row whatever its published_at. pollUnpublished is the
+        // RELAY's read and is right for the relay; for a test it asserts "no
+        // relay has shipped this yet", which is a race, not a property. The
+        // claim here is that the event was written inside the fill's own
+        // commit · not that nobody has forwarded it since.
+        List<BrokerDb.Event> events = allBrokerOutbox();
         assertEquals(1, events.size(), "one fill, one event");
         BrokerDb.Event e = events.get(0);
         assertEquals(Broker.TOPIC_ORDERS, e.topic());
@@ -243,6 +245,18 @@ class BrokerLessonTest {
     }
 
     // ------------------------------------------------------------------
+    /** every broker outbox row, published or not · see lesson 7 */
+    static List<BrokerDb.Event> allBrokerOutbox() throws Exception {
+        List<BrokerDb.Event> out = new java.util.ArrayList<>();
+        try (Connection c = BrokerDb.open();
+             var ps = c.prepareStatement("SELECT id, topic, key, payload FROM outbox ORDER BY id");
+             var rs = ps.executeQuery()) {
+            while (rs.next())
+                out.add(new BrokerDb.Event(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4)));
+        }
+        return out;
+    }
+
     private static BigDecimal dec(String v) { return new BigDecimal(v); }
 
     private Broker.Order buy(String clientId, String symbol, String notional) throws Exception {

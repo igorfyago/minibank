@@ -63,23 +63,69 @@ public final class Settlement {
             p.put("bootstrap.servers", bootstrapServers);
             p.put("group.id", GROUP);                 // stable: offsets survive restarts
             p.put("auto.offset.reset", "earliest");
+            // See SettlementConsumer: auto-commit defaulted to true, so a
+            // settlement that threw was dropped with its offset already past
+            // it. The order then sits at 'filled' forever, counting as
+            // in-flight, and nothing re-attempts the money.
+            p.put("enable.auto.commit", "false");
             p.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
             p.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
             try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(p)) {
                 consumer.subscribe(List.of(TOPIC_ORDERS));
                 while (!Thread.currentThread().isInterrupted()) {
                     ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
-                    for (ConsumerRecord<String, String> r : records) {
-                        try {
-                            handle(r.value());
-                        } catch (Exception e) {
-                            System.err.println("settlement: " + e.getMessage());
-                        }
-                    }
+                    for (ConsumerRecord<String, String> r : records) deliver(r.value());
+                    if (!records.isEmpty()) consumer.commitSync();
                 }
             } catch (org.apache.kafka.common.errors.InterruptException ignored) {
             }
         });
+    }
+
+    /** How many times a settlement is re-attempted before it is recorded as stuck. */
+    static final int ATTEMPTS = 3;
+
+    /**
+     * Settle one record, retrying, and record it as stuck if it will not go.
+     *
+     * settleFill is gated on the fill id, so a re-attempt after a partial
+     * failure either finds the claim taken (AlreadyProcessed, nothing moves)
+     * or starts clean · which is what makes retrying safe here rather than a
+     * second way to double-charge someone.
+     */
+    static void deliver(String payload) {
+        Exception last = null;
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            try {
+                handle(payload);
+                return;
+            } catch (Exception e) {
+                last = e;
+                if (attempt < ATTEMPTS) {
+                    try {
+                        Thread.sleep(200L * attempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+        park(payload, last);
+    }
+
+    static void park(String payload, Exception cause) {
+        String key = Json.str(payload, "type") + ":" + Json.str(payload, "fillId");
+        try {
+            long customerId = Long.parseLong(Json.num(payload, "customer"));
+            try (Connection c = Shards.forCustomer(customerId).open()) {
+                DeadLetter.record(c, GROUP, key, TOPIC_ORDERS, payload,
+                        cause == null ? "unknown" : cause.toString(), ATTEMPTS);
+            }
+        } catch (Exception e) {
+            System.err.println("settlement: could not record dead letter for " + key + ": " + e);
+        }
+        System.err.println("settlement STUCK · " + key + " · " + cause);
     }
 
     /**

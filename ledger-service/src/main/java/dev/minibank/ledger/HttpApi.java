@@ -11,6 +11,8 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 
@@ -210,7 +212,8 @@ public final class HttpApi {
      *  never grow a WindowAgg over the account's whole history again. */
     static final String STATEMENT_SQL = """
             SELECT e.tx_id, e.amount, e.created_at, t.kind,
-                   o.owner AS other_owner, o.kind AS other_kind
+                   o.owner AS other_owner, o.kind AS other_kind,
+                   ass.amount AS asset_units, ass.currency AS asset_ccy
             FROM entries e
             JOIN transactions t ON t.id = e.tx_id
             LEFT JOIN LATERAL (
@@ -218,6 +221,19 @@ public final class HttpApi {
                 JOIN accounts oa ON oa.id = o2.account_id
                 WHERE o2.tx_id = e.tx_id AND o2.id <> e.id
                 ORDER BY o2.id LIMIT 1) o ON true
+            LEFT JOIN LATERAL (
+                -- THE CUSTOMER'S OWN ASSET LEG of this transaction, so the
+                -- statement can say how much was bought and at what price
+                -- instead of only how much money moved. Picked by SIGN rather
+                -- than by account id: an asset trade has two non-EUR legs, the
+                -- customer's and the broker's, and they are exact opposites.
+                -- The customer's asset leg always moves the opposite way to
+                -- their cash leg · euros out, units in.
+                SELECT a2.amount, ac.currency FROM entries a2
+                JOIN accounts ac ON ac.id = a2.account_id
+                WHERE a2.tx_id = e.tx_id AND ac.currency <> 'EUR'
+                  AND sign(a2.amount) = -sign(e.amount)
+                ORDER BY a2.id LIMIT 1) ass ON true
             WHERE e.account_id = ?
             ORDER BY e.id DESC
             LIMIT 40""";
@@ -258,12 +274,13 @@ public final class HttpApi {
                     String kind = rs.getString(4);
                     String otherOwner = rs.getString(5);
                     String otherKind = rs.getString(6);
+                    BigDecimal assetUnits = rs.getBigDecimal(7);
                     // newest row first: its "after" IS the current balance
                     var after = running;
                     running = running.subtract(amount);
                     boolean in = amount.signum() > 0;
 
-                    String label, tag;
+                    String label, tag, detail = null;
                     boolean cross = false, pending = false;
                     switch (kind) {
                         case "depart" -> {
@@ -284,16 +301,48 @@ public final class HttpApi {
                         case "refund" -> { cross = true; label = "Refund"; tag = "refund"; }
                         case "mortgage" -> { label = "Loan"; tag = "loan"; }
                         default -> {
-                            if (kind.startsWith("trade:")) {
+                            // ASSET MOVEMENTS NAME THE EVENT.
+                            //
+                            // There are two kinds that mean "an asset moved":
+                            // 'settle:SYM:side', written when a broker fill
+                            // settles, and 'trade:SYM:side', written by the
+                            // retired direct path and still present in history.
+                            // Only the first one is produced by new activity,
+                            // but a statement has to render both, because the
+                            // old rows are still on the books.
+                            //
+                            // 'settle:' used to match nothing here and fell all
+                            // the way to the bottom branch, where the label is
+                            // guessed from whichever counterparty leg the
+                            // LATERAL happened to pick · which for a trade is a
+                            // broker account owned by the literal string
+                            // "broker". So a customer who sold Apple stock read
+                            // "Money added", and one who bought it read
+                            // "broker · sent". The transaction knew exactly what
+                            // it was the whole time; nobody asked it.
+                            //
+                            // The symbol comes from the recorded kind and the
+                            // name from the asset registry · never from a
+                            // hardcoded list, which is the same mistake one
+                            // layer up from the ternary this bank already
+                            // deleted twice.
+                            String assetKind = kind.startsWith("settle:") ? "settle"
+                                    : kind.startsWith("trade:") ? "trade" : null;
+                            if (assetKind != null) {
                                 String[] parts = kind.split(":");
-                                // The display twin of the ternary the registry
-                                // replaced in settlement · left behind, it told
-                                // a customer who bought MSFT that they had
-                                // bought Apple stock. The ledger stopped
-                                // guessing which asset this was; so does the
-                                // statement.
-                                label = AssetRegistry.labelOrSymbol(c, parts[1]);
+                                // the registry stores labels lowercase
+                                // ('bitcoin', 'apple stock') because they are
+                                // data, not headings · the capital belongs to
+                                // the sentence this builds, not to the row in
+                                // the table
+                                String name = capitalize(AssetRegistry.labelOrSymbol(c, parts[1]));
+                                boolean bought = "buy".equals(parts[2]);
+                                label = (bought ? "Bought " : "Sold ") + name;
                                 tag = parts[2];   // buy | sell
+                                // how much, and at what price · both are facts
+                                // already in this transaction, so neither is a
+                                // lookup and neither can go stale
+                                detail = assetDetail(assetUnits, amount);
                             } else if ("external".equals(otherKind)) {
                                 label = in ? "Money added" : (otherOwner == null ? "Payment" : otherOwner);
                                 tag = in ? "added" : "sent";
@@ -311,7 +360,8 @@ public final class HttpApi {
                      .append("\",\"after\":\"").append(plain(after))
                      .append("\",\"label\":\"").append(Json.esc(label))
                      .append("\",\"tag\":\"").append(tag)
-                     .append("\",\"in\":").append(in)
+                     .append("\",\"detail\":").append(detail == null ? "null" : "\"" + Json.esc(detail) + "\"")
+                     .append(",\"in\":").append(in)
                      .append(",\"cross\":").append(cross)
                      .append(",\"pending\":").append(pending).append('}');
                 }
@@ -387,6 +437,34 @@ public final class HttpApi {
         if (offset == Products.LOAN) return "loan";
         if (offset == Products.HOLDS) return "card hold";
         return null;
+    }
+
+    /**
+     * "0.01 @ €50,000.00" · the size and the price of an asset movement.
+     *
+     * Both numbers are recovered from the transaction's own legs rather than
+     * from a price feed: units is the customer's asset leg, cash is their EUR
+     * leg, and the price is the ratio. That means the statement shows the
+     * price the customer ACTUALLY got, spread and all, forever · a feed
+     * lookup would show today's price beside a two-year-old purchase.
+     *
+     * Returns null rather than a zero when there is no asset leg to divide by.
+     * A statement row with no detail renders without one; a row claiming a
+     * price of 0.00 would be read as a fact.
+     */
+    /** First letter up, the rest exactly as the registry has it · 'apple
+     *  stock' becomes 'Apple stock', not 'Apple Stock'. Title case would be
+     *  inventing a name; this is only starting a sentence. */
+    static String capitalize(String s) {
+        if (s == null || s.isEmpty()) return s;
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+
+    static String assetDetail(java.math.BigDecimal units, java.math.BigDecimal cash) {
+        if (units == null || units.signum() == 0 || cash == null) return null;
+        java.math.BigDecimal u = units.abs(), c = cash.abs();
+        java.math.BigDecimal price = c.divide(u, 2, java.math.RoundingMode.HALF_UP);
+        return plain(u) + " @ €" + price.toPlainString();
     }
 
     /**
@@ -1027,6 +1105,18 @@ public final class HttpApi {
     }
 
     /** The customer's product shelf, valued at live prices. */
+    /** One asset holding's balance, or null when the account does not exist ·
+     *  and the two are different answers. An absent account is not a zero
+     *  balance, which is the stance Ledger.balance() already takes. */
+    private static BigDecimal assetBalance(Connection c, long accountId) throws Exception {
+        try (var ps = c.prepareStatement("SELECT balance FROM accounts WHERE id = ?")) {
+            ps.setLong(1, accountId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getBigDecimal(1) : null;
+            }
+        }
+    }
+
     private static Response portfolio(HttpExchange ex) throws Exception {
         String q = ex.getRequestURI().getQuery();
         String cust = null;
@@ -1045,66 +1135,182 @@ public final class HttpApi {
                 while (rs.next()) bal.put(rs.getLong(1), rs.getBigDecimal(2));
             }
         }
-        PriceFeed.Px btc = PriceFeed.get("btc"), aapl = PriceFeed.get("aapl");
         FxClient.Rate fx = FxClient.usdToEur();
-        BigDecimal btcU = bal.getOrDefault(id + Products.BTC, BigDecimal.ZERO);
-        BigDecimal aaplU = bal.getOrDefault(id + Products.AAPL, BigDecimal.ZERO);
+
+        // EVERY LISTED INSTRUMENT THE CUSTOMER ACTUALLY HOLDS, from the
+        // registry · not from a two-symbol literal.
+        //
+        // This endpoint used to name btc and aapl in its own source, which is
+        // the same hardcoded pair the settlement path and the statement label
+        // both had to have surgically removed. The shelf above it drew one
+        // tile per name, so listing a third instrument gave the customer a
+        // holding they had no way to see. Reading the registry means the
+        // Investments card counts whatever is listed, including instruments
+        // registered after this code was written.
+        List<Object[]> held = new ArrayList<>();   // [symbol, label, units, Px]
+        BigDecimal invested = BigDecimal.ZERO, prevValue = BigDecimal.ZERO;
+        int unpriced = 0, withoutPrevClose = 0;
+        try (Connection c = home.open()) {
+            for (AssetRegistry.Asset a : AssetRegistry.all(c)) {
+                // ASKED BY ACCOUNT ID, one asset at a time, rather than looked
+                // up in the product-shelf map above. That map is filled by a
+                // range scan over id..id+600, which is where the LEGACY
+                // instruments live (btc at +200, aapl at +300) and is nowhere
+                // near where a registered one does: a derived holding sits at
+                // ASSET_BASE + slot*SLOT_STRIDE + customer, a billion away. So
+                // the range scan found exactly the two hardcoded instruments
+                // and silently reported every registered one as not held ·
+                // the same two-symbol blind spot this block exists to end,
+                // reintroduced by the shape of a query.
+                BigDecimal units = assetBalance(c, a.holdingFor(id));
+                if (units == null || units.signum() == 0) continue;
+                // LOWERCASE, and it is not cosmetic. The registry stores
+                // symbols uppercase; PriceFeed keys them lowercase and routes
+                // "btc" to CoinGecko and everything else to Yahoo. Asking it
+                // for "BTC" misses the crypto branch and fetches a Yahoo
+                // equity that happens to share the ticker · which priced
+                // bitcoin at €24.82 here before this line said toLowerCase.
+                // BrokerApi.quote() has done it this way all along.
+                PriceFeed.Px px = PriceFeed.get(a.symbol().toLowerCase(java.util.Locale.ROOT));
+                held.add(new Object[]{a.symbol(), a.label() == null ? a.symbol() : a.label(), units, px});
+                if (px == null || !px.priced()) { unpriced++; continue; }
+                invested = invested.add(units.multiply(px.price()));
+                // The day move needs BOTH ends. A holding with a mark but no
+                // prior close contributes to the value and to NEITHER end of
+                // the change · counting its current value against a missing
+                // opening one would report the whole position as today's gain.
+                if (px.prevClose() == null) { withoutPrevClose++; continue; }
+                prevValue = prevValue.add(units.multiply(px.prevClose()));
+            }
+        }
+        // A total is withheld outright when any leg of it is unknown, rather
+        // than summed over the legs that happen to have a price. A partial sum
+        // renders identically to a complete one and there is no way for the
+        // reader to tell which they are looking at.
+        boolean valueKnown = unpriced == 0;
+        boolean dayKnown = valueKnown && withoutPrevClose == 0 && !held.isEmpty();
+        BigDecimal dayChange = dayKnown ? invested.subtract(prevValue) : null;
+        BigDecimal dayPct = dayKnown && prevValue.signum() > 0
+                ? dayChange.multiply(new BigDecimal("100")).divide(prevValue, 2, java.math.RoundingMode.HALF_UP)
+                : null;
+
+        StringBuilder inv = new StringBuilder("{\"value\":")
+                .append(valueKnown ? "\"" + invested.setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() + "\"" : "null")
+                .append(",\"dayChange\":").append(dayChange == null ? "null"
+                        : "\"" + dayChange.setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() + "\"")
+                .append(",\"dayChangePct\":").append(dayPct == null ? "null" : "\"" + dayPct.toPlainString() + "\"")
+                .append(",\"holdings\":").append(held.size())
+                .append(",\"unpriced\":").append(unpriced)
+                .append(",\"withoutPrevClose\":").append(withoutPrevClose)
+                .append(",\"rows\":[");
+        for (int i = 0; i < held.size(); i++) {
+            Object[] h = held.get(i);
+            PriceFeed.Px px = (PriceFeed.Px) h[3];
+            boolean priced = px != null && px.priced();
+            BigDecimal units = (BigDecimal) h[2];
+            if (i > 0) inv.append(',');
+            inv.append("{\"asset\":\"").append(Json.esc((String) h[0]))
+               .append("\",\"label\":\"").append(Json.esc((String) h[1]))
+               .append("\",\"units\":\"").append(plain(units))
+               .append("\",\"eur\":").append(priced
+                       ? "\"" + units.multiply(px.price()).setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() + "\""
+                       : "null")
+               .append(",\"price\":").append(priced ? "\"" + plain(px.price()) + "\"" : "null")
+               .append(",\"priceSource\":\"").append(Json.esc(px == null ? "unavailable" : px.source()))
+               .append("\"}");
+        }
+        inv.append("]}");
+
         return Response.json(200,
                 "{\"main\":\"" + plain(bal.getOrDefault(id, BigDecimal.ZERO)) +
                 "\",\"savings\":\"" + plain(bal.getOrDefault(id + Products.SAVINGS, BigDecimal.ZERO)) +
                 "\",\"card\":\"" + plain(bal.getOrDefault(id + Products.CARD, BigDecimal.ZERO)) +
                 "\",\"held\":\"" + plain(bal.getOrDefault(id + Products.HOLDS, BigDecimal.ZERO)) +
                 "\",\"cardLimit\":\"1000\"" +
-                ",\"btc\":\"" + plain(btcU) +
-                "\",\"btcEur\":\"" + btcU.multiply(btc.price()).setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() +
-                "\",\"aapl\":\"" + plain(aaplU) +
-                "\",\"aaplEur\":\"" + aaplU.multiply(aapl.price()).setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() +
-                "\",\"loan\":\"" + plain(bal.getOrDefault(id + Products.LOAN, BigDecimal.ZERO)) +
-                "\",\"btcPrice\":\"" + plain(btc.price()) +
-                "\",\"aaplPrice\":\"" + plain(aapl.price()) +
-                "\",\"btcUsd\":\"" + plain(btc.usd()) +
-                "\",\"aaplUsd\":\"" + plain(aapl.usd()) +
-                "\",\"fxRate\":\"" + fx.rate().toPlainString() +
-                "\",\"fxSource\":\"" + Json.esc(fx.source()) +
-                "\",\"priceSource\":\"" + btc.source() + "\"}");
+                ",\"loan\":\"" + plain(bal.getOrDefault(id + Products.LOAN, BigDecimal.ZERO)) +
+                "\",\"investments\":" + inv +
+                ",\"fxRate\":\"" + fx.rate().toPlainString() +
+                "\",\"fxSource\":\"" + Json.esc(fx.source()) + "\"}");
     }
 
-    /** buy or sell an asset at the live price · one 4-entry, 2-currency tx */
+    /**
+     * BUY OR SELL AN ASSET · by placing a BROKER ORDER.
+     *
+     * This endpoint used to write the trade into the ledger itself, in one
+     * four-entry two-currency transaction, and answer "ok" by the time the
+     * customer's finger left the button. It no longer does, and the reason is
+     * the whole point of this change: an asset position was being born in two
+     * different places, the broker only knew about one of them, and the two
+     * books drifted apart by exactly the trades this endpoint wrote.
+     *
+     * So the bank's tile and the portfolio screen are now the SAME SERVICE in
+     * the only sense that matters · they both place an order, the order fills,
+     * the fill settles into the ledger over Kafka. One economic event, one
+     * path, one vocabulary.
+     *
+     * WHAT THE CUSTOMER GETS BACK IS THEREFORE WEAKER, AND HAS TO BE. The
+     * order is placed and (with the simulated venue) filled, but the money has
+     * not moved yet: settlement is a Kafka round trip away. Answering "bought"
+     * here would be the same lie the portfolio screen already refuses to tell.
+     * The response says the order was placed and that settlement follows.
+     */
     private static Response trade(HttpExchange ex) throws Exception {
         if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
         String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         String txId = Json.str(body, "txId"), customer = caller(Json.num(body, "customer"));
         String asset = Json.str(body, "asset"), side = Json.str(body, "side"), eur = Json.str(body, "eur");
-        if (txId == null || customer == null || asset == null || side == null || eur == null)
-            return Response.json(400, "{\"error\":\"need txId, customer, asset, side, eur\"}");
-        // the same fact the settlement path enforces, asked the same way ·
-        // the two used to disagree, and the disagreement was the bug
-        // asked of the shard that will SETTLE it, not of shard 0 · a symbol
-        // listed on one shard and not the other used to pass here and fail
-        // after the venue had already filled
+        // EITHER a euro amount OR an exact number of units, never both. The
+        // second one exists so "sell all" can name the position instead of
+        // describing it: a euro figure has to be divided by a price that has
+        // moved since the screen read it, which overshoots the holding by a
+        // few satoshi and gets the whole order refused. See BrokerClient.
+        String units = Json.str(body, "units");
+        if (txId == null || customer == null || asset == null || side == null || (eur == null && units == null))
+            return Response.json(400, "{\"error\":\"need txId, customer, asset, side, and eur or units\"}");
+        if (eur != null && units != null)
+            return Response.json(400, "{\"error\":\"send eur or units, not both\"}");
+        if (!"buy".equals(side) && !"sell".equals(side))
+            return Response.json(400, "{\"error\":\"side must be buy or sell\"}");
+        // A PRE-FLIGHT, not the authority. The broker's catalog decides what
+        // is ROUTABLE and it checks that itself; the ledger's registry decides
+        // what is SETTLEABLE, and asking it here saves the customer a fill
+        // that would only be refused and compensated a moment later. Asked of
+        // the shard that will actually settle it · a symbol listed on one
+        // shard and not the other used to pass a shard-0 check and then fail
+        // after the venue had already filled.
         if (!AssetRegistry.isRegistered(asset, Long.parseLong(customer)))
             return Response.json(400, "{\"error\":\"" + Json.esc(asset) + " is not a listed instrument\"}");
+        BigDecimal amount;
         try {
-            PriceFeed.Px px = PriceFeed.get(asset);
-            // Widening this endpoint from a btc/aapl whitelist to "anything
-            // registered" let through symbols the price feed has no mark for:
-            // PriceFeed answers with an unpriced Px rather than a fabricated
-            // one, and px.price() is then null. Trading at a null price is a
-            // NullPointerException at best and a zero-priced trade at worst.
-            if (px == null || px.price() == null || px.price().signum() <= 0)
-                return Response.json(503, "{\"error\":\"no price for " + Json.esc(asset)
-                        + " right now · the trade was not placed\"}");
-            var result = Products.trade(UUID.fromString(txId), Long.parseLong(customer),
-                    asset, "buy".equals(side), new BigDecimal(eur), px.price());
+            amount = new BigDecimal(eur != null ? eur : units);
+        } catch (NumberFormatException e) {
+            return Response.json(400, "{\"error\":\"" + (eur != null ? "eur" : "units") + " must be a number\"}");
+        }
+        if (amount.signum() <= 0) return Response.json(400, "{\"error\":\"amount must be positive\"}");
+
+        // NOTE WHAT IS NOT HERE ANY MORE: a PriceFeed lookup. The venue prices
+        // the order, because the venue is what fills it. The bank used to
+        // price the same trade at mid while the venue crossed a spread, so the
+        // two services could disagree about what a trade cost while both being
+        // convinced they were right.
+        try {
+            BrokerClient.Placed placed = eur != null
+                    ? BrokerClient.placeNotional(txId, Long.parseLong(customer), asset, side, amount)
+                    : BrokerClient.placeQty(txId, Long.parseLong(customer), asset, side, amount);
             Metrics.inc("minibank_ledger_events_total", "kind=\"trade\"");
-            String kind = switch (result) {
-                case Ledger.Ok ok -> "ok";
-                case Ledger.AlreadyProcessed a -> "already_processed";
-                case Ledger.InsufficientFunds i -> "insufficient_funds";
-                case Ledger.NoSuchAccount n -> "no_such_account";
-            };
-            return Response.json(200, "{\"result\":\"" + kind + "\",\"price\":\"" + plain(px.price()) +
-                    "\",\"source\":\"" + px.source() + "\"}");
+            if (!placed.accepted())
+                return Response.json(409, "{\"result\":\"rejected\",\"error\":\""
+                        + Json.esc(placed.error() == null ? "the broker declined the order" : placed.error())
+                        + "\"}");
+            return Response.json(200, "{\"result\":\"placed\",\"status\":\"" + Json.esc(placed.status())
+                    + "\",\"orderId\":\"" + Json.esc(String.valueOf(placed.orderId()))
+                    + "\",\"venue\":\"" + Json.esc(String.valueOf(placed.venue()))
+                    + "\",\"settlement\":\"asynchronous\"}");
+        } catch (BrokerClient.BrokerUnavailable e) {
+            // loud, and specifically NOT a fallback · the only other way to
+            // acquire this asset is the path this change deleted
+            return Response.json(503, "{\"error\":\"the broker is not reachable right now · "
+                    + "your order was not placed\"}");
         } catch (IllegalArgumentException e) {
             return Response.json(400, "{\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
         }
@@ -1215,14 +1421,38 @@ public final class HttpApi {
         return Response.json(200, "{\"result\":\"ok\",\"id\":" + id + ",\"region\":\"" + Shards.regionName(shard) + "\"}");
     }
 
-    /** real 30-day price series for the product charts */
+    /**
+     * Real 30-day price series for the product charts.
+     *
+     * TWO BUGS LIVED IN ONE LINE, and both of them failed silently.
+     *
+     * The casing: this validated against the literals "btc" and "aapl" while
+     * index.html passes the REGISTRY symbol, which is uppercase · so every
+     * chart request the bank's Investments tile made came back 400 and the
+     * sparkline never rendered at all. The browser's catch swallowed it,
+     * cached an empty series, and left blank space where a chart belongs.
+     * portfolio() documents this exact lowercase/uppercase trap at length and
+     * fixes it with .toLowerCase() before touching PriceFeed; this endpoint
+     * never got the same treatment.
+     *
+     * The hardcoding: two symbols were listed by name, so a registered
+     * instrument like MSFT or TSLA could not have a chart no matter how it was
+     * spelled. The registry is what decides which instruments this bank
+     * knows · asking it is both correct and one fewer place to update when a
+     * listing is added. PriceFeed already routes by symbol (CoinGecko for
+     * bitcoin, Yahoo for anything else), so nothing else needed to change.
+     */
     private static Response priceHistory(HttpExchange ex) throws Exception {
         String q = ex.getRequestURI().getQuery();
         String asset = null;
         if (q != null) for (String p : q.split("&")) if (p.startsWith("asset=")) asset = p.substring(6);
-        if (!"btc".equals(asset) && !"aapl".equals(asset))
-            return Response.json(400, "{\"error\":\"asset must be btc or aapl\"}");
-        return Response.json(200, "{\"asset\":\"" + asset + "\",\"points\":" + PriceFeed.historyJson(asset) + "}");
+        if (asset == null || asset.isBlank())
+            return Response.json(400, "{\"error\":\"asset is required\"}");
+        asset = asset.toLowerCase(java.util.Locale.ROOT);
+        if (!AssetRegistry.isRegisteredEverywhere(asset))
+            return Response.json(400, "{\"error\":\"" + Json.esc(asset) + " is not a listed instrument\"}");
+        return Response.json(200, "{\"asset\":\"" + Json.esc(asset)
+                + "\",\"points\":" + PriceFeed.historyJson(asset) + "}");
     }
 
     // ------------------------------------------------------------------ console

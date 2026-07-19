@@ -75,10 +75,7 @@ class ThirdInstrumentLessonTest {
             }
             s.createSchema();
         }
-        try (Connection c = BrokerDb.open(); var st = c.createStatement()) {
-            st.execute("SET lock_timeout = '4s'");
-            st.execute("TRUNCATE fills, orders, positions, watchlist, account_link, outbox");
-        }
+        dev.minibank.ledger.Fixtures.resetBrokerDb();
         Catalog.seed();
         // ONE call, BOTH halves: routable in the broker, settleable in the
         // ledger. An instrument in only one of them is the old asymmetry.

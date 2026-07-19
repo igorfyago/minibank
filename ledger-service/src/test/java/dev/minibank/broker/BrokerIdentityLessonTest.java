@@ -64,10 +64,7 @@ class BrokerIdentityLessonTest {
         BrokerDb.createOwnDatabase();
         // start from an empty book · these lessons assert on exact responses,
         // and a test that inherits yesterday's positions can pass by luck
-        try (Connection c = BrokerDb.open(); var st = c.createStatement()) {
-            st.execute("SET lock_timeout = '4s'");
-            st.execute("TRUNCATE fills, orders, positions, watchlist, account_link, outbox");
-        }
+        dev.minibank.ledger.Fixtures.resetBrokerDb();
         Catalog.seed();
         Broker broker = new Broker(VENUE);
 

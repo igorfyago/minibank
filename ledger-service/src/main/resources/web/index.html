@@ -591,6 +591,8 @@
   .chip-btn { background:none; border:1px solid var(--line); color:var(--dim); padding:4px 10px;
     border-radius:999px; font:600 11px system-ui; cursor:pointer; transition:all .15s; }
   .chip-btn:hover { border-color:var(--violet); color:var(--violet); }
+  /* the selected pill · the same rule .who .on already uses, not a new look */
+  .chip-btn.on { background:var(--violet); border-color:var(--violet); color:#fff; }
   .prod.open { border-color:var(--violet); }
   .prod-x { margin-top:10px; border-top:1px solid var(--line); padding-top:10px; }
   .sl-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
@@ -1265,6 +1267,14 @@ $('#act-move').onclick = async () => {
 /* the product shelf · every product is accounts + transfers, valued live */
 let prevPortSig = '';
 const fmtBtc = v => '₿' + Number(v).toFixed(8).replace(/\.?0+$/, '').replace(/^([0-9]+)$/, '$1.0');
+// WHO ACTUALLY QUOTED THIS RATE. The tile used to print "via fx-service"
+// unconditionally, including when the fx-service was unreachable and the rate
+// was FxClient's hardcoded 0.88 · naming a service that did not supply the
+// number. The payload has carried fxSource alongside fxRate all along for
+// precisely this distinction and nothing read it.
+const fxWho = src => src === 'live' ? 'via fx-service'
+  : src === 'fx down · fallback' ? 'fx-service unreachable · rate not from a quote'
+  : 'fx-service unreachable · last rate it quoted';
 let openProd = null;
 const sliderVals = {};
 const lastAuth = {};   // the most recent card authorization per user (this session)
@@ -1305,7 +1315,7 @@ async function loadChart(key, asset) {
   const up = vs[vs.length - 1] >= vs[0];
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:64px;display:block" preserveAspectRatio="none">
       <polyline points="${pts}" fill="none" stroke="${up ? 'var(--green)' : 'var(--red)'}" stroke-width="1.6"/></svg>
-    <div class="ph-row"><span>30 days · real ${asset === 'btc' ? 'CoinGecko' : 'Yahoo × fx-service'} data, in €</span><b>${fmt(min)} – ${fmt(max)}</b></div>`;
+    <div class="ph-row"><span>30 days · real ${String(asset).toLowerCase() === 'btc' ? 'CoinGecko' : 'Yahoo × fx-service'} data, in €</span><b>${fmt(min)} – ${fmt(max)}</b></div>`;
 }
 async function loadProdHist(key, acct) {
   const el = document.querySelector('#ph-' + key);
@@ -1324,15 +1334,92 @@ async function prodRun(fn) {
 }
 window.pSav = dir => prodRun(() => AGENT_TOOLS.savings_move.exec({ direction: dir, amount: String(sliderVals.sv) + '.00' }));
 window.pCard = act => prodRun(() => AGENT_TOOLS.card_action.exec({ action: act, amount: String(sliderVals.cd) + '.00' }));
+/* THE INVESTMENTS TILE'S BUY AND SELL.
+   The asset is chosen on the tile rather than baked into one tile per
+   instrument, so this takes it as an argument and the amount comes from the
+   single 'iv' slider. 'sell all' reads the position's current euro value from
+   the investments block instead of a per-asset field · the block is registry
+   driven, so an instrument listed tomorrow works here without a code change. */
+let ivAsset = null;   // which instrument the Investments tile is acting on
 window.pTrade = (asset, side, all) => {
-  const k = asset === 'btc' ? 'bt' : 'ap';
-  const eurAmt = all ? null : String(sliderVals[k]) + '.00';
+  const eurAmt = all ? null : String(sliderVals.iv) + '.00';
   return prodRun(async () => {
     const pf = await api('/api/portfolio?customer=' + me);
-    const amt = all ? (asset === 'btc' ? pf.btcEur : pf.aaplEur) : eurAmt;
-    return AGENT_TOOLS.trade.exec({ asset, side, eur: amt });
+    const row = (pf.investments && pf.investments.rows || []).find(r => r.asset === asset);
+    // SELL ALL NAMES THE UNITS, not their euro value · the value would have to
+    // be divided back out by a price that has moved since this read, which
+    // lands just above the position and the broker rejects the order whole.
+    if (all && !row) return { err: 'no position in ' + asset + ' to sell' };
+    return all
+      ? AGENT_TOOLS.trade.exec({ asset, side, units: row.units })
+      : AGENT_TOOLS.trade.exec({ asset, side, eur: eurAmt });
   });
 };
+window.ivPick = a => { ivAsset = a; prevPortSig = ''; loadPortfolio(); };
+
+/* THE FACE OF THE INVESTMENTS TILE · total, then today.
+   Both can be legitimately unknown, and neither is faked when it is. The
+   server withholds a total the moment any holding has no mark, so this never
+   has to decide whether a partial sum is good enough. */
+function ivHead(inv) {
+  const val = inv.value === null ? null : Number(inv.value);
+  const day = inv.dayChange === null || inv.dayChange === undefined ? null : Number(inv.dayChange);
+  const pct = inv.dayChangePct === null || inv.dayChangePct === undefined ? null : Number(inv.dayChangePct);
+  const sign = v => v === 0 ? '' : v < 0 ? '−' : '+';
+  const cls = v => v === 0 ? '' : v > 0 ? 'amount-pos' : 'amount-neg';
+  let sub;
+  if (inv.holdings === 0) sub = 'stocks and crypto · start from €10';
+  else if (day !== null) sub = `<span class="${cls(day)}">${sign(day)}${fmt(Math.abs(day))}${
+    pct !== null ? ' · ' + sign(pct) + Math.abs(pct).toFixed(2) + '%' : ''}</span> today`;
+  else if (val === null) sub = 'a holding has no live price right now';
+  else sub = `${inv.holdings} holding${inv.holdings === 1 ? '' : 's'} · today's change not available`;
+  return `<div class="prod-name">📈 Investments</div>
+    <div class="prod-val">${val === null ? '<span class="prod-sub">not available</span>' : fmt(val)}</div>
+    <div class="prod-sub">${sub}</div>`;
+}
+
+/* INSIDE THE TILE · pick an instrument, then act on it.
+   The instrument list is whatever the customer actually holds, from the
+   registry-driven investments block. With nothing held yet the tile does not
+   go blank: it sends them to the portfolio, which is where the shelf of
+   things they could buy lives. */
+function ivBody(inv, me) {
+  const rows = inv.rows || [];
+  const open = brokerHref(me);
+  if (!rows.length) {
+    return `<div class="prod-sub">Nothing invested yet · the portfolio has the full shelf, and orders
+        settle straight into this account.</div>
+      <div class="prod-btns"><button class="mini" onclick="location.href='${open}'">open portfolio ↗</button></div>`;
+  }
+  // default to the largest holding rather than to nothing · the tile always
+  // has something selected, so buy and sell are never ambiguous
+  if (!ivAsset || !rows.some(r => r.asset === ivAsset)) {
+    ivAsset = rows.slice().sort((a, b) =>
+      Number(b.eur === null ? -1 : b.eur) - Number(a.eur === null ? -1 : a.eur))[0].asset;
+  }
+  const cur = rows.find(r => r.asset === ivAsset);
+  const picker = rows.length > 1
+    ? `<div class="prod-btns" style="margin-top:0;margin-bottom:8px">${rows.map(r =>
+        `<button class="chip-btn${r.asset === ivAsset ? ' on' : ''}" onclick="ivPick('${r.asset}')">${r.asset}</button>`).join('')}</div>`
+    : '';
+  const priced = cur.eur !== null;
+  return picker
+    + `<div class="ph-row"><span>${cur.label}</span><b>${Number(cur.units).toFixed(8).replace(/\.?0+$/, '')}${
+        priced ? ' · ' + fmt(cur.eur) : ''}</b></div>`
+    + `<div class="ch" id="ch-iv"></div>`
+    + slider('iv', 10, 250, 5, 50)
+    /* 'sell' is a euro amount and needs a price to size it; 'sell all' names
+       the units and therefore works even with the feed down · the two are
+       gated separately because they fail for different reasons */
+    + `<div class="prod-btns"><button class="mini" onclick="pTrade('${ivAsset}','buy',false)">buy</button>
+       ${priced && Number(cur.eur) > 0.5 ? `<button class="mini" onclick="pTrade('${ivAsset}','sell',false)">sell</button>` : ''}
+       ${Number(cur.units) > 0 ? `<button class="mini" onclick="pTrade('${ivAsset}','sell',true)">sell all</button>` : ''}
+       <button class="mini" onclick="location.href='${open}'">open portfolio ↗</button></div>
+       <div class="prod-sub" style="margin-top:6px">${priced
+         ? 'orders go to the broker · the balance moves when the fill settles'
+         : 'no live price right now · buying still works, selling needs a mark'}</div>
+       <div class="ph" id="ph-iv"></div>`;
+}
 window.pLoan = act => prodRun(() => AGENT_TOOLS.loan.exec({ action: act, amount: String(sliderVals[act === 'apply' ? 'ln' : 'lnr']) + '.00' }));
 
 async function loadPortfolio() {
@@ -1341,17 +1428,26 @@ async function loadPortfolio() {
   const sig = JSON.stringify(pf) + '|' + openProd;
   if (sig === prevPortSig) return;
   prevPortSig = sig;
-  const total = Number(pf.main) + Number(pf.savings) + Number(pf.card) + Number(pf.btcEur) + Number(pf.aaplEur) + Number(pf.loan);
+  const inv = pf.investments || { value: null, rows: [], holdings: 0, unpriced: 0 };
+  // The securities leg can be UNKNOWN now that the price feed stops inventing
+  // one · net worth is then unknown too, and says so rather than quietly
+  // reporting the cash half as if it were the whole.
+  const invEur = inv.value === null ? null : Number(inv.value);
+  const total = invEur === null ? null
+    : Number(pf.main) + Number(pf.savings) + Number(pf.card) + invEur + Number(pf.loan);
   const loanBal = Number(pf.loan), card = Number(pf.card);
   const tile = (k, head, body) => `<div class="prod expandable${openProd === k ? ' open' : ''}" onclick="prodOpen('${k}')">
     <span class="prod-chev">›</span>${head}
     ${openProd === k ? `<div class="prod-x" onclick="event.stopPropagation()">${body}</div>` : ''}</div>`;
   const nwEl = document.querySelector('#networth');
-  if (nwEl) nwEl.textContent = 'net worth ' + fmt(total) + (Number(pf.loan) < 0 || Number(pf.card) < 0 ? ' (after debts)' : '');
+  if (nwEl) nwEl.textContent = total === null ? 'net worth not available · a holding has no live price'
+    : 'net worth ' + fmt(total) + (Number(pf.loan) < 0 || Number(pf.card) < 0 ? ' (after debts)' : '');
   $('#prods').innerHTML =
     `<div class="prod"><div class="prod-name">💠 Total wealth</div>
-      <div class="prod-val">${fmt(total)}</div>
-      <div class="prod-sub">main + savings + assets + card + loan · prices ${pf.priceSource} · $→€ ${Number(pf.fxRate).toFixed(4)} via fx-service</div></div>`
+      <div class="prod-val">${total === null ? '<span class="prod-sub">not available</span>' : fmt(total)}</div>
+      <div class="prod-sub">${total === null
+        ? 'a holding has no live price, so the total is withheld rather than partly summed'
+        : `main + savings + investments + card + loan · $→€ ${Number(pf.fxRate).toFixed(4)} ${fxWho(pf.fxSource)}`}</div></div>`
     + tile('sv',
       `<div class="prod-name">💰 Savings</div><div class="prod-val">${fmt(pf.savings)}</div>
        <div class="prod-sub">a second account, nothing more</div>`,
@@ -1369,25 +1465,14 @@ async function loadPortfolio() {
        ${card < 0 ? `<button class="mini" onclick="pCard('repay')">repay</button>` : ''}</div>
        <div class="prod-sub" style="margin-top:6px">the limit is a CHECK constraint · holds count automatically</div>
        <div class="ph" id="ph-cd"></div>`)
-    + tile('bt',
-      `<div class="prod-name">₿ Bitcoin</div><div class="prod-val">${fmtBtc(pf.btc)} <span class="prod-sub">≈ ${fmt(pf.btcEur)}</span></div>
-       <div class="prod-sub">@ ${usdFmt(pf.btcUsd, 0)} · live CoinGecko</div>`,
-      `<div class="ch" id="ch-bt"></div>` + slider('bt', 10, 250, 5, 50) +
-      `<div class="prod-btns"><button class="mini" onclick="pTrade('btc','buy',false)">buy</button>
-       ${Number(pf.btcEur) > 0.5 ? `<button class="mini" onclick="pTrade('btc','sell',false)">sell</button>
-       <button class="mini" onclick="pTrade('btc','sell',true)">sell all</button>` : ''}
-       <button class="mini" onclick="location.href=brokerHref(${me})">open portfolio ↗</button></div>
-       <div class="prod-sub" style="margin-top:6px">one transaction, four entries, two currencies · both ledgers sum to zero</div>
-       <div class="ph" id="ph-bt"></div>`)
-    + tile('ap',
-      `<div class="prod-name">🍏 Apple stock</div><div class="prod-val">${Number(pf.aapl).toFixed(4)} sh <span class="prod-sub">≈ ${fmt(pf.aaplEur)}</span></div>
-       <div class="prod-sub">@ ${usdFmt(pf.aaplUsd, 2)} · Yahoo</div>`,
-      `<div class="ch" id="ch-ap"></div>` + slider('ap', 10, 250, 5, 50) +
-      `<div class="prod-btns"><button class="mini" onclick="pTrade('aapl','buy',false)">buy</button>
-       ${Number(pf.aaplEur) > 0.5 ? `<button class="mini" onclick="pTrade('aapl','sell',false)">sell</button>
-       <button class="mini" onclick="pTrade('aapl','sell',true)">sell all</button>` : ''}
-       <button class="mini" onclick="location.href=brokerHref(${me})">open portfolio ↗</button></div>
-       <div class="ph" id="ph-ap"></div>`)
+    /* ONE INVESTMENTS CARD, NOT ONE CARD PER INSTRUMENT.
+       Two tiles competing for the shelf made the bank look like a brokerage
+       terminal and did not survive contact with a third instrument: the
+       registry can list any number of them and the shelf had room for exactly
+       two names, hardcoded. This is the Revolut shape · one product, a total
+       and a day move on the face, the instruments themselves one level in.
+       The bank's own products (savings, card, loan) are untouched. */
+    + tile('iv', ivHead(inv), ivBody(inv, me))
     + tile('ln',
       `<div class="prod-name">🏦 Loan</div><div class="prod-val">${loanBal === 0 ? '€0.00' : fmt(pf.loan)}</div>
        <div class="prod-sub">${loanBal === 0 ? 'borrow up to €20,000 · instant decision' : 'the debt heals by plain transfers'}</div>`,
@@ -1399,10 +1484,10 @@ async function loadPortfolio() {
         : slider('lnr', 100, 2000, 100, 500) +
           `<div class="prod-btns"><button class="mini" onclick="pLoan('repay')">repay</button></div>
            <div class="ph" id="ph-ln"></div>`);
-  const ACCT = { sv: 100, cd: 400, bt: 200, ap: 300, ln: 500 };
+  const ACCT = { sv: 100, cd: 400, ln: 500 };
   if (openProd && ACCT[openProd] !== undefined) loadProdHist(openProd, me + ACCT[openProd]);
-  if (openProd === 'bt') loadChart('bt', 'btc');
-  if (openProd === 'ap') loadChart('ap', 'aapl');
+  // the chart follows whichever instrument the Investments tile is showing
+  if (openProd === 'iv' && ivAsset) loadChart('iv', ivAsset);
 }
 /* THE STATEMENT CACHE.
    Statements are the heaviest read in the app: the ledger page wants one,
@@ -1422,36 +1507,9 @@ async function loadPortfolio() {
 const stmtCache = MB.swrCache({ ttl: 4000 });
 const statementOf = acct => stmtCache.get(String(acct), () => api('/api/statement?customer=' + acct));
 
-/**
- * Money moved, so EVERY view of that money is stale, not just this tab's.
- *
- * This used to refresh the accounts, the statement and the portfolio and stop
- * there. The X-ray was left to its own 2s poller, which skips xrayTick entirely
- * unless the X-ray tab is already on screen, so acting through Rita while her
- * panel covered another tab updated the balances and left the map and the
- * activity feed showing the world as it was before.
- *
- * AND ONE REFRESH IS NOT ENOUGH, which is the more interesting half. A transfer
- * is committed when the API returns, but the rest of the story has not happened
- * yet: the relay publishes to Kafka a beat later and the notification lands
- * after that. Refreshing once shows the commit and misses its consequences, and
- * the feed then looks stuck for exactly as long as it takes someone to give up
- * and reload. So the refresh follows the saga instead of racing it, sampling
- * again as the asynchronous tail arrives. This is what eventual consistency
- * costs on the read side, and pretending otherwise is what made it look broken.
- */
-const REFRESH_TAIL_MS = [0, 350, 900, 1800, 3200];
-let refreshTimers = [];
 function refreshAll() {
   stmtCache.invalidate();     // money moved · the cache must not out-vote it
-  refreshTimers.forEach(clearTimeout); refreshTimers = [];
-  REFRESH_TAIL_MS.forEach(delay => refreshTimers.push(setTimeout(() => {
-    loadAccounts(); prevStmtSig = ''; loadStatement(); prevPortSig = ''; loadPortfolio();
-    // the map and the feed are views of the same money · refresh them whether
-    // or not their tab happens to be the one in front
-    try { xrayTick(); } catch (e) { console.error('refreshAll: xrayTick', e); }
-    try { tapeTick(); } catch (e) { console.error('refreshAll: tapeTick', e); }
-  }, delay)));
+  loadAccounts(); prevStmtSig = ''; loadStatement(); prevPortSig = ''; loadPortfolio();
 }
 /* the statement · the double-entry ledger, told the way a bank app tells it */
 async function loadStatement() {
@@ -1471,22 +1529,25 @@ async function loadStatement() {
   for (const x of items) {
     const d = dayOf(x.at);
     if (d !== lastDay) { html += `<div class="tx-day">${d}</div>`; lastDay = d; }
+    // the server now names the event ('Bought Bitcoin', 'Sold Apple stock'),
+    // driven by the transaction's own kind and the asset registry · the client
+    // renders it rather than re-deriving it from a tag
     const name = x.tag === 'added' ? 'Money added' : x.tag === 'relocation' ? 'Relocation' : x.tag === 'refund' ? 'Refund' : x.tag === 'loan' ? 'Loan' : cap(x.label);
     const time = new Date(x.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const abs = x.amount.replace('-', '');
-    const ic = x.tag === 'added' ? '↓' : x.tag === 'relocation' ? '✈' : x.tag === 'refund' ? '↩' : ['buy','sell'].includes(x.tag) ? (name === 'Bitcoin' ? '₿' : '🍏') : x.tag === 'loan' ? '🏠' : name[0];
+    const ic = x.tag === 'added' ? '↓' : x.tag === 'relocation' ? '✈' : x.tag === 'refund' ? '↩' : ['buy','sell'].includes(x.tag) ? (/bitcoin/i.test(name) ? '₿' : '🍏') : x.tag === 'loan' ? '🏠' : name[0];
     const av = ['added', 'relocation', 'refund', 'buy', 'sell', 'loan'].includes(x.tag)
       ? `<div class="tx-av tx-av-sys">${ic}</div>`
       : `<div class="tx-av" style="background:hsl(${hue(name)},40%,30%)">${ic}</div>`;
     const sub = x.pending
       ? `<span class="pend-dot"></span><span style="color:var(--amber)">Pending</span> · ${time} · settling across regions`
-      : `${SUB[x.tag] || ''} · ${time}${x.cross ? ' · cross-region' : ''}`;
+      : `${SUB[x.tag] || ''}${x.detail ? ' ' + x.detail : ''} · ${time}${x.cross ? ' · cross-region' : ''}`;
     const strat = x.tag === 'relocation'
       ? 'strategy: RELOCATION · the whole balance as one standard saga, then the directory pointer flips; write-pause of milliseconds, every step idempotent'
       : x.tag === 'refund'
       ? 'strategy: COMPENSATION · the saga could not complete (no such destination), so a gated refund undid the departure; deterministic refund id makes even the undo idempotent'
       : ['buy', 'sell'].includes(x.tag)
-      ? 'strategy: ONE ACID COMMIT, TWO CURRENCIES · four entries: your EUR ↔ broker, broker ↔ your asset. Each currency’s ledger sums to zero on its own; the price is locked at execution and the ratio of the legs IS the price paid'
+      ? 'strategy: SETTLEMENT OF A BROKER FILL · the venue filled the order and the ledger recorded the consequence: four entries in one commit, your EUR ↔ broker and broker ↔ your asset. Each currency’s ledger sums to zero on its own, and the ratio of the two legs IS the price you actually got, spread included. The broker owns the position; the ledger owns custody'
       : x.tag === 'loan'
       ? 'strategy: DISBURSEMENT · loan −X and main +X in one commit: your net position is unchanged; the debt is real, on the books, and heals by plain transfers'
       : x.cross
@@ -2022,28 +2083,15 @@ async function xrayTick() {
 
   const fresh = evs.filter(e => !seen.has(e.type + e.tx + e.ts));
   evs.forEach(e => seen.add(e.type + e.tx + e.ts));
-  /* QUEUE the unseen events rather than animating whichever one happens to
-     arrive while the map is free.
-     ---------------------------------------------------------------------
-     One event at a time is right: six events 350ms apart, each up to three
-     balls, put eighteen balls on a map with ten edges, and that is where the
-     spontaneous ones came from. But the old rule ALSO threw away everything
-     that arrived while an animation was running: an event was marked seen on
-     the tick that fetched it, and dropped if playingUntil had not expired.
-     A payment is three events over roughly a hundred milliseconds · the commit,
-     then the relay publishing, then the notification · so the commit animated,
-     claimed the map, and the two consequences were marked handled without ever
-     being drawn. The map lit eu Postgres and stopped there, permanently,
-     because nothing would ever consider those events again.
-     Queued instead, they play in order, and the whole journey crosses the map
-     the way it actually happened. Marked seen when QUEUED, drawn when the map
-     is free. */
-  fresh.slice().reverse().forEach(e => {          // oldest first · that is the order it happened
-    const j = MB.journey([eventToStep(e)], MAP);
-    if (j.hops.length) liveQueue.push(j);
-  });
-  if (liveQueue.length > 12) liveQueue.splice(0, liveQueue.length - 12);  // a backlog nobody will watch
-  if (!firstPoll) drainLiveQueue();
+  /* One event at a time, and never over the top of a replay. Six events at
+     350ms apart, each up to three balls, put eighteen balls on a map with ten
+     edges: that is where "balls born spontaneously" came from. The newest event
+     is the one worth showing; the rest are already in the activity list. */
+  if (!firstPoll && Date.now() > playingUntil && fresh.length) {
+    const newest = fresh[0];
+    const j = MB.journey([eventToStep(newest)], MAP);
+    if (j.hops.length) { runJourney(j); playingUntil = Date.now() + j.total + 200; }
+  }
 
   const top = evs.slice(0, 7);
   const sig = top.map(e => e.type + e.tx + e.ts).join('|');
@@ -2075,8 +2123,12 @@ async function xrayTick() {
       byTx[gk].legs.push(x);
     });
     $('#txgroups').innerHTML = groups.slice(0, 8).map(g => {
-      const ic = g.kind && g.kind.startsWith('trade:') ? (g.kind.includes('btc') ? '₿' : '🍏') : (KICON[g.kind] || '·');
-      const label = g.kind && g.kind.startsWith('trade:') ? g.kind.split(':').slice(1).join(' ') : g.kind;
+      // 'settle:' is what a broker fill writes and 'trade:' is what the
+      // retired direct path wrote · both are asset movements and the map
+      // should draw them the same, or the pipeline looks like it stopped
+      const isAsset = g.kind && (g.kind.startsWith('trade:') || g.kind.startsWith('settle:'));
+      const ic = isAsset ? (/btc/i.test(g.kind) ? '₿' : '🍏') : (KICON[g.kind] || '·');
+      const label = isAsset ? g.kind.split(':').slice(1).join(' ') : g.kind;
       const sum = g.legs.length > 1 ? g.legs.reduce((a, l) => a + Number(l.amount), 0) : null;
       return `<div class="txg" style="cursor:pointer" onclick="gShow('entry',{});traceTx('${g.tx}', true)">
         <div class="txg-head"><span>${ic} ${label}</span>
@@ -2115,28 +2167,13 @@ async function xrayTick() {
   }
 }
 window.tickClick = evJson => { const e = JSON.parse(evJson);
-  const subj = e.type.indexOf('trade:') === 0 ? 'ev:trade' : e.type === 'mortgage' ? 'ev:mortgage' : 'ev:' + e.type;
+  const subj = (e.type.indexOf('trade:') === 0 || e.type.indexOf('settle:') === 0) ? 'ev:trade'
+    : e.type === 'mortgage' ? 'ev:mortgage' : 'ev:' + e.type;
   gShow(GUIDE[subj] ? subj : 'entry', { ev: e }); traceTx(e.tx, true); };
 
 function renderTrace(tr, tx) {
   activeTrace = tr;
   clearTimeout(loopTimer); loopTimer = null;   // never loop the journey you just left
-  /* Decide whether this journey CAN be drawn at selection time, not at play
-     time. setReplayable used to be called only inside playTrace, so choosing an
-     undrawable transaction never evaluated it and the buttons simply kept
-     whatever state the previous transaction had left them in: enabled, and
-     dead. Whether a control works is a property of what is selected, so it is
-     settled the moment the selection changes. */
-  {
-    const canDraw = tr.steps && tr.steps.length && MB.journey(tr.steps, MAP).hops.length > 0;
-    setReplayable(!!canDraw);
-    if (!canDraw) {
-      $('#play-wrap').hidden = false;
-      $('#play-caption').textContent = tr.steps && tr.steps.length
-        ? `no map animation for this one · ${tr.steps.map(s => s.step).join(', ')} happens off this diagram`
-        : 'no recorded steps for this transaction';
-    }
-  }
   // the list must show the new selection immediately · waiting for the next
   // 2s tick means clicking a row appears to do nothing for two seconds
   document.querySelectorAll('#ticker .tick-item').forEach(el =>
@@ -2235,40 +2272,6 @@ function setLooping(on) {
   if (on && activeTrace) playTrace(activeTrace);
 }
 
-/* Live events waiting for the map. See the note in xrayTick: they used to be
-   discarded whenever one was already playing, which silently ate every
-   consequence of the event being animated. */
-let liveQueue = [];
-let drainTimer = null;
-function drainLiveQueue() {
-  if (drainTimer) return;                       // already draining
-  const step = () => {
-    drainTimer = null;
-    if (!liveQueue.length) return;
-    if (Date.now() < playingUntil) {            // a replay owns the map · wait, do not drop
-      drainTimer = setTimeout(step, Math.max(120, playingUntil - Date.now()));
-      return;
-    }
-    const j = liveQueue.shift();
-    runJourney(j);
-    playingUntil = Date.now() + j.total + 120;
-    // come back for the next one the moment this journey is done
-    drainTimer = setTimeout(step, j.total + 180);
-  };
-  step();
-}
-
-/** A journey the map cannot draw gets no replay controls, rather than dead ones. */
-function setReplayable(can) {
-  ['#replay-btn', '#loop-btn'].forEach(sel => {
-    const b = $(sel); if (!b) return;
-    b.disabled = !can;
-    b.style.opacity = can ? '' : '.35';
-    b.style.pointerEvents = can ? '' : 'none';
-  });
-  if (!can && looping) setLooping(false);
-}
-
 /** Called when a replay finishes. Queues the next one, if we still should. */
 function loopAgain() {
   if (!looping || !activeTrace) return;
@@ -2323,21 +2326,9 @@ function playTrace(tr) {
   // unit tested over every case this bank can produce. All that is left here is
   // drawing it and narrating it.
   const j = MB.journey(steps, MAP);
-  if (!j.hops.length) {
-    /* Nothing on this map corresponds to what happened. A broker settlement is
-       the real case: one step, kind "settle:aapl:sell", which touches no node
-       the topology draws. Returning silently left a trace card showing replay
-       and loop buttons that did nothing at all when pressed, with no
-       explanation, which is a control that lies about being a control. */
-    $('#play-wrap').hidden = false;
-    $('#play-caption').textContent = steps.length
-      ? `no map animation for this one · ${steps.map(s => s.step).join(', ')} happens off this diagram`
-      : 'no recorded steps for this transaction';
-    setReplayable(false);
-    return;
-  }
-  setReplayable(true);
+  if (!j.hops.length) return;
   runJourney(j);
+  playingUntil = Date.now() + j.total + 400;
 
   const realTotal = steps.length > 1
     ? Math.max(new Date(steps[steps.length - 1].ts) - new Date(steps[0].ts), 1) : 0;
@@ -2545,12 +2536,20 @@ function tapeTrain(e) {
     'BEGIN ' + R, 'compensating entries', 'COMMIT'], d: [[UP(Y), '+' + A, 'pos']] };
   if (t === 'notify') return { h: '🔔', s: ['consumer: poll(payments)', 'event_key gate ✓',
     'INSERT notification', 'COMMIT'], d: [] };
-  if (t.indexOf('trade:') === 0) {
-    const parts = t.split(':'), asset = parts[1] === 'btc' ? 'BTC' : 'AAPL', buy = parts[2] === 'buy';
+  if (t.indexOf('trade:') === 0 || t.indexOf('settle:') === 0) {
+    const parts = t.split(':'), sym = parts[1].toLowerCase();
+    const asset = sym === 'btc' ? 'BTC' : sym.toUpperCase(), buy = parts[2] === 'buy';
     const who = UP(!tapeSys(e.payer) ? P : (!tapeSys(e.payee) ? Y : 'trader'));
-    return { h: parts[1] === 'btc' ? '₿' : '🍏',
-      s: ['POST /api/trade', 'PriceFeed quote', 'BEGIN ' + R, '4 entries · 2 currencies',
-          'Σ=0 per currency', 'COMMIT · 1 ACID'],
+    // 'settle:' arrives from the broker over Kafka · the click is upstream of
+    // this, in another service, which is exactly what the storyboard should
+    // show rather than a POST that no longer moves any money
+    const direct = t.indexOf('trade:') === 0;
+    return { h: sym === 'btc' ? '₿' : '🍏',
+      s: direct
+        ? ['POST /api/trade (retired)', 'PriceFeed quote', 'BEGIN ' + R, '4 entries · 2 currencies',
+           'Σ=0 per currency', 'COMMIT · 1 ACID']
+        : ['broker: order filled', 'Kafka · topic orders', 'BEGIN ' + R, '4 entries · 2 currencies',
+           'Σ=0 per currency', 'COMMIT · settled'],
       d: buy ? [[who, '−' + A, 'neg'], [who, '+' + asset, 'pos']]
              : [[who, '−' + asset, 'neg'], [who, '+' + A, 'pos']] };
   }
@@ -2767,10 +2766,24 @@ const AGENT_TOOLS = {
       return r.result === 'ok' ? 'repaid' : fail(r.result || r.error);
     } },
   trade: {
-    sum: a => `${a.asset === 'btc' ? '₿' : '🍏'} ${a.side === 'buy' ? 'Buy' : 'Sell'} ${fmt(a.eur)} of ${a.asset === 'btc' ? 'Bitcoin' : 'Apple stock'} at the live price`,
+    // the instrument names itself · the ternary that said everything was
+    // either Bitcoin or Apple stock is the same one the ledger and the
+    // statement each had removed
+    sum: a => `📈 ${a.side === 'buy' ? 'Buy' : 'Sell'} ${a.units ? a.units + ' ' : fmt(a.eur) + ' of '}${String(a.asset).toUpperCase()} at the live price`,
     exec: async a => {
-      const r = await api('/api/trade', { method: 'POST', body: JSON.stringify({ txId: uuid(), customer: me, asset: a.asset, side: a.side, eur: a.eur }) });
-      return r.result === 'ok' ? `${a.side === 'buy' ? 'bought' : 'sold'} @ ${fmt(r.price)} (${r.source})` : fail(r.result || r.error);
+      // The bank no longer moves the asset itself · this places a BROKER
+      // ORDER, exactly like the portfolio screen does, and the money moves
+      // when the fill settles a Kafka round trip later. Saying "bought" here
+      // would be claiming a balance that has not changed yet.
+      //
+      // units and eur are alternatives, never both · closing a position names
+      // the quantity because a euro figure re-derived through a moved price
+      // overshoots the holding and the broker refuses the order whole.
+      const size = a.units ? { units: String(a.units) } : { eur: a.eur };
+      const r = await api('/api/trade', { method: 'POST', body: JSON.stringify(Object.assign({ txId: uuid(), customer: me, asset: a.asset, side: a.side }, size)) });
+      return r.result === 'placed'
+        ? `order placed with the broker · ${r.status} at the venue, settlement is asynchronous`
+        : fail(r.error || r.result);
     } },
   loan: {
     sum: a => a.action === 'apply' ? `🏦 Take a ${fmt(a.amount)} loan` : `🏦 Repay ${fmt(a.amount)} of the loan`,

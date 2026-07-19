@@ -1,6 +1,7 @@
 package dev.minibank.broker;
 
 import dev.minibank.ledger.OutboxRelay;
+import dev.minibank.ledger.Shards;
 
 /**
  * THE BROKER, AS ITS OWN PROCESS.
@@ -36,6 +37,32 @@ public final class BrokerService {
 
         BrokerDb.createOwnDatabase();
         Catalog.seed();
+
+        // THE AUDITOR'S SECOND BOOK, and the repair that needs it.
+        //
+        // Reconciliation compares this service's positions against the
+        // ledger's custody of the same assets, so it needs to be able to read
+        // the shards. Backfill reconstructs the fills for holdings the ledger
+        // recorded before the trading path was unified.
+        //
+        // BEST EFFORT, DELIBERATELY. Both are read-mostly repairs that matter
+        // to some customers; failing to start the broker matters to all of
+        // them. This is the same argument Main already makes for the shelf
+        // repair, and it applies here for the same reason: a reconciliation
+        // that can refuse to let a service boot is worse than the drift it
+        // measures.
+        try {
+            Shards.boot(
+                    System.getenv().getOrDefault("MINIBANK_SHARD0_URL", "jdbc:postgresql://localhost:5434/minibank"),
+                    System.getenv().getOrDefault("MINIBANK_SHARD1_URL", "jdbc:postgresql://localhost:5435/minibank"),
+                    "minibank", "minibank", 2);
+            Backfill.Report repair = Backfill.run();
+            if (repair.changedAnything()) System.out.println(repair);
+            for (String s : repair.skipped()) System.out.println("backfill skipped · " + s);
+        } catch (Exception e) {
+            System.err.println("reconciliation and backfill unavailable · " + e
+                    + " · the broker is starting anyway; /api/audit will say so rather than report zero");
+        }
 
         BrokerPort venue = venueFromEnv();
         Broker broker = new Broker(venue);

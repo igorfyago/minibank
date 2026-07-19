@@ -132,6 +132,10 @@ public final class Ledger {
         // the outbox is not optional decoration: a transfer writes to it,
         // so the ledger cannot exist without it.
         Outbox.createTableOn(c);
+        // and neither is the place a settlement step goes when it will not
+        // complete · a saga whose failures have nowhere to land is a saga
+        // that loses them
+        DeadLetter.createTableOn(c);
     }
 
     /** Accounts are born empty. Money only arrives BY TRANSFER · customer

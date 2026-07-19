@@ -1,5 +1,7 @@
 package dev.minibank.ledger;
 
+import dev.minibank.broker.BrokerDb;
+
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -33,7 +35,7 @@ import java.util.List;
  * None of this weakens what the lessons prove. It removes an assumption the
  * lessons never meant to make: that they own the machine.
  */
-final class Fixtures {
+public final class Fixtures {
 
     /** Same order everywhere, so two resets can never deadlock each other. */
     private static final String WIPE_LEDGER = "TRUNCATE entries, transactions, outbox, accounts CASCADE";
@@ -42,7 +44,7 @@ final class Fixtures {
     private Fixtures() {}
 
     /** Empty a shard and rebuild its schema and system accounts. */
-    static void resetShard(Shard s) throws SQLException {
+    public static void resetShard(Shard s) throws SQLException {
         retrying(() -> {
             try (Connection c = s.open(); Statement st = c.createStatement()) {
                 st.execute("SET lock_timeout = '4s'");
@@ -53,13 +55,13 @@ final class Fixtures {
     }
 
     /** Every shard in the fleet. */
-    static void resetShards() throws SQLException {
+    public static void resetShards() throws SQLException {
         for (Shard s : Shards.all()) resetShard(s);
     }
 
     /** The stage 1 to 4 lessons predate sharding and use one database
      *  through Db.open() · same contention, same retry. */
-    static void onSingleDb(String... statements) throws SQLException {
+    public static void onSingleDb(String... statements) throws SQLException {
         retrying(() -> {
             try (Connection c = Db.open(); Statement st = c.createStatement()) {
                 st.execute("SET lock_timeout = '4s'");
@@ -68,8 +70,26 @@ final class Fixtures {
         });
     }
 
+    /**
+     * Empty the broker's own database · same contention, same retry.
+     *
+     * The broker classes each truncated inline, which is how a deadlock got
+     * back in: TRUNCATE takes an AccessExclusiveLock on every table it names,
+     * and the broker database is shared with anything else pointed at it. The
+     * ledger fixtures learned this once already; the broker ones inherited the
+     * lesson only by copy-paste, and not the retry.
+     */
+    public static void resetBrokerDb() throws SQLException {
+        retrying(() -> {
+            try (Connection c = BrokerDb.open(); Statement st = c.createStatement()) {
+                st.execute("SET lock_timeout = '4s'");
+                st.execute("TRUNCATE fills, orders, positions, watchlist, account_link, outbox");
+            }
+        });
+    }
+
     /** Empty the routing table and the in-process cache that fronts it. */
-    static void resetDirectory() throws SQLException {
+    public static void resetDirectory() throws SQLException {
         retrying(() -> {
             try (Connection c = DriverManager.getConnection(directoryUrl(), "minibank", "minibank");
                  Statement st = c.createStatement()) {
@@ -92,7 +112,7 @@ final class Fixtures {
      * relay. For a test it is a race: if anything else is shipping events,
      * the row is gone from that view within milliseconds of being written.
      */
-    static List<Outbox.Event> allOutboxOn(Connection c) throws SQLException {
+    public static List<Outbox.Event> allOutboxOn(Connection c) throws SQLException {
         List<Outbox.Event> events = new ArrayList<>();
         try (var ps = c.prepareStatement("SELECT id, topic, key, payload FROM outbox ORDER BY id");
              var rs = ps.executeQuery()) {
@@ -103,7 +123,7 @@ final class Fixtures {
     }
 
     /** The one event whose key starts with this prefix · fails loudly if absent. */
-    static Outbox.Event outboxEvent(Shard s, String keyPrefix) throws SQLException {
+    public static Outbox.Event outboxEvent(Shard s, String keyPrefix) throws SQLException {
         try (Connection c = s.open()) {
             return allOutboxOn(c).stream()
                     .filter(e -> e.key().startsWith(keyPrefix))

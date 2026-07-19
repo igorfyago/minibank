@@ -372,7 +372,23 @@ public final class BrokerApi {
         json(ex, 200, "{\"result\":\"ok\",\"customer\":" + customer + "}");
     }
 
-    /** The projection audit, over HTTP · the same number the X-ray shows for the ledger. */
+    /**
+     * THE AUDITS, over HTTP · the same shape the ledger's X-ray already uses
+     * for sum-zero and drift, so a third invariant reads like the other two.
+     *
+     * `drifted` is the PROJECTION audit: does the stored position match its
+     * own fills? `positionDivergences` is the RECONCILIATION: does the
+     * broker's position match the ledger's custody of the same asset? Those
+     * are different questions and a service can pass one while failing the
+     * other · a position perfectly rebuilt from perfectly recorded fills is
+     * still wrong if the customer's holding came from somewhere else
+     * entirely. The old audit could not have caught that, because it never
+     * looked outside this database.
+     *
+     * Reported, never repaired. An invariant that fixes what it measures
+     * cannot be trusted to measure it, so repair is a separate deliberate act
+     * ({@link Backfill}) and this endpoint only ever reads.
+     */
     private void audit(HttpExchange ex) throws Exception {
         List<String> drift = Broker.audit();
         StringBuilder b = new StringBuilder("{\"drifted\":").append(drift.size()).append(",\"detail\":[");
@@ -380,7 +396,45 @@ public final class BrokerApi {
             if (i > 0) b.append(',');
             b.append('"').append(Json.esc(drift.get(i))).append('"');
         }
-        json(ex, 200, b.append("]}").toString());
+        b.append(']');
+
+        // The reconciliation needs BOTH books. This process can always read
+        // its own; the ledger's shards may not be configured here, and the
+        // honest answer to that is null rather than zero · "we did not look"
+        // and "we looked and everything agreed" must never render the same.
+        try {
+            List<Reconciliation.Divergence> d = Reconciliation.divergences();
+            b.append(",\"positionDivergences\":").append(d.size()).append(",\"divergenceDetail\":[");
+            for (int i = 0; i < d.size(); i++) {
+                if (i > 0) b.append(',');
+                b.append('"').append(Json.esc(d.get(i).toString())).append('"');
+            }
+            b.append(']');
+            List<String> stuck = Reconciliation.stalled(java.time.Duration.ofMinutes(5));
+            b.append(",\"stalledSettlements\":").append(stuck.size());
+            dev.minibank.ledger.Metrics.gauge("minibank_position_divergences", "", d.size());
+            dev.minibank.ledger.Metrics.gauge("minibank_settlements_stalled", "", stuck.size());
+
+            // THE FOURTH LIST · saga steps that would not complete and were
+            // recorded rather than printed. A divergence says the books
+            // disagree; this says which step failed to make them agree, which
+            // is the difference between knowing there is a problem and knowing
+            // where it is.
+            try (java.sql.Connection c = BrokerDb.open()) {
+                List<dev.minibank.ledger.DeadLetter.Entry> dead = dev.minibank.ledger.DeadLetter.all(c);
+                b.append(",\"deadLetters\":").append(dead.size()).append(",\"deadLetterDetail\":[");
+                for (int i = 0; i < dead.size(); i++) {
+                    if (i > 0) b.append(',');
+                    b.append('"').append(Json.esc(dead.get(i).toString())).append('"');
+                }
+                b.append(']');
+                dev.minibank.ledger.Metrics.gauge("minibank_saga_dead_letters", "", dead.size());
+            }
+        } catch (Exception e) {
+            b.append(",\"positionDivergences\":null,\"divergenceUnavailable\":\"")
+             .append(Json.esc(String.valueOf(e.getMessage()))).append('"');
+        }
+        json(ex, 200, b.append('}').toString());
     }
 
     /** The chart series, straight off the feed this process already caches. */

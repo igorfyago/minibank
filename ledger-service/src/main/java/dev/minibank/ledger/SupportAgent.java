@@ -48,7 +48,7 @@ public final class SupportAgent {
         {"type":"function","function":{"name":"add_money","description":"Top up the customer's main account from the world (max 500 per top-up).","parameters":{"type":"object","properties":{"amount":{"type":"string","description":"EUR amount up to 500.00"}},"required":["amount"]}}},
         {"type":"function","function":{"name":"savings_move","description":"Move euros between main and savings.","parameters":{"type":"object","properties":{"direction":{"type":"string","enum":["to_savings","to_main"]},"amount":{"type":"string"}},"required":["direction","amount"]}}},
         {"type":"function","function":{"name":"card_action","description":"Credit card operations. pay_cafe spends at the cafe; hold authorizes (reserves); capture pays the most recent hold to the merchant; release undoes the most recent hold; repay pays the card debt from main.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["pay_cafe","hold","capture","release","repay"]},"amount":{"type":"string","description":"EUR amount for pay_cafe, hold or repay"}},"required":["action"]}}},
-        {"type":"function","function":{"name":"trade","description":"Buy or sell bitcoin (btc) or Apple stock (aapl) at the live price, for a EUR amount.","parameters":{"type":"object","properties":{"asset":{"type":"string","enum":["btc","aapl"]},"side":{"type":"string","enum":["buy","sell"]},"eur":{"type":"string","description":"EUR amount, e.g. 50.00"}},"required":["asset","side","eur"]}}},
+        {"type":"function","function":{"name":"trade","description":"Place a BROKER ORDER to buy or sell bitcoin (btc) or Apple stock (aapl) for a EUR amount, at the venue's price. The order is placed immediately; the money and the holding move when the fill settles a moment later, so report it as an order placed rather than as a completed purchase.","parameters":{"type":"object","properties":{"asset":{"type":"string","enum":["btc","aapl"]},"side":{"type":"string","enum":["buy","sell"]},"eur":{"type":"string","description":"EUR amount, e.g. 50.00"}},"required":["asset","side","eur"]}}},
         {"type":"function","function":{"name":"loan","description":"apply for a loan (instant decision, up to 20000) or repay part of it from main.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["apply","repay"]},"amount":{"type":"string"}},"required":["action","amount"]}}},
         {"type":"function","function":{"name":"relocate","description":"Move the customer to the other region · the balance travels as one saga, then the directory pointer flips.","parameters":{"type":"object","properties":{"region":{"type":"string","enum":["eu","uk"]}},"required":["region"]}}}
         ]""";
@@ -171,25 +171,27 @@ public final class SupportAgent {
                 transcript == null || transcript.isBlank() ? "(first message)" : transcript);
     }
 
-    /**
-     * A price the feed does not have is not a price.
-     *
-     * price() is nullable by design · Px carries priced() precisely because an
-     * unpriced symbol is not a free one. This read was left unguarded when the
-     * fabricated fallback prices were deleted, so an upstream that is merely
-     * down took the whole support agent down with an NPE.
-     *
-     * Saying "0" would be worse than the crash. This string is the PROMPT for
-     * an agent that talks to customers and has no way to know the number is
-     * made up, so it would state a false price with total confidence. Naming
-     * the gap is the only answer that is true.
-     */
-    static String px(PriceFeed.Px q) {          // package-visible for the lesson test
-        return q != null && q.priced() ? q.price().toPlainString() : "unavailable (feed is down)";
-    }
-
     private static String p(BigDecimal v) {
         return v == null ? "0" : v.stripTrailingZeros().toPlainString();
+    }
+
+    /**
+     * A price for the prompt, or the word for not having one.
+     *
+     * This used to be a bare btc.price().toPlainString(), which was safe only
+     * because PriceFeed had a hardcoded constant for exactly these two
+     * symbols. Deleting the fabrication made price() genuinely nullable and
+     * left this dereference behind, so a feed outage stopped being a missing
+     * number in Rita's prompt and became a NullPointerException that took the
+     * whole support endpoint to a 500. HttpApi was updated for the same
+     * change; this was not.
+     *
+     * Telling the model "unavailable" is also just correct: it is instructed
+     * never to invent data, and a price it does not have is exactly the thing
+     * it must not fill in.
+     */
+    static String px(PriceFeed.Px p) {
+        return p != null && p.priced() ? p.price().toPlainString() : "unavailable";
     }
 
     /** find `"key":` and walk the JSON STRING that follows, unescaping ·

@@ -104,8 +104,8 @@ class AssetRegistryLessonTest {
 
         // and the money agrees with the table: a trade placed through the
         // registry lands in exactly the account the ternary used to pick
-        Products.trade(UUID.randomUUID(), IGOR, "btc", true, eur("100.00"), eur("50000.00"));
-        Products.trade(UUID.randomUUID(), IGOR, "aapl", true, eur("200.00"), eur("250.00"));
+        Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, "btc", true, eur("100.00"), eur("50000.00"));
+        Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, "aapl", true, eur("200.00"), eur("250.00"));
         assertEquals(0, eur("0.002").compareTo(home.balance(IGOR + Products.BTC)), "bitcoin, in 210");
         assertEquals(0, eur("0.8").compareTo(home.balance(IGOR + Products.AAPL)), "apple, in 310");
     }
@@ -124,7 +124,7 @@ class AssetRegistryLessonTest {
         // a customer who has never touched MSFT does not hold MSFT
         assertFalse(home.hasAccount(msftAcct), "no trade, no account");
 
-        Products.trade(UUID.randomUUID(), IGOR, MSFT, true, eur("400.00"), eur("400.00"));
+        Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, MSFT, true, eur("400.00"), eur("400.00"));
 
         assertNotEquals(IGOR + Products.AAPL, msftAcct, "THE bug: this used to be apple's account");
         assertNotEquals(IGOR + Products.BTC, msftAcct);
@@ -147,7 +147,7 @@ class AssetRegistryLessonTest {
         Shard home = Shards.forCustomer(IGOR);
 
         assertThrows(AssetRegistry.UnknownAsset.class,
-                () -> Products.trade(UUID.randomUUID(), IGOR, "TSLA", true, eur("100.00"), eur("200.00")),
+                () -> Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, "TSLA", true, eur("100.00"), eur("200.00")),
                 "an instrument nobody listed has no account · say so, do not pick apple's");
         assertThrows(AssetRegistry.UnknownAsset.class,
                 () -> Products.settleFill(UUID.randomUUID(), IGOR, "tsla", true, eur("1"), eur("200.00")),
@@ -163,9 +163,9 @@ class AssetRegistryLessonTest {
     @DisplayName("lesson 4: all three travel · a registry holding is not in OFFSETS, and must move anyway")
     void lesson4_relocationMovesEveryAssetAccount() throws Exception {
         Shard eu = Shards.s(EU), uk = Shards.s(UK);
-        Products.trade(UUID.randomUUID(), IGOR, "btc", true, eur("100.00"), eur("50000.00"));
-        Products.trade(UUID.randomUUID(), IGOR, "aapl", true, eur("200.00"), eur("250.00"));
-        Products.trade(UUID.randomUUID(), IGOR, MSFT, true, eur("400.00"), eur("400.00"));
+        Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, "btc", true, eur("100.00"), eur("50000.00"));
+        Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, "aapl", true, eur("200.00"), eur("250.00"));
+        Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, MSFT, true, eur("400.00"), eur("400.00"));
 
         long msftAcct;
         try (Connection c = eu.open()) {
@@ -210,7 +210,7 @@ class AssetRegistryLessonTest {
 
         // and the holding still works in the new region · the reported bug,
         // in its new form
-        Products.trade(UUID.randomUUID(), IGOR, MSFT, true, eur("100.00"), eur("400.00"));
+        Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, MSFT, true, eur("100.00"), eur("400.00"));
         assertEquals(0, msftBefore.add(eur("0.25")).compareTo(uk.balance(msftAcct)),
                 "buying more microsoft must work after a move");
     }
@@ -220,7 +220,7 @@ class AssetRegistryLessonTest {
     @DisplayName("lesson 5: repair · a stranded registry-allocated holding comes home too")
     void lesson5_repairBringsAStrandedHoldingHome() throws Exception {
         Shard eu = Shards.s(EU), uk = Shards.s(UK);
-        Products.trade(UUID.randomUUID(), IGOR, MSFT, true, eur("400.00"), eur("400.00"));
+        Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, MSFT, true, eur("400.00"), eur("400.00"));
         long msftAcct;
         try (Connection c = eu.open()) {
             msftAcct = AssetRegistry.bySymbol(c, MSFT).holdingFor(IGOR);

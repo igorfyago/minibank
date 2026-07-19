@@ -59,8 +59,18 @@ class RelocationShelfLessonTest {
     }
 
     @AfterAll
-    static void unplug() {
+    static void unplug() throws Exception {
         Shards.setResolver(null);   // stage-5 lessons keep their arithmetic router
+        // AND put the routing table back. This class is the one that MOVES a
+        // customer between regions, so it is the one that leaves the directory
+        // saying igor lives in uk with a shelf routed there. Unsetting the
+        // resolver hides that from tests that route arithmetically, but any
+        // later test that consults the directory inherits a customer who
+        // relocated during somebody else's lesson · which is how
+        // SettlementSagaLessonTest.lesson6 came to look for a rejection event
+        // on a shard the rejection was never written to. A test that mutates
+        // global routing owns cleaning it up.
+        Fixtures.resetDirectory();
     }
 
     /** igor lives in eu with a FULL shelf: cash, savings, bitcoin, apple,
@@ -82,8 +92,8 @@ class RelocationShelfLessonTest {
         // savings: a plain transfer between his own accounts
         home.transferLocal(UUID.randomUUID(), IGOR, IGOR + Products.SAVINGS, eur("150.00"));
         // assets: two currencies on the books
-        Products.trade(UUID.randomUUID(), IGOR, "btc", true, eur("100.00"), eur("50000.00"));
-        Products.trade(UUID.randomUUID(), IGOR, "aapl", true, eur("200.00"), eur("250.00"));
+        Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, "btc", true, eur("100.00"), eur("50000.00"));
+        Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, "aapl", true, eur("200.00"), eur("250.00"));
         // a card debt · the balance that travels the OTHER way
         home.transferLocal(UUID.randomUUID(), IGOR + Products.CARD, Shard.CAFE, eur("75.00"));
         // a loan drawn down · a bigger liability
@@ -147,10 +157,10 @@ class RelocationShelfLessonTest {
         // this is the exact failure the app reported: buying apple stock
         // looked up account <customer>+300 on the new home and found nothing
         assertInstanceOf(Ledger.Ok.class,
-                Products.trade(UUID.randomUUID(), IGOR, "aapl", true, eur("50.00"), eur("250.00")),
+                Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, "aapl", true, eur("50.00"), eur("250.00")),
                 "buying apple stock must work in the new region");
         assertInstanceOf(Ledger.Ok.class,
-                Products.trade(UUID.randomUUID(), IGOR, "btc", true, eur("50.00"), eur("50000.00")));
+                Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, "btc", true, eur("50.00"), eur("50000.00")));
         assertInstanceOf(Ledger.Ok.class,
                 Shards.forCustomer(IGOR).transferLocal(
                         UUID.randomUUID(), IGOR, IGOR + Products.SAVINGS, eur("25.00")),

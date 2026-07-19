@@ -66,10 +66,7 @@ class SettlementSagaLessonTest {
             }
             s.createSchema();
         }
-        try (Connection c = BrokerDb.open(); var st = c.createStatement()) {
-            st.execute("SET lock_timeout = '4s'");
-            st.execute("TRUNCATE fills, orders, positions, watchlist, account_link, outbox");
-        }
+        dev.minibank.ledger.Fixtures.resetBrokerDb();
         Catalog.seed();
         VENUE.reset();
 

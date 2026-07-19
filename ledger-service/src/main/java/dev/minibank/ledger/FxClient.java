@@ -18,7 +18,29 @@ import java.util.regex.Pattern;
  */
 public final class FxClient {
 
-    public record Rate(BigDecimal rate, String source) {}
+    /** The one source string that means NOBODY EVER QUOTED THIS · see {@link Rate#observed}. */
+    public static final String FALLBACK_SOURCE = "fx down · fallback";
+
+    public record Rate(BigDecimal rate, String source) {
+
+        /**
+         * Whether this rate was ever quoted by anything.
+         *
+         * "live" and "fx down · last good" are both observations · one is
+         * current, one has an old timestamp, and both were true of the
+         * market at some moment. STATIC_FALLBACK is not: 0.88 is a constant
+         * someone typed, and a number derived from it is a fact about
+         * nothing.
+         *
+         * Callers that merely need the money path to keep moving may use it
+         * anyway · that is what the fallback is for. Callers that PUBLISH a
+         * figure must not present it as a price, which is what this method
+         * exists to let them ask.
+         */
+        public boolean observed() {
+            return !FALLBACK_SOURCE.equals(source);
+        }
+    }
 
     private static final String BASE = System.getenv().getOrDefault("FX_URL", "http://localhost:8090");
     private static final BigDecimal STATIC_FALLBACK = new BigDecimal("0.88");
@@ -59,7 +81,7 @@ public final class FxClient {
             Metrics.inc("minibank_fx_lookups_total", "source=\"down\"");
             Rate lg = lastGood;
             return lg != null ? new Rate(lg.rate(), "fx down · last good")
-                              : new Rate(STATIC_FALLBACK, "fx down · fallback");
+                              : new Rate(STATIC_FALLBACK, FALLBACK_SOURCE);
         }
     }
 }

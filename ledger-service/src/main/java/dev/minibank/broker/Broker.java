@@ -174,8 +174,18 @@ public final class Broker {
             }
 
             // the event the ledger will settle against · same commit as the
-            // fill, because the alternative is a fill nobody ever pays for
-            BigDecimal cash = fill.qty().multiply(fill.price()).setScale(2, RoundingMode.HALF_UP);
+            // fill, because the alternative is a fill nobody ever pays for.
+            //
+            // THE SAME FUNCTION THE POSITION USES. This used to be
+            // qty*price, with the fee excluded, while advance() added that
+            // fee to the cost basis · so the venue's commission was charged
+            // to the customer's basis and no money ever moved for it. The
+            // books disagreed about MONEY by exactly the fee on every single
+            // fill, and neither invariant could see it: reconciliation
+            // compares quantities, and sum-zero cannot notice an entry that
+            // was never written. One rule, called from both places, is the
+            // only way those two numbers stay the same number.
+            BigDecimal cash = consideration(order.side(), fill.qty(), fill.price(), fill.fee());
             BrokerDb.appendOutbox(c, TOPIC_ORDERS, "filled:" + fillId,
                     "{\"type\":\"order.filled\",\"fillId\":\"" + fillId +
                     "\",\"orderId\":\"" + orderId +
@@ -295,19 +305,38 @@ public final class Broker {
      */
     private static void applyToPosition(Connection c, long customerId, String symbol, String side,
                                         BigDecimal qty, BigDecimal price, BigDecimal fee) throws SQLException {
-        Position p = positionOn(c, customerId, symbol);
+        Position moved = advance(positionOn(c, customerId, symbol), side, qty, price, fee);
+        store(c, moved);
+    }
+
+    /**
+     * The arithmetic on its own, as a pure function · one position in, one
+     * position out, no database.
+     *
+     * It lives here rather than inline in applyToPosition because there is a
+     * second caller that has to produce IDENTICAL numbers: the replay that
+     * rebuilds a position from its whole fill history. Average cost is
+     * order-dependent · a sell realises against the average at that moment ·
+     * so "apply the next fill" and "replay every fill" must be the same rule
+     * or a rebuilt position will quietly disagree with an incrementally
+     * maintained one. Two copies of this rule would be two answers to what a
+     * holding cost, which is the exact ambiguity a cost basis exists to
+     * remove.
+     */
+    public static Position advance(Position p, String side, BigDecimal qty,
+                                   BigDecimal price, BigDecimal fee) {
         BigDecimal newQty, newBasis, newRealized = p.realizedPnl();
 
         if ("buy".equals(side)) {
             newQty = p.qty().add(qty);
-            newBasis = p.costBasis().add(qty.multiply(price)).add(fee);
+            newBasis = p.costBasis().add(consideration(side, qty, price, fee));
         } else {
             if (qty.compareTo(p.qty()) > 0)
                 throw new IllegalArgumentException("cannot sell " + qty.toPlainString()
-                        + " " + symbol + ": position is " + p.qty().toPlainString());
+                        + " " + p.symbol() + ": position is " + p.qty().toPlainString());
             BigDecimal avg = p.averageCost();
             BigDecimal costOut = avg.multiply(qty);
-            BigDecimal proceeds = qty.multiply(price).subtract(fee);
+            BigDecimal proceeds = consideration(side, qty, price, fee);
             newRealized = p.realizedPnl().add(proceeds).subtract(costOut);
             newQty = p.qty().subtract(qty);
             newBasis = p.costBasis().subtract(costOut);
@@ -315,7 +344,42 @@ public final class Broker {
             // away rather than carrying a fraction of a cent forever
             if (newQty.signum() == 0) newBasis = BigDecimal.ZERO;
         }
+        return new Position(p.customerId(), p.symbol(), newQty, newBasis, newRealized);
+    }
 
+    /**
+     * WHAT THE FILL ACTUALLY COSTS, in money · the one number both books use.
+     *
+     * A buy costs the notional PLUS the venue's commission; a sell returns the
+     * notional MINUS it. That is not an accounting convention, it is what
+     * leaves and arrives in the customer's account, and it is therefore both
+     * the cash the ledger moves and the basis the position carries.
+     *
+     * IT ROUNDS HERE, ONCE, AND ON PURPOSE. Money is two decimals and quantity
+     * is eight, so qty*price is very often not a payable amount. Rounding in
+     * the settlement event while the position kept the unrounded product left
+     * the two books disagreeing by up to half a cent per fill even at zero
+     * fee · small, permanent, and invisible to a quantity-only invariant.
+     * Rounding inside this function instead means the basis records what was
+     * actually paid, which is what a cost basis is supposed to be.
+     *
+     * Being a pure function of (side, qty, price, fee) is what keeps
+     * {@link Backfill#rebuild} honest: replaying a fill history reproduces the
+     * same considerations, so a rebuilt position and an incrementally
+     * maintained one still cannot disagree.
+     */
+    public static BigDecimal consideration(String side, BigDecimal qty,
+                                           BigDecimal price, BigDecimal fee) {
+        BigDecimal gross = qty.multiply(price);
+        BigDecimal net = "buy".equals(side) ? gross.add(fee) : gross.subtract(fee);
+        return net.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /** Write a position down · the projection's only writer. */
+    static void store(Connection c, Position p) throws SQLException {
+        long customerId = p.customerId();
+        String symbol = p.symbol();
+        BigDecimal newQty = p.qty(), newBasis = p.costBasis(), newRealized = p.realizedPnl();
         try (PreparedStatement ps = c.prepareStatement("""
                 INSERT INTO positions(customer_id, symbol, qty, cost_basis, realized_pnl, updated_at)
                 VALUES (?,?,?,?,?, now())

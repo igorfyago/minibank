@@ -217,7 +217,46 @@ public final class Products {
     // ------------------------------------------------------------------
     // the trade: one transaction, two currencies, four entries
     // ------------------------------------------------------------------
-    public static Ledger.TransferResult trade(UUID txId, long customerId, String asset,
+
+    /**
+     * RESTRICTED · THIS IS NOT A WAY TO BUY ANYTHING ANY MORE.
+     *
+     * It was, and that was the bug. This method writes an asset position
+     * into the ledger directly, without an order, without a fill, and
+     * without telling the broker · which owns positions, cost basis and
+     * order history. Every call made the two books disagree by exactly the
+     * quantity it wrote, and nothing in either service noticed, because
+     * each one was internally consistent the whole time. The ledger's
+     * sum-zero and drift audits passed on every one of these trades.
+     *
+     * THE RULE NOW: the broker originates an asset move, the ledger records
+     * its consequence. An asset position is acquired by placing an order
+     * (BrokerClient / POST /api/orders), which fills, which settles through
+     * {@link #settleFill}. That is the only supported path, and /api/trade
+     * now takes it like everything else.
+     *
+     * WHY IT STILL EXISTS, rather than being deleted:
+     *
+     *   1. It TEACHES the multi-currency transaction · one transaction, two
+     *      currencies, four entries, each currency summing to zero on its
+     *      own. That lesson is about the LEDGER, and running it through a
+     *      venue and a Kafka round trip would bury the thing being taught.
+     *   2. The reconciliation has to be provable. The strongest test of an
+     *      invariant that catches escaped write paths is to escape one on
+     *      purpose and watch it get caught, and this is the escape hatch
+     *      that test uses.
+     *
+     * The name is the enforcement. There is no way to call this without
+     * saying, at the call site, that the broker is not involved · and the
+     * reconciliation will report every transaction it writes as a
+     * divergence, which is the alarm doing its job rather than a false
+     * positive.
+     *
+     * @deprecated not for product code · use the order path. Kept reachable
+     *             for the ledger lessons and for the reconciliation test.
+     */
+    @Deprecated
+    public static Ledger.TransferResult tradeWithoutBroker(UUID txId, long customerId, String asset,
                                               boolean buy, BigDecimal eur, BigDecimal price) throws SQLException {
         if (eur.signum() <= 0 || price.signum() <= 0) throw new IllegalArgumentException("amount and price must be positive");
         BigDecimal units = eur.divide(price, 8, RoundingMode.HALF_UP);
@@ -368,21 +407,41 @@ public final class Products {
      * Record that settlement was REFUSED, and tell the broker.
      *
      * No money moves, so there is nothing to write entries for · but the
-     * refusal still has to be a durable, idempotent fact, or a redelivered
-     * fill would produce a second rejection event and the broker would
-     * compensate twice. The gate is a deterministic id derived from the
-     * fill, the same trick the saga's refund already uses.
+     * refusal still has to be a durable, idempotent fact.
+     *
+     * THE GATE IS THE FILL ID, and it took a real bug to get that right. This
+     * used to claim a DERIVED id (refuse:fillId), which made the refusal
+     * idempotent against a second REJECTION and left it wide open to a second
+     * SETTLEMENT. settleFill's only gate is claimTx(fillId, "settle:..."),
+     * and that claim is rolled back together with the InsufficientFunds
+     * refusal · so the fill id was still unclaimed, and Settlement.handle
+     * calls settleFill unconditionally on every delivery. Kafka is
+     * at-least-once by this saga's own admission, so any rebalance, restart
+     * on an uncommitted offset or manual replay re-attempted a settlement
+     * that had already been unwound. If the customer had been topped up in
+     * between, the money moved · for a position the broker had already taken
+     * back, against an order that says 'rejected'. Reconciliation could see
+     * the resulting gap and nothing on earth knew how to close it.
+     *
+     * Claiming the FILL ID means a refused fill is a fill this ledger has
+     * finished with, whatever the outcome was. A redelivery now loses the
+     * claim race inside settleFill and returns AlreadyProcessed before it
+     * touches an account.
+     *
+     * The kind is 'settle-refused', which deliberately does NOT match the
+     * 'settle:%' pattern Reconciliation uses to find settled fills · a
+     * refused fill must keep counting as in-flight until the compensation
+     * moves the order to 'rejected', and relabelling it as settled would
+     * excuse the very gap the audit exists to see.
      */
     public static void recordSettlementRefusal(UUID fillId, long customerId, String symbol,
                                                boolean buy, BigDecimal units, String reason)
             throws SQLException {
-        UUID refusalId = UUID.nameUUIDFromBytes(
-                ("refuse:" + fillId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
         Shard home = Shards.forCustomer(customerId);
         try (Connection conn = home.open()) {
             conn.setAutoCommit(false);
             try {
-                if (!Ledger.claimTx(conn, refusalId, "settle-refused")) {
+                if (!Ledger.claimTx(conn, fillId, "settle-refused")) {
                     conn.rollback();
                     return;                                   // already told them
                 }

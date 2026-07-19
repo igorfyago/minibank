@@ -4,168 +4,139 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#0d1117">
-<title>Portfolio · minibank</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" href="/portfolio/icon.svg">
+<link rel="apple-touch-icon" href="/portfolio/icon.svg">
+<title>Investments · minibank</title>
 <style>
+  /* ================================================================
+     THE BANK'S STYLESHEET, NOT A SECOND ONE.
+     Every rule below is copied verbatim from web/index.html. The two
+     pages cannot share a file today (BrokerApi roots static at
+     /web-broker, HttpApi at /web) so this is a copy · but a copy of
+     the tokens is not a licence to drift from them. Nothing here is
+     invented: no eleventh colour, no third font stack, no button size
+     the bank does not have, no breakpoint outside its set.
+     ================================================================ */
   :root { --bg:#0d1117; --panel:#161b22; --line:#21262d; --text:#e6edf3; --dim:#8b949e;
           --green:#3fb950; --red:#f85149; --amber:#d29922; --accent:#58a6ff; --violet:#bc8cff; }
-
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui,'Segoe UI',sans-serif;
-         -webkit-text-size-adjust:100%; }
-  main { max-width:1100px; margin:0 auto; padding:14px; padding-bottom:46px; }
-  .phone { max-width:540px; margin:0 auto; }
-
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px; overflow-x:auto; }
-  .card h2 { font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; margin:0 0 10px; }
-
-  /* ---------- the notice · deliberately the loudest thing on the page ---------- */
-  .sim { display:flex; gap:10px; align-items:flex-start; border:1px solid var(--amber);
-         border-radius:12px; padding:11px 13px; margin-bottom:14px;
-         background:rgba(210,153,34,.10); }
-  .sim-ic { font-size:15px; line-height:1.2; }
-  .sim b { display:block; font:700 11px system-ui; letter-spacing:.08em; text-transform:uppercase;
-           color:var(--amber); margin-bottom:2px; }
-  .sim p { margin:0; font-size:12px; color:var(--dim); }
-  .sim.live { border-color:var(--red); background:rgba(248,81,73,.10); }
-  .sim.live b { color:var(--red); }
-
-  /* ---------- header ---------- */
-  .head { background:radial-gradient(130% 150% at 0% 0%, rgba(188,140,255,.13), transparent 45%),
-          radial-gradient(100% 130% at 100% 0%, rgba(88,166,255,.08), transparent 40%), var(--panel);
-          border:1px solid var(--line); border-radius:18px; padding:18px; margin-bottom:14px; }
-  .head h1 { font:600 13px system-ui; letter-spacing:.05em; text-transform:uppercase;
-             color:var(--dim); margin:0 0 2px; }
-  .pv-label { font-size:11px; color:var(--dim); }
-  .pv { font-size:40px; font-weight:750; letter-spacing:-.5px; margin:2px 0 12px;
-        font-variant-numeric:tabular-nums; line-height:1.1; overflow-wrap:break-word; }
-  .pnl-rows { display:flex; flex-direction:column; gap:7px; border-top:1px solid var(--line); padding-top:11px; }
-  .pnl-row { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
-  .pnl-row > span { font:700 10.5px system-ui; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
-  .pnl-val { font-family:'Cascadia Code', Consolas, monospace; font-size:13px; font-weight:650;
-             font-variant-numeric:tabular-nums; text-align:right; }
-  .pnl-val .pct { font-size:11.5px; opacity:.85; margin-left:6px; }
-
-  /* ---------- holdings ---------- */
-  .hrow { border-top:1px solid var(--line); padding:11px 2px; cursor:pointer;
-          transition:background .15s; position:relative; }
-  .hrow:first-child { border-top:none; }
-  .hrow:hover { background:rgba(255,255,255,.035); }
-  .hrow.open { background:rgba(255,255,255,.02); }
-  .hgrid { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(0,1fr) minmax(0,1fr);
-           gap:8px; align-items:start; }
-  .hgrid.noday { grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); }
-  .thead { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(0,1fr) minmax(0,1fr);
-           gap:8px; padding:0 2px 8px; }
-  .thead.noday { grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); }
-  .thead span { font:700 10px system-ui; letter-spacing:.07em; text-transform:uppercase; color:var(--dim); }
-  .thead span:not(:first-child), .hgrid > div:not(:first-child) { text-align:right; }
-
-  .tkr { font:650 14px system-ui; }
-  .exch { font-family:'Cascadia Code', Consolas, monospace; font-size:9.5px; color:var(--dim);
-          margin-left:5px; letter-spacing:.02em; }
-  .cname { font-size:11px; color:var(--dim); margin-top:1px; overflow-wrap:break-word; }
-  .mv { font-family:'Cascadia Code', Consolas, monospace; font-size:13.5px; font-weight:650;
-        font-variant-numeric:tabular-nums; }
-  .sub { font-family:'Cascadia Code', Consolas, monospace; font-size:10.5px; color:var(--dim);
-         margin-top:1px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
-  .day { font-family:'Cascadia Code', Consolas, monospace; font-size:13px; font-weight:650;
-         font-variant-numeric:tabular-nums; }
-
+  * { box-sizing:border-box; margin:0; scrollbar-width:thin; scrollbar-color:#2a3140 transparent; }
+  *::-webkit-scrollbar { width:8px; height:8px; }
+  *::-webkit-scrollbar-thumb { background:#2a3140; border-radius:999px; }
+  *::-webkit-scrollbar-thumb:hover { background:#3a4356; }
+  *::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background:transparent; }
+  body { background:var(--bg); color:var(--text); font:14px/1.5 system-ui,'Segoe UI',sans-serif; }
+  header { display:flex; align-items:center; gap:20px; padding:14px 22px; border-bottom:1px solid var(--line); }
+  h1 { font-size:17px; font-weight:650; }
+  h1 span { color:var(--accent); }
+  nav { display:flex; gap:6px; margin-left:auto; }
+  .tab-btn { background:none; border:1px solid var(--line); color:var(--dim); padding:6px 16px;
+             border-radius:999px; font:600 13px system-ui; cursor:pointer; }
+  .tab-btn.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  main { max-width:1100px; margin:0 auto; padding:22px; }
+  .phone { max-width: 540px; margin: 0 auto; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px;
+          overflow-x:auto; }
+  .card h2 { font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; margin-bottom:10px; }
+  .muted { color:var(--dim); font-size:12px; }
   .amount-pos { color:var(--green); } .amount-neg { color:var(--red); }
-  .na { color:var(--dim); font-weight:400; font-size:11.5px; letter-spacing:.02em; cursor:help;
-        border-bottom:1px dotted var(--line); }
-  .flag { display:inline-block; margin-left:6px; padding:1px 6px; border-radius:999px;
-          border:1px solid var(--amber); color:var(--amber); font:600 9px system-ui;
-          text-transform:uppercase; letter-spacing:.05em; vertical-align:1px; }
+  .hidden { display:none !important; }
 
-  /* ---------- expansion ---------- */
-  .hx { margin-top:11px; border-top:1px solid var(--line); padding-top:11px; cursor:default; }
-  .dl { display:grid; grid-template-columns:1fr 1fr; gap:7px 12px; margin-bottom:11px; }
-  .dl > div { display:flex; justify-content:space-between; align-items:baseline; gap:8px;
-              border-top:1px solid rgba(255,255,255,.04); padding-top:5px; }
-  .dl span { font-size:10.5px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; }
-  .dl b { font-family:'Cascadia Code', Consolas, monospace; font-size:12px; font-weight:650;
-          font-variant-numeric:tabular-nums; text-align:right; }
-  .basis { font-size:10.5px; color:var(--dim); margin:-4px 0 10px; }
+  .acct-card { background:radial-gradient(130% 150% at 0% 0%, rgba(188,140,255,.13), transparent 45%),
+               radial-gradient(100% 130% at 100% 0%, rgba(88,166,255,.08), transparent 40%), var(--panel); }
+  .acct-card, .tx-card { border-radius:18px; }
+  .tx-card { margin-top:14px; }
+  .acct-label { color:var(--dim); font-size:12px; font-weight:600; }
+  .balance-num { font-size:46px; font-weight:750; margin:4px 0 10px; letter-spacing:-.5px;
+                 font-variant-numeric:tabular-nums; overflow-wrap:break-word; }
 
-  .amt-row { display:flex; align-items:center; gap:8px; margin-bottom:9px; }
-  .amt-row label { font:700 10.5px system-ui; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
-  input { background:var(--bg); border:1px solid var(--line); color:var(--text); padding:9px 10px;
-          border-radius:8px; font:14px system-ui; }
-  .amt-row input { flex:1; min-width:0; font-variant-numeric:tabular-nums;
-                   font-family:'Cascadia Code', Consolas, monospace; font-size:13px; }
-  .acts { display:flex; gap:8px; }
-  .side-btn { flex:1; height:40px; border:none; border-radius:8px; color:#fff;
-              font:700 13px system-ui; cursor:pointer; transition:filter .15s, transform .1s; }
-  .side-btn:hover { filter:brightness(1.12); }
-  .side-btn:active { transform:scale(.985); }
-  .side-btn:disabled { opacity:.45; cursor:not-allowed; filter:none; transform:none; }
-  .buy  { background:linear-gradient(135deg, var(--accent), var(--violet)); }
-  .sell { background:none; border:1px solid var(--line); color:var(--text); }
-  .sell:hover { border-color:var(--violet); color:var(--violet); filter:none; }
-  .msg { margin-top:9px; font-size:11.5px; min-height:16px; overflow-wrap:anywhere; }
+  .prod-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; }
+  .prod { min-width:0; position:relative; transition:border-color .15s, transform .15s; }
+  .prod { border:1px solid var(--line); border-radius:14px; padding:11px 13px; }
+  .prod.expandable:hover { border-color:var(--violet); transform:translateY(-1px); cursor:pointer; }
+  .prod.open { border-color:var(--violet); }
+  .prod-chev { position:absolute; top:9px; right:12px; color:var(--dim); font:600 17px system-ui;
+    transition:transform .2s, color .2s; }
+  .prod.open .prod-chev { transform:rotate(90deg); color:var(--violet); }
+  .prod-val, .prod-sub { overflow-wrap:break-word; }
+  .prod-name { color:var(--dim); font-size:11.5px; font-weight:650; }
+  .prod-val { font-size:16px; font-weight:700; margin:3px 0 1px; font-variant-numeric:tabular-nums; }
+  .prod-sub { color:var(--dim); font-size:11px; min-height:14px; }
+  .prod-btns { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+  .prod-x { margin-top:10px; border-top:1px solid var(--line); padding-top:10px; }
+  .mini { background:none; border:1px solid var(--line); color:var(--text); padding:3px 10px;
+          border-radius:7px; font:600 11px system-ui; cursor:pointer; }
+  .mini:hover { border-color:var(--violet); color:var(--violet); }
+  .mini:disabled { opacity:.45; cursor:not-allowed; border-color:var(--line); color:var(--text); }
 
-  /* ---------- watchlist ---------- */
-  .wrow { display:flex; justify-content:space-between; align-items:baseline; gap:12px;
-          border-top:1px solid var(--line); padding:9px 2px; }
-  .wrow:first-child { border-top:none; }
-  .wpx { font-family:'Cascadia Code', Consolas, monospace; font-size:13px; font-weight:650;
-         font-variant-numeric:tabular-nums; }
+  .sl-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+  .sl-row input[type=range] { flex:1; accent-color:var(--violet); min-width:0; }
+  .sl-row b { font-variant-numeric:tabular-nums; min-width:56px; text-align:right; }
+  .ph { margin-top:9px; }
+  .ph-row { display:flex; justify-content:space-between; font-size:11px; color:var(--dim); padding:2px 0;
+    border-top:1px solid rgba(255,255,255,.04); font-variant-numeric:tabular-nums; }
+  .chip { font-size:10.5px; border:1px solid var(--line); border-radius:999px; padding:1.5px 8px; color:var(--dim); flex:none; }
 
-  .muted { color:var(--dim); font-size:11.5px; }
-  .notes { margin-top:14px; }
-  .notes p { margin:0 0 7px; color:var(--dim); font-size:11.5px; line-height:1.55; }
-  .notes p:last-child { margin-bottom:0; }
-  .sk { background:linear-gradient(90deg, #161c28 25%, #202939 37%, #161c28 63%); border-radius:6px;
-        animation:sh 1.2s linear infinite; background-size:200% 100%; }
-  @keyframes sh { to { background-position:-200% 0; } }
-  .spacer { margin-bottom:14px; }
+  .sk { background:linear-gradient(90deg, #161c28 25%, #202939 37%, #161c28 63%);
+    background-size:400% 100%; animation:skm 1.3s ease infinite; border-radius:7px; }
+  @keyframes skm { 0% { background-position:100% 0; } 100% { background-position:0 0; } }
+  .sk-tile { border:1px solid var(--line); border-radius:14px; padding:11px 13px; height:96px; }
 
-  @media (max-width:760px) {
-    main { padding:12px; padding-bottom:46px; }
-    .pv { font-size:34px; }
-    .dl { grid-template-columns:1fr; }
-    .tkr { font-size:13.5px; }
-    .mv, .day { font-size:12.5px; }
+  /* the bank's footnote block · one hairline, one short line, never a stack
+     of paragraphs under the fold */
+  #guide-hint { color:var(--dim); font-size:11.5px; margin-top:10px; border-top:1px solid var(--line); padding-top:9px; }
+
+  /* mobile: the same page, pocket-sized · the bank's own breakpoint and its
+     own two changes, nothing extra */
+  @media (max-width: 760px) {
+    header { padding:10px 12px; gap:10px; }
+    nav { overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+    nav::-webkit-scrollbar { display:none; }
+    .tab-btn { padding:5px 12px; font-size:12px; white-space:nowrap; }
+    main { padding:12px; }
+    .balance-num { font-size:38px; }
   }
-  @media (max-width:380px) {
-    .pv { font-size:30px; }
-    .hgrid { gap:6px; }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation:none !important; transition:none !important; }
   }
-  @media (prefers-reduced-motion: reduce) { .sk { animation:none; } }
 </style>
 </head>
 <body>
-<main class="phone">
+<header>
+  <h1>mini<span>bank</span></h1>
+  <nav>
+    <button class="tab-btn on">Investments</button>
+    <a class="tab-btn" id="bank-link" href="#" style="text-decoration:none">Bank</a>
+  </nav>
+</header>
+<main>
+  <div class="phone">
 
-  <div class="sim" id="sim">
-    <div class="sim-ic">▲</div>
-    <div>
-      <b id="sim-title">Simulated book</b>
-      <p id="sim-text">These positions are a teaching simulation inside minibank. No real order ever
-        reaches a market, and none of this is a record of real trading or investment advice.</p>
+    <div class="card acct-card">
+      <div class="acct-label" id="pv-label">Investments · EUR</div>
+      <div class="balance-num" id="pv"><span class="sk" style="display:inline-block;width:190px;height:44px;border-radius:12px;vertical-align:middle"></span></div>
+      <div class="muted" id="day" style="margin:-4px 0 6px; font-size:13px"></div>
+      <div class="ph" id="pnl"></div>
     </div>
-  </div>
 
-  <div class="head">
-    <h1>Portfolio</h1>
-    <div class="pv-label">Securities value <span class="muted">· cash excluded</span></div>
-    <div class="pv" id="pv"><div class="sk" style="width:62%;height:34px"></div></div>
-    <div class="pnl-rows" id="pnl"></div>
-  </div>
+    <div class="card tx-card">
+      <h2>Holdings</h2>
+      <div class="prod-grid" id="holdings">
+        <div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div>
+        <div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div>
+      </div>
+    </div>
 
-  <div class="card spacer">
-    <h2>Your holdings</h2>
-    <div id="thead"></div>
-    <div id="holdings"><div class="sk" style="width:100%;height:52px"></div></div>
-  </div>
+    <div class="card tx-card">
+      <h2>Watchlist</h2>
+      <div id="watchlist"><div class="prod-grid">
+        <div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div>
+        <div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div>
+      </div></div>
+      <div id="guide-hint"></div>
+    </div>
 
-  <div class="card spacer">
-    <h2>Watchlist</h2>
-    <div id="watchlist"><div class="sk" style="width:100%;height:34px"></div></div>
   </div>
-
-  <div class="notes" id="notes"></div>
 </main>
 
 <script>
@@ -177,7 +148,6 @@
 /** Money and quantities cross the wire as STRINGS (or bare null) on purpose ·
  *  the eighth decimal of a bitcoin position does not survive a double. */
 const num = s => (s === null || s === undefined || s === '') ? null : Number(s);
-
 const isNum = v => v !== null && v !== undefined && Number.isFinite(v);
 
 /** en-US grouping on a EUR amount · the house convention, matched deliberately. */
@@ -199,10 +169,8 @@ function fmtSignedEur(v) {
 function fmtPct(v) {
   const n = num(v);
   if (!isNum(n)) return null;
-  // Zero takes no sign. fmtSignedEur already guards this ("+€0.00 claims a
-  // gain that did not happen") and this was left without the same guard, so
-  // a real loss whose percentage rounded to 0.00 rendered "+0.00%" in red
-  // beside a negative amount · a plus sign on a loss.
+  // Zero takes no sign, for the same reason fmtSignedEur refuses one: a real
+  // loss whose percentage rounds to 0.00 must not render '+0.00%' in red.
   const sign = n < 0 ? '−' : n > 0 ? '+' : '';
   return sign + Math.abs(n).toFixed(2) + '%';
 }
@@ -236,27 +204,19 @@ function sortHoldings(hs) {
   });
 }
 
-/** Does ANY row have a day number? Drives whether the column exists at all ·
- *  a column of blanks is worse than no column. */
-const anyDayData = hs => hs.some(h => isNum(num(h.dayChange)));
-
-/** A mark the feed could not establish. /api/watchlist and /api/instruments
- *  fail SOFT TO ZERO (BrokerApi.mark), unlike /api/portfolio which correctly
- *  nulls · so on those two a literal 0 means "no price", not "free". */
+/** A mark from /api/watchlist and /api/instruments, which fail SOFT TO ZERO
+ *  (BrokerApi.mark) unlike /api/portfolio · so on those two a literal 0 means
+ *  "no price", not "free". */
 const markUnavailable = v => { const n = num(v); return !isNum(n) || n === 0; };
 
-// A mark is "suspect" if it is not a live observation. 'cached' belongs here:
-// PriceFeed reuses the last good price whenever the upstream is down, and
-// refreshes the entry's timestamp each time it serves it, so a figure from
-// hours ago is handed over looking exactly like one from this second · while
-// the header says "Priced at <now>". A stale price is still a real price, so
-// the row keeps it and the total still stands; it just stops pretending to
-// be current.
-const priceSuspect = src => src === 'fallback' || src === 'unavailable' || src === 'cached';
+/** A price that is real but not current. PriceFeed serves the last good
+ *  observation when the upstream is down and labels it 'cached'; that is a
+ *  fact about a past moment, so the row keeps the number and simply stops
+ *  presenting it as this second's. (There is no longer a 'fallback' source to
+ *  handle here · the feed no longer invents a price to be handled.) */
+const priceStale = src => src === 'cached';
 
 // ===================================================================== view
-
-const NA = (why) => `<span class="na" title="${esc(why)}">not available</span>`;
 
 function esc(s) {
   return String(s == null ? '' : s)
@@ -264,26 +224,43 @@ function esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+/** The bank has no dotted-underline affordance and no invented "N/A" shape.
+ *  Its idiom for "we do not know" is plain dim text, so that is what this is. */
+const NA = why => `<span class="muted" title="${esc(why)}">not available</span>`;
+
 /** Identity, the permissive way: a bearer token wins server-side, and with
  *  none the query string stands. Same fallback as the rest of the estate. */
 const params   = new URLSearchParams(location.search);
 const customer = params.get('customer') || '10';
 
 const $ = id => document.getElementById(id);
-let open = null;      // symbol of the expanded row
+let open = null;      // symbol of the expanded tile
 let snap = null;      // last /api/portfolio payload
-// The order result has to survive the refresh that follows it · drawHoldings
-// rebuilds the row's innerHTML, so a message written straight into the DOM is
+let watch = null;     // last /api/watchlist payload
+let catalog = null;   // /api/instruments, for the empty watchlist invitation
+// The order result has to survive the refresh that follows it · draw()
+// rebuilds the tile's innerHTML, so a message written straight into the DOM is
 // erased a moment after the user earns it.
 let lastMsg = null;   // { symbol, html }
+const sliderVals = {};
+
+/** THE BANK IS ON ITS OWN HOSTNAME · the mirror of index.html's brokerHref.
+ *  Derived from the current host so dev and prod both work; local dev has no
+ *  bank./broker. split, so it falls back to the ledger's own port. */
+function bankHref() {
+  const h = location.hostname;
+  const base = h.startsWith('broker.')
+    ? location.protocol + '//bank.' + h.slice('broker.'.length)
+    : location.protocol + '//' + h + ':8080';
+  return base + '/?customer=' + encodeURIComponent(customer);
+}
 
 async function api(path, opts) {
-  // A rejected fetch (server down, DNS, offline) used to throw out of here,
-  // out of load(), and out of the bare call at the bottom of the file · the
-  // page then sat on its loading skeleton forever, shimmering, saying
-  // nothing. A portfolio that looks like it is still loading is worse than
-  // one that says it cannot load: the first is indistinguishable from a slow
-  // network, so nobody refreshes and nobody reports it.
+  // A rejected fetch (server down, DNS, offline) used to throw out of here and
+  // leave the page shimmering on its skeleton forever, saying nothing. A page
+  // that looks like it is still loading is worse than one that says it cannot
+  // load: the first is indistinguishable from a slow network, so nobody
+  // refreshes and nobody reports it.
   let r;
   try {
     r = await fetch(path, opts);
@@ -300,247 +277,306 @@ function drawHeader(p) {
   const a = p.aggregate;
   const mv = fmtEur(a.marketValue);
   $('pv').innerHTML = mv !== null ? esc(mv)
-    : NA(a.unpriced + ' holding(s) could not be priced, so the total is withheld rather than partly summed');
+    : NA(a.unpriced + ' holding(s) have no live mark, so the total is withheld rather than partly summed');
+
+  // TODAY, in the bank's sub-line position · rendered only when the backend
+  // actually established it. A withheld day change says so in one short line
+  // instead of a paragraph.
+  const day = fmtSignedEur(a.dayChange), dayPct = fmtPct(a.dayChangePct);
+  let dayHtml;
+  if (day !== null) {
+    dayHtml = `<span class="${signClass(a.dayChange)}">${esc(day)}${
+      dayPct !== null ? ' · ' + esc(dayPct) : ''}</span> today`;
+  } else if (a.holdings > 0) {
+    dayHtml = `<span class="muted" title="${esc(a.withoutPrevClose
+      + ' holding(s) had no prior close, so the day total is withheld rather than partly summed')
+      }">today's change not available</span>`;
+  } else {
+    dayHtml = '';
+  }
+
+  // WHETHER THE BIGGEST NUMBER ON THE PAGE IS CURRENT.
+  //
+  // `stale` counts marks served from the last known price because the
+  // upstream is down. Those are real observations with an old timestamp, so
+  // they legitimately sum into a total · but the total then describes a
+  // moment that has passed, and until now it rendered identically to a live
+  // one. The rows already badge themselves '· last known price' and the
+  // backend has shipped this count all along for exactly this purpose; the
+  // 46px balance figure above them said nothing. A qualifier that only ever
+  // appears on the row and never on the sum is a disclosure the headline
+  // reader never sees.
+  const staleHtml = a.stale > 0
+    ? `<span class="muted" title="${esc('the upstream feed is unreachable, so ' + a.stale
+        + ' of ' + a.holdings + ' holding(s) are marked at the last price actually observed')
+      }">${a.stale === a.holdings ? 'at last known prices'
+                                  : 'includes ' + a.stale + ' last known price(s)'}</span>`
+    : '';
+  $('day').innerHTML = [dayHtml, staleHtml].filter(Boolean).join(' · ');
 
   const rows = [];
-  // TODAY · rendered only when the backend actually established it.
-  if (a.dayChange !== null && a.dayChange !== undefined) {
-    rows.push(row('Today', a.dayChange, null));
-  } else if (a.holdings > 0) {
-    rows.push(`<div class="pnl-row"><span>Today</span><div class="pnl-val">${
-      NA(a.withoutPrevClose + ' holding(s) had no prior close, so the day total is withheld')}</div></div>`);
-  }
-  rows.push(row('Total unrealized', a.unrealized, a.unrealizedPct));
+  rows.push(row('Total P&L', a.unrealized, a.unrealizedPct));
   rows.push(row('Realized', a.realized, null));
   $('pnl').innerHTML = rows.join('');
 
   function row(label, v, pct) {
-    const s = fmtSignedEur(v);
-    const p2 = fmtPct(pct);
-    return `<div class="pnl-row"><span>${esc(label)}</span><div class="pnl-val ${signClass(v)}">${
-      s === null ? NA('not established by the feed') : esc(s)
-    }${p2 !== null ? `<span class="pct">${esc(p2)}</span>` : ''}</div></div>`;
+    const s = fmtSignedEur(v), p2 = fmtPct(pct);
+    return `<div class="ph-row"><span>${esc(label)}</span><b class="${signClass(v)}">${
+      s === null ? NA('needs a live mark') : esc(s)
+    }${p2 !== null ? ' · ' + esc(p2) : ''}</b></div>`;
   }
 }
 
 // ---------------------------------------------------------------- holdings
+/** The bank's amount picker · a slider inside the tile, not a text field.
+ *  Same generator, same markup, same €-formatted readout. */
+window.slideVal = (k, v) => {
+  sliderVals[k] = Number(v);
+  const o = document.querySelector('#sl-' + cssKey(k) + '-out');
+  if (o) o.textContent = '€' + Number(v).toLocaleString('en-US');
+};
+const cssKey = k => String(k).replace(/[^A-Za-z0-9_-]/g, '_');
+function slider(k, min, max, step, dflt) {
+  const v = sliderVals[k] ?? (sliderVals[k] = dflt);
+  return `<div class="sl-row"><input type="range" min="${min}" max="${max}" step="${step}" value="${v}"
+    oninput="slideVal('${esc(k)}', this.value)" aria-label="Order amount in euro"><b id="sl-${cssKey(k)}-out">€${
+    Number(v).toLocaleString('en-US')}</b></div>`;
+}
+
 function drawHoldings(p) {
   const hs = sortHoldings(p.holdings || []);
   if (!hs.length) {
-    $('thead').innerHTML = '';
-    $('holdings').innerHTML = `<p class="muted" style="margin:0">No open positions.</p>`;
+    // AN EMPTY PORTFOLIO IS A BEGINNING, NOT A FAULT. "No open positions" is
+    // a status report about a database; this is the one thing the customer
+    // can actually do next, in the tile shape the rest of the page uses.
+    $('holdings').className = '';
+    $('holdings').innerHTML = `<div class="muted" style="font-size:13px">Nothing invested yet.</div>
+      <div class="muted" style="margin-top:4px">Pick something from the watchlist below to make a start ·
+        orders settle into your bank account automatically.</div>`;
     return;
   }
-  const withDay = anyDayData(hs);
-  const cls = withDay ? '' : ' noday';
-  $('thead').innerHTML = `<div class="thead${cls}"><span>Instrument</span><span>Value / Qty</span>${
-    withDay ? `<span>Today</span>` : ''}</div>`;
+  $('holdings').className = 'prod-grid';
+  $('holdings').innerHTML = hs.map(h => tile(h)).join('');
+}
 
-  $('holdings').innerHTML = hs.map(h => {
-    const isOpen = open === h.symbol;
-    const value = fmtEur(h.value);
-    const qty = fmtQty(h.qty);
-    const day = fmtSignedEur(h.dayChange);
-    const dayPct = fmtPct(h.dayChangePct);
+function tile(h) {
+  const isOpen = open === h.symbol;
+  const value = fmtEur(h.value);
+  const qty = fmtQty(h.qty);
+  const day = fmtSignedEur(h.dayChange), dayPct = fmtPct(h.dayChangePct);
 
-    const dayCell = !withDay ? '' : `<div><div class="day ${signClass(h.dayChange)}">${
-        day === null ? NA('the feed gave no prior close for this instrument') : esc(day)
-      }</div>${dayPct !== null ? `<div class="sub ${signClass(h.dayChange)}">${esc(dayPct)}</div>`
-        : (day !== null ? `<div class="sub" title="a position opened inside the day window has no starting value to be a percentage of">opened today</div>` : '')}</div>`;
+  // The value is the headline and the quantity is its reference figure ·
+  // exactly the bank's "₿0.0142 ≈ €1,204.10" shape, in the same element.
+  const head = `<div class="prod-name">${esc(h.symbol)}${
+      h.name ? ' · ' + esc(h.name) : ''}</div>
+    <div class="prod-val">${value === null ? NA('no live mark for this instrument') : esc(value)}${
+      qty === null ? '' : ` <span class="prod-sub">${esc(qty + unitFor(h.kind))}</span>`}</div>
+    <div class="prod-sub">${subLine(h, day, dayPct)}</div>`;
 
-    return `<div class="hrow${isOpen ? ' open' : ''}" data-sym="${esc(h.symbol)}">
-      <div class="hgrid${cls}">
-        <div>
-          <div><span class="tkr">${esc(h.symbol)}</span>${
-            h.exchange ? `<span class="exch">${esc(h.exchange)}</span>` : ''}${
-            priceSuspect(h.priceSource) ? `<span class="flag">${esc(h.priceSource)}</span>` : ''}</div>
-          <div class="cname">${esc(h.name || '')}</div>
-        </div>
-        <div>
-          <div class="mv">${value === null ? NA('no live mark for this instrument') : esc(value)}</div>
-          <div class="sub">${qty === null ? '' : esc(qty + unitFor(h.kind))}</div>
-        </div>
-        ${dayCell}
-      </div>
-      ${isOpen ? expansion(h) : ''}
-    </div>`;
-  }).join('');
+  return `<div class="prod expandable${isOpen ? ' open' : ''}" onclick="tileOpen('${esc(h.symbol)}')">
+    <span class="prod-chev">›</span>${head}
+    ${isOpen ? `<div class="prod-x" onclick="event.stopPropagation()">${expansion(h)}</div>` : ''}</div>`;
+}
+
+/** The day move, or the reason there is not one · in the tile's own sub-line.
+ *  This is where the page explains itself: in the affordance, at 11px, beside
+ *  the number it is about. Not in a block of prose under the fold. */
+function subLine(h, day, dayPct) {
+  if (day !== null) {
+    return `<span class="${signClass(h.dayChange)}">${esc(day)}${
+      dayPct !== null ? ' · ' + esc(dayPct) : ''}</span> today${
+      priceStale(h.priceSource) ? ' · last known price' : ''}`;
+  }
+  if (num(h.price) === null) return 'no live price right now';
+  return `@ ${esc(fmtEur(h.price))}${priceStale(h.priceSource) ? ' · last known price' : ''}`;
 }
 
 function expansion(h) {
+  const k = h.symbol;
   const unreal = fmtSignedEur(h.unrealized), unrealPct = fmtPct(h.unrealizedPct);
   const cell = (label, html, klass) =>
-    `<div><span>${esc(label)}</span><b class="${klass || ''}">${html}</b></div>`;
+    `<div class="ph-row"><span>${esc(label)}</span><b class="${klass || ''}">${html}</b></div>`;
+  const owned = isNum(num(h.qty)) && num(h.qty) > 0;
 
-  // NO stopPropagation here · the click handler is delegated on document, and
-  // stopping the bubble would strand every control inside this panel. The
-  // handler checks for .hx instead, which keeps clicks in here from
-  // collapsing the row without also swallowing them.
-  return `<div class="hx">
-    <div class="dl">
+  return `<div class="ph">
       ${cell('Avg cost', fmtEur(h.avgCost) === null ? NA('no cost basis recorded') : esc(fmtEur(h.avgCost)))}
       ${cell('Last', fmtEur(h.price) === null ? NA('the feed did not return a mark') : esc(fmtEur(h.price)))}
-      ${cell('Market value', fmtEur(h.value) === null ? NA('needs a live mark') : esc(fmtEur(h.value)))}
       ${cell('Cost basis', fmtEur(h.costBasis) === null ? NA('not recorded') : esc(fmtEur(h.costBasis)))}
       ${cell('Total P&L', (unreal === null ? NA('needs a live mark')
-          : esc(unreal) + (unrealPct !== null ? ` <span class="pct">${esc(unrealPct)}</span>` : '')),
-        signClass(h.unrealized))}
+          : esc(unreal) + (unrealPct !== null ? ' · ' + esc(unrealPct) : '')), signClass(h.unrealized))}
       ${cell('Realized', fmtSignedEur(h.realized) === null ? NA('not recorded') : esc(fmtSignedEur(h.realized)),
         signClass(h.realized))}
     </div>
-    ${h.dayBasis ? `<div class="basis">Today measured against ${
-      h.dayBasis === '24h' ? 'the price 24 hours ago' : 'the prior session close'
-    }${h.priceSource ? ' · mark from ' + esc(h.priceSource) : ''}</div>` : ''}
-
-    <div class="amt-row">
-      <label for="amt-${esc(h.symbol)}">Amount</label>
-      <input id="amt-${esc(h.symbol)}" type="text" inputmode="decimal" value="50.00"
-             aria-label="Order amount in euro">
+    ${slider(k, 10, 250, 5, 50)}
+    <div class="prod-btns">
+      <button class="mini" onclick="placeOrder('${esc(k)}','buy')">buy</button>
+      ${owned ? `<button class="mini" onclick="placeOrder('${esc(k)}','sell')">sell</button>
+      <button class="mini" onclick="sellAll('${esc(k)}','${esc(h.qty)}')">sell all</button>` : ''}
     </div>
-    <div class="acts">
-      <button class="side-btn buy"  data-order="buy"  data-sym="${esc(h.symbol)}">BUY</button>
-      <button class="side-btn sell" data-order="sell" data-sym="${esc(h.symbol)}">SELL</button>
-    </div>
-    <div class="msg" id="msg-${esc(h.symbol)}">${
-      lastMsg && lastMsg.symbol === h.symbol ? lastMsg.html : ''}</div>
-  </div>`;
+    <div class="prod-sub" style="margin-top:6px" id="msg-${cssKey(k)}">${
+      lastMsg && lastMsg.symbol === k ? lastMsg.html : ''}</div>`;
 }
+
+window.tileOpen = k => { open = (open === k) ? null : k; lastMsg = null; redraw(); };
 
 // --------------------------------------------------------------- watchlist
-function drawWatchlist(items) {
+function drawWatchlist() {
+  const el = $('watchlist');
+
   // a failed request is not an empty watchlist · saying "nothing here" when we
   // simply could not ask is the same class of lie as a fabricated zero
-  if (items && items.error) {
-    $('watchlist').innerHTML = `<p class="muted" style="margin:0">Could not load the watchlist: ${
-      esc(items.error)}</p>`;
+  if (watch && watch.error) {
+    el.innerHTML = `<div class="muted">Could not load the watchlist: ${esc(watch.error)}</div>`;
     return;
   }
-  if (!Array.isArray(items) || !items.length) {
-    $('watchlist').innerHTML = `<p class="muted" style="margin:0">Nothing on the watchlist.</p>`;
+  const items = Array.isArray(watch) ? watch : [];
+  const heldSyms = new Set((snap && snap.holdings || []).map(h => h.symbol));
+
+  if (!items.length) {
+    // AN EMPTY WATCHLIST INVITES. The old page reported "Nothing on the
+    // watchlist." · true, useless, and a dead end. The catalog is right there,
+    // so offer it: every instrument the broker can actually route, one tap to
+    // follow. If the catalog itself has not arrived we say that instead of
+    // pretending the shelf is bare.
+    if (!Array.isArray(catalog)) {
+      el.innerHTML = `<div class="muted">Loading instruments …</div>`;
+      return;
+    }
+    const offer = catalog.filter(i => !heldSyms.has(i.symbol)).slice(0, 4);
+    if (!offer.length) {
+      el.innerHTML = `<div class="muted">You already hold everything on the shelf.</div>`;
+      return;
+    }
+    el.innerHTML = `<div class="muted" style="margin-bottom:10px">Follow something to keep an eye on its price.</div>
+      <div class="prod-grid">${offer.map(i => `<div class="prod">
+        <div class="prod-name">${esc(i.symbol)}${i.name ? ' · ' + esc(i.name) : ''}</div>
+        <div class="prod-val">${markUnavailable(i.price) ? NA('no live mark right now') : esc(fmtEur(i.price))}</div>
+        <div class="prod-sub">${esc(i.exchange || i.kind || '')}</div>
+        <div class="prod-btns"><button class="mini" onclick="watchAdd('${esc(i.symbol)}')">＋ follow</button></div>
+      </div>`).join('')}</div>`;
     return;
   }
-  $('watchlist').innerHTML = items.map(w => `<div class="wrow">
-      <span class="tkr">${esc(w.symbol)}</span>
-      <span class="wpx">${markUnavailable(w.price)
-        ? NA('this endpoint reports an unavailable mark as 0, so it is shown as unknown rather than as free')
-        : esc(fmtEur(w.price))}</span>
-    </div>`).join('');
+
+  el.innerHTML = `<div class="prod-grid">${items.map(w => `<div class="prod">
+      <div class="prod-name">${esc(w.symbol)}</div>
+      <div class="prod-val">${markUnavailable(w.price)
+        ? NA('no live mark right now · this is not a price of zero')
+        : esc(fmtEur(w.price))}</div>
+      <div class="prod-sub" id="msg-${cssKey(w.symbol)}">${
+        lastMsg && lastMsg.symbol === w.symbol ? lastMsg.html : ''}</div>
+      <div class="prod-btns">
+        <button class="mini" onclick="placeOrder('${esc(w.symbol)}','buy',true)">buy €50</button>
+        <button class="mini" onclick="watchRemove('${esc(w.symbol)}')">unfollow</button>
+      </div>
+    </div>`).join('')}</div>`;
 }
 
-// ------------------------------------------------------------------ notes
-function drawNotes(p) {
-  const a = p.aggregate, out = [];
-  if (a.cashNote) out.push(a.cashNote);
-  if (a.unpriced > 0)
-    out.push(a.unpriced + ' holding(s) could not be priced. Totals that depend on a mark are withheld.');
-  if (a.withoutPrevClose > 0)
-    out.push(a.withoutPrevClose + ' holding(s) had no prior close, so the day total is withheld '
-      + 'rather than partially summed.');
-  out.push('Day window opens ' + p.dayStart + '. Equities move against the prior session close, crypto '
-    + 'against 24 hours ago · each row says which.');
-  if (p.asOf) out.push('Priced at ' + p.asOf + '.');
-  $('notes').innerHTML = out.map(t => `<p>${esc(t)}</p>`).join('');
-}
+window.watchAdd = async sym => {
+  await api('/api/watchlist', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer: Number(customer), symbol: sym, action: 'add' }) });
+  await load();
+};
+window.watchRemove = async sym => {
+  await api('/api/watchlist', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer: Number(customer), symbol: sym, action: 'remove' }) });
+  await load();
+};
 
-// ------------------------------------------------------------------ wiring
-document.addEventListener('click', e => {
-  const btn = e.target.closest('[data-order]');
-  if (btn) { placeOrder(btn.dataset.sym, btn.dataset.order, btn); return; }
-  // a click inside the open panel is aimed at the panel, not at collapsing it
-  if (e.target.closest('.hx')) return;
-  const row = e.target.closest('.hrow');
-  if (row) {
-    open = (open === row.dataset.sym) ? null : row.dataset.sym;
-    lastMsg = null;
-    if (snap) drawHoldings(snap);
-  }
-});
+// ------------------------------------------------------------------ orders
 
-async function placeOrder(symbol, side, btn) {
-  const input = $('amt-' + symbol);
-  const msg = $('msg-' + symbol);
-  const raw = (input && input.value || '').trim();
-  const amount = Number(raw);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    msg.innerHTML = `<span class="amount-neg">Enter an amount greater than zero.</span>`;
-    return;
-  }
-  const buttons = btn.parentElement.querySelectorAll('button');
-  buttons.forEach(b => b.disabled = true);
-  msg.innerHTML = `<span class="muted">Placing …</span>`;
+/** CLOSING A POSITION IS A QUANTITY ORDER, NOT A EUR ONE · and it has to be.
+ *  Selling "€50 of" a €50 position asks the venue to derive units from a
+ *  price that has moved since the buy, so it computes fractionally MORE than
+ *  is held and the broker refuses the whole thing ("cannot sell 0.00088516:
+ *  position is 0.00088427"). The exact holding is a number we already have,
+ *  so sending it beats re-deriving it and being wrong in the eighth decimal. */
+window.sellAll = (symbol, qty) => placeOrder(symbol, 'sell', null, qty);
 
-  // notional and qty are read server-side with Json.str · they must be JSON
+window.placeOrder = async (symbol, side, fixed, qty) => {
+  const amount = fixed ? 50 : Number(sliderVals[symbol] ?? 50);
+  const msgEl = $('msg-' + cssKey(symbol));
+  if (msgEl) msgEl.innerHTML = `<span class="muted">Placing …</span>`;
+
+  // qty and notional are read server-side with Json.str · they must be JSON
   // STRINGS. customer is read with Json.num and must be a bare number.
+  const order = {
+    clientOrderId: (crypto.randomUUID ? crypto.randomUUID()
+                     : 'pf-' + Date.now() + '-' + Math.random().toString(16).slice(2)),
+    customer: Number(customer),
+    symbol: symbol,
+    side: side,
+    type: 'market'
+  };
+  if (qty) order.qty = String(qty); else order.notional = amount.toFixed(2);
+
   const out = await api('/api/orders', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      clientOrderId: (crypto.randomUUID ? crypto.randomUUID()
-                       : 'pf-' + Date.now() + '-' + Math.random().toString(16).slice(2)),
-      customer: Number(customer),
-      symbol: symbol,
-      side: side,
-      type: 'market',
-      notional: amount.toFixed(2)
-    })
+    body: JSON.stringify(order)
   });
-  buttons.forEach(b => b.disabled = false);
 
   if (out.error) {
-    lastMsg = { symbol, html: `<span class="amount-neg">✗ ${esc(out.error)}</span>` };
+    lastMsg = { symbol, html: `<span class="amount-neg">${esc(out.error)}</span>` };
   } else {
-    const filled = out.result === 'filled';
-    lastMsg = { symbol, html: `<span class="amount-pos">✓ ${esc(side)} ${esc(symbol)} · ${
-      esc(out.result || 'sent')}${out.venue ? ' at ' + esc(out.venue) : ''}</span>${
-      filled ? '' : `<span class="muted"> · settlement is asynchronous, so the position `
-        + `may take a moment to move</span>`}` };
+    // WHAT THIS CAN HONESTLY CLAIM. The order is placed and the venue may
+    // already have filled it, but the money moves when the fill settles into
+    // the ledger, a Kafka round trip later. So it says the order went through
+    // and that the balance follows · never "bought", which would be a promise
+    // about a commit that has not happened.
+    lastMsg = { symbol, html: `<span class="amount-pos">${esc(side)} ${esc(symbol)} · order placed</span>
+      <span class="muted">· your balance updates when it settles</span>` };
   }
-  msg.innerHTML = lastMsg.html;
+  if (msgEl) msgEl.innerHTML = lastMsg.html;
   // Settlement is asynchronous (order → Kafka → ledger → back), so the
-  // position may not have moved yet. Re-read rather than guess at the new one.
-  load();
+  // position may not have moved yet. Re-read rather than guess at the new one,
+  // twice: once now, once after the round trip has had time to land.
+  await load();
+  setTimeout(load, 1200);
+};
+
+// -------------------------------------------------------------------- load
+function redraw() {
+  if (!snap) return;
+  drawHeader(snap);
+  drawHoldings(snap);
+  drawWatchlist();
 }
 
-// ------------------------------------------------------------------- load
-async function load(opts) {
+async function load() {
   const p = await api('/api/portfolio?customer=' + encodeURIComponent(customer));
   if (p.error) {
     $('pv').innerHTML = NA('could not load');
-    $('notes').innerHTML = `<p class="amount-neg">Could not load the portfolio: ${esc(p.error)}</p>`;
-    // Clear the panels rather than leaving them. Two different lies live
-    // here: on a FIRST load the skeletons shimmer forever and the page looks
-    // busy; on a REFRESH the previous rows stay on screen, with their old
-    // marks and day changes, under a header that now reads "not available".
-    // Rows presented as current while the header admits it does not know are
-    // the worse of the two.
-    const gone = '<p class="muted">Not available · the last figures have been cleared rather than shown as current.</p>';
+    $('day').innerHTML = '';
+    $('pnl').innerHTML = '';
+    // Clear the panels rather than leaving them. Two different lies live here:
+    // on a FIRST load the skeletons shimmer forever and the page looks busy;
+    // on a REFRESH the previous tiles stay on screen with their old marks,
+    // under a header that now reads "not available". Rows presented as current
+    // while the header admits it does not know are the worse of the two.
+    const gone = `<div class="muted">Not available · the last figures have been cleared rather than shown as current.</div>`;
+    $('holdings').className = '';
     $('holdings').innerHTML = gone;
     $('watchlist').innerHTML = gone;
+    $('guide-hint').innerHTML = `<span class="amount-neg">${esc(p.error)}</span>`;
     return;
   }
   snap = p;
-  drawHeader(p);
-  drawHoldings(p);
-  drawNotes(p);
-
-  drawWatchlist(await api('/api/watchlist?customer=' + encodeURIComponent(customer)));
-}
-
-/** The banner must be TRUE, not merely present. The default venue is the
- *  simulation, and if this box is ever pointed at a real one the notice has
- *  to stop saying "simulated" and start saying the opposite, loudly. */
-async function checkVenue() {
-  const h = await api('/health');
-  if (h && h.venue && h.venue !== 'simulated') {
-    $('sim').classList.add('live');
-    $('sim-title').textContent = 'Live venue · ' + h.venue;
-    $('sim-text').textContent = 'This broker is configured against a real venue (' + h.venue
-      + '). Orders placed here are not a simulation.';
+  watch = await api('/api/watchlist?customer=' + encodeURIComponent(customer));
+  if (catalog === null) {
+    const c = await api('/api/instruments');
+    catalog = Array.isArray(c) ? c : [];
   }
+  redraw();
+
+  // THE ONE FOOTNOTE, and it is one line. Everything else the old page put
+  // down here (unpriced counts, prior-close counts, the day window, the
+  // pricing timestamp) now lives beside the figure it qualifies · in the
+  // header's sub-line or in a tile's, where it is read.
+  $('guide-hint').textContent = 'Cash sits in your bank account · this page values securities only.';
 }
 
+$('bank-link').href = bankHref();
 load();
-checkVenue();
 </script>
 </body>
 </html>

@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -37,6 +39,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   lesson 1  the running balance is still exactly right
  *   lesson 2  ... and still right when the newest entry is a credit
  *   lesson 3  the cost does not grow with history
+ *
+ * And a read model should also SAY WHAT HAPPENED. A statement that has the
+ * transaction's own kind in front of it and still guesses the label from a
+ * counterparty account is not short of information, it is not using it.
+ *
+ *   lesson 4  a settled trade reads 'Bought Bitcoin', with size and price
+ *   lesson 5  history from the retired direct path reads the same way
  *
  * Requires: docker compose up -d
  */
@@ -176,7 +185,88 @@ class StatementLessonTest {
     }
 
     // ------------------------------------------------------------------
+    /**
+     * A STATEMENT LINE NAMES THE EVENT.
+     *
+     * A settled fill is the only way an asset moves now, and it used to be the
+     * one shape this statement could not describe. 'settle:BTC:buy' matched
+     * none of the cases, fell to the bottom branch, and got labelled from
+     * whichever counterparty leg the LATERAL happened to pick first · which
+     * for an asset trade is a broker account whose owner column is the
+     * literal string "broker". So a customer who SOLD Apple stock read "Money
+     * added", and one who bought Bitcoin read "broker · sent". The transaction
+     * knew exactly what it was the entire time; nothing asked it.
+     */
+    @Test
+    @DisplayName("lesson 4: a settled trade says what happened · 'Bought Bitcoin', not 'broker' and not 'Money added'")
+    void lesson4_assetMovementsNameTheEvent() throws Exception {
+        Shard home = Shards.forCustomer(IGOR);
+        home.transferLocal(UUID.randomUUID(), Shard.WORLD, IGOR, eur("1000.00"));
+
+        // a buy and a sell, both through the settlement path · 0.01 BTC at 50k
+        Products.settleFill(UUID.randomUUID(), IGOR, "btc", true, eur("0.01"), eur("500.00"));
+        Products.settleFill(UUID.randomUUID(), IGOR, "btc", false, eur("0.01"), eur("600.00"));
+
+        String json = statement(IGOR);
+        List<String> labels = fields(json, "label");
+        List<String> tags = fields(json, "tag");
+
+        // newest first: the sale, then the purchase, then the top-up that
+        // funded it. Positional and exact, because "contains" would pass on a
+        // statement that also labelled one of them wrongly.
+        assertEquals("Sold Bitcoin", labels.get(0), "the sale names itself · got " + labels);
+        assertEquals("sell", tags.get(0));
+        assertEquals("Bought Bitcoin", labels.get(1), "and so does the purchase · got " + labels);
+        assertEquals("buy", tags.get(1));
+
+        // the exact regressions, named. "broker" is what the counterparty
+        // fallback produces for a buy; "Money added" is what it produced for a
+        // sale, because incoming money was the only thing being consulted.
+        assertFalse(labels.contains("broker"),
+                "a counterparty account name is not an event · got " + labels);
+        assertNotEquals("Money added", labels.get(0),
+                "selling bitcoin is not somebody topping up your account · got " + labels);
+        // the row that IS a top-up still says so · this vocabulary replaced
+        // the guess for asset movements, not for everything
+        assertEquals("Money added", labels.get(2), "got " + labels);
+
+        // and the size and price ride along, recovered from the transaction's
+        // own legs rather than from a feed · a feed would show today's price
+        // beside a purchase made whenever it was made
+        List<String> details = fields(json, "detail");
+        assertTrue(details.contains("0.01 @ €50000.00"), "bought 0.01 at 50k · got " + details);
+        assertTrue(details.contains("0.01 @ €60000.00"), "sold 0.01 at 60k · got " + details);
+    }
+
+    // ------------------------------------------------------------------
+    /**
+     * The retired direct path is gone as a way to buy, but its transactions
+     * are still on the books · a statement has to render history it can no
+     * longer produce. 'trade:' keeps the same vocabulary as 'settle:',
+     * because they were always the same economic event.
+     */
+    @Test
+    @DisplayName("lesson 5: history written by the retired path reads the same · one vocabulary, old rows included")
+    void lesson5_retiredPathHistoryStillReads() throws Exception {
+        Shard home = Shards.forCustomer(IGOR);
+        home.transferLocal(UUID.randomUUID(), Shard.WORLD, IGOR, eur("1000.00"));
+        Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, "aapl", true, eur("500.00"), eur("250.00"));
+
+        List<String> labels = fields(statement(IGOR), "label");
+        assertTrue(labels.contains("Bought Apple stock"),
+                "an old row is still an event, and still names itself · got " + labels);
+    }
+
+    // ------------------------------------------------------------------
     private static BigDecimal eur(String v) { return new BigDecimal(v); }
+
+    /** every value of a string field, in row order · scraped without a JSON lib */
+    private static List<String> fields(String json, String name) {
+        List<String> out = new ArrayList<>();
+        var m = java.util.regex.Pattern.compile("\"" + name + "\":\"([^\"]*)\"").matcher(json);
+        while (m.find()) out.add(m.group(1));
+        return out;
+    }
 
     /** BigDecimal.equals compares scale too · money cares about value */
     private static void assertSameNumbers(List<BigDecimal> expected, List<BigDecimal> actual, String why) {

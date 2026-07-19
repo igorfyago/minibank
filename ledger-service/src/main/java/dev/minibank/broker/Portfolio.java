@@ -154,11 +154,30 @@ public final class Portfolio {
             // comes out as what they held at the prior close, and the traded
             // leg carries what they got for it.
             if (p.qty().signum() == 0) {
-                if (q.observed() && q.prevClose() != null && flow.qty().signum() != 0) {
-                    BigDecimal qtyPrior = p.qty().subtract(flow.qty());
-                    dayChange = dayChange.add(
-                            qtyPrior.multiply(q.price().subtract(q.prevClose()))
-                                    .add(flow.qty().multiply(q.price()).subtract(flow.notional())));
+                // A row that did not trade today contributes nothing to the
+                // day and cannot spoil it. One that DID trade today owes the
+                // total a number, and if we cannot compute that number the
+                // total is incomplete · rule 3 applies here exactly as it does
+                // to an open holding.
+                //
+                // This is where the counter used to be missing. The guard
+                // failing fell straight through to `continue` without
+                // incrementing withoutPrevClose, so the aggregate below
+                // (gated on withoutPrevClose == 0) still rendered a figure ·
+                // a customer who sold out at a gain and then lost the feed
+                // watched that gain disappear from the headline while the
+                // headline went on presenting itself as their complete day.
+                // The open-position path has always counted correctly in its
+                // else; the closed one never did.
+                if (flow.qty().signum() != 0) {
+                    if (q.observed() && q.prevClose() != null) {
+                        BigDecimal qtyPrior = p.qty().subtract(flow.qty());
+                        dayChange = dayChange.add(
+                                qtyPrior.multiply(q.price().subtract(q.prevClose()))
+                                        .add(flow.qty().multiply(q.price()).subtract(flow.notional())));
+                    } else {
+                        withoutPrevClose++;
+                    }
                 }
                 continue;                                 // counted, not drawn
             }

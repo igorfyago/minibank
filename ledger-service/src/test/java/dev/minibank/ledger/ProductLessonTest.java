@@ -93,7 +93,7 @@ class ProductLessonTest {
         UUID tx = UUID.randomUUID();
         BigDecimal price = eur("90000.00");   // deterministic price for the lesson
 
-        assertInstanceOf(Ledger.Ok.class, Products.trade(tx, IGOR, "btc", true, eur("90.00"), price));
+        assertInstanceOf(Ledger.Ok.class, Products.tradeWithoutBroker(tx, IGOR, "btc", true, eur("90.00"), price));
         assertEquals(0, eur("410.00").compareTo(home.balance(IGOR)), "the euros left");
         assertEquals(0, new BigDecimal("0.00100000").compareTo(home.balance(IGOR + Products.BTC)), "the bitcoin arrived");
 
@@ -103,9 +103,9 @@ class ProductLessonTest {
             assertEquals(0, Ledger.sumZeroViolationsOn(c).size(), "EUR ledger and BTC ledger each sum to zero");
         }
         // a retry of the same trade is one trade
-        assertInstanceOf(Ledger.AlreadyProcessed.class, Products.trade(tx, IGOR, "btc", true, eur("90.00"), price));
+        assertInstanceOf(Ledger.AlreadyProcessed.class, Products.tradeWithoutBroker(tx, IGOR, "btc", true, eur("90.00"), price));
         // and selling brings the euros home
-        assertInstanceOf(Ledger.Ok.class, Products.trade(UUID.randomUUID(), IGOR, "btc", false, eur("90.00"), price));
+        assertInstanceOf(Ledger.Ok.class, Products.tradeWithoutBroker(UUID.randomUUID(), IGOR, "btc", false, eur("90.00"), price));
         assertEquals(0, eur("500.00").compareTo(home.balance(IGOR)));
     }
 

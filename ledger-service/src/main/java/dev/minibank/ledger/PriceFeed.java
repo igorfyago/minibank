@@ -16,11 +16,17 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Live prices, honestly labeled. BTC from CoinGecko (EUR and USD in one
- * call); AAPL from Yahoo (USD), with euros derived through the FX SERVICE
- * · all keyless public endpoints, cached for 60s, with a fallback price
- * and a `source` flag so the UI never has to lie about freshness.
+ * Live prices, or none. BTC from CoinGecko (EUR and USD in one call); AAPL
+ * from Yahoo (USD), with euros derived through the FX SERVICE · all keyless
+ * public endpoints, cached for 60s, with a `source` flag so the UI never has
+ * to lie about freshness.
  * Display is in dollars (what markets quote); the ledger settles euros.
+ *
+ * EVERY PRICE THIS CLASS RETURNS WAS OBSERVED. There are three outcomes and
+ * no fourth: 'live' (just fetched), 'cached' (fetched earlier, upstream is
+ * down, still a real price from a real moment), or an unpriced Px whose
+ * price() is null. It does not compute a plausible number when it has none ·
+ * see unavailable() for why that distinction is the whole design.
  *
  * The price is captured AT EXECUTION and written into the trade's event ·
  * the ledger stores the units and the euros; the ratio IS the price paid.
@@ -55,12 +61,6 @@ public final class PriceFeed {
             .followRedirects(HttpClient.Redirect.NORMAL)
             .connectTimeout(Duration.ofSeconds(3)).build();
     private static final Map<String, Object[]> cache = new ConcurrentHashMap<>(); // sym -> [Px, fetchedAtMillis]
-    private static final Map<String, BigDecimal> FALLBACK = Map.of(
-            "btc", new BigDecimal("90000.00"),
-            "aapl", new BigDecimal("195.00"));
-    private static final Map<String, BigDecimal> FALLBACK_USD = Map.of(
-            "btc", new BigDecimal("98000.00"),
-            "aapl", new BigDecimal("212.00"));
 
     private PriceFeed() {}
 
@@ -79,7 +79,12 @@ public final class PriceFeed {
         String enc = Cache.getOrLoad("prices:live2", symbol, 60, () -> {
             try {
                 Px f = fetch(symbol);
-                return f.price().toPlainString() + '|' + f.usd().toPlainString() + "|live|"
+                // f.source(), NOT the literal "live". An equity mark converted
+                // at a stale FX rate comes back from fetch() as 'cached', and
+                // hardcoding the label here overwrote that admission on its
+                // way into the shared cache · where the whole fleet would then
+                // read it as live for the next 60 seconds.
+                return f.price().toPlainString() + '|' + f.usd().toPlainString() + '|' + f.source() + '|'
                         + (f.prevClose() == null ? "" : f.prevClose().toPlainString());
             } catch (Exception e) { return null; }
         });
@@ -90,25 +95,51 @@ public final class PriceFeed {
             Px last = (Px) hit[0];
             px = new Px(last.price(), last.usd(), "cached", last.prevClose());
         } else {
-            px = fallback(symbol);
+            px = unavailable();
         }
-        cache.put(symbol, new Object[]{px, System.currentTimeMillis()});
+        // AN ADMISSION IS NOT AN OBSERVATION, so it does not go in the cache.
+        //
+        // Storing it would pin "I do not know" for 60 seconds and delay the
+        // recovery it is meant to be temporary about. Worse, it would become
+        // the `hit` that the branch above reads on the NEXT failure, and that
+        // branch relabels whatever it finds as 'cached' · which is how an
+        // invented price used to launder itself into looking like a real one
+        // that was merely old. Only a price we actually saw is worth keeping.
+        if (px.priced()) cache.put(symbol, new Object[]{px, System.currentTimeMillis()});
         return px;
     }
 
     /**
-     * The last resort · and for most symbols there is not one.
+     * THERE IS NO LAST RESORT. This says "I do not know", and that is the
+     * entire body of the method.
      *
-     * The two hardcoded prices exist so the demo still renders when CoinGecko
-     * rate-limits us, and they are labeled 'fallback' so the UI can grey them
-     * out. There is deliberately no generic fallback: inventing a price for a
-     * symbol we have never fetched would be worse than admitting we have
-     * none, so an unknown symbol comes back unpriced and stays that way.
+     * It used to hand back a hardcoded 90,000 for bitcoin and 195 for Apple
+     * whenever the upstream was unreachable, tagged 'fallback' so the screen
+     * could grey it out. Two things were wrong with that, and only the second
+     * one is interesting.
+     *
+     * The obvious one: a label is not consent. A number rendered at the size
+     * of a balance is read as a balance, and a customer who does not know what
+     * the word 'fallback' means beside their portfolio total has been told
+     * their bitcoin is worth 90,000 euros. The disclaimer travelled with the
+     * number in the JSON and lost to it on the screen every time.
+     *
+     * The one that actually decided it: the number was never TRUE at any
+     * moment. A stale price is a real observation with an old timestamp · it
+     * was the price once, and saying so is a fact about the past. An invented
+     * price is a fact about nothing. That is the difference between the two
+     * branches above this one and this branch, and it is why the 'cached'
+     * branch survives and this one does not compute anything.
+     *
+     * So there are now exactly two honest answers to "what is this worth":
+     * the last price we really saw, labeled 'cached', or this · nothing, and
+     * every caller downstream has to decide what to render instead of a
+     * figure. An unpriced holding is not a worthless one, and the callers that
+     * matter (Portfolio.build, the ledger's product shelf) already withhold a
+     * total rather than partly summing it.
      */
-    private static Px fallback(String symbol) {
-        BigDecimal eur = FALLBACK.get(symbol);
-        if (eur == null) return new Px(null, null, "unavailable", null);
-        return new Px(eur, FALLBACK_USD.get(symbol), "fallback", null);
+    private static Px unavailable() {
+        return new Px(null, null, "unavailable", null);
     }
 
     private static Px decode(String enc, String symbol) {
@@ -117,7 +148,7 @@ public final class PriceFeed {
             BigDecimal prev = p.length > 3 && !p[3].isBlank() ? new BigDecimal(p[3]) : null;
             return new Px(new BigDecimal(p[0]), new BigDecimal(p[1]), p[2], prev);
         } catch (Exception e) {
-            return fallback(symbol);
+            return unavailable();
         }
     }
 
@@ -147,7 +178,6 @@ public final class PriceFeed {
                 + URLEncoder.encode(symbol.toUpperCase(Locale.ROOT), StandardCharsets.UTF_8)
                 + "?range=1d&interval=1d");
         BigDecimal usd = extract(chart, "\"regularMarketPrice\"\\s*:\\s*([0-9.]+)");
-        BigDecimal rate = FxClient.usdToEur().rate();
         BigDecimal prevUsd = null;
         try {
             // the payload calls it chartPreviousClose · there is no
@@ -157,10 +187,40 @@ public final class PriceFeed {
         } catch (Exception ignored) {
             // no prior close in this payload · the day change goes unreported
         }
+        return toEur(usd, prevUsd, FxClient.usdToEur());
+    }
+
+    /**
+     * The currency leg, where the fabrication survived.
+     *
+     * fetch() used to take FxClient.usdToEur().rate() and throw the
+     * accompanying .source() away, then label the result 'live'. When the
+     * fx-service is unreachable and nothing was ever cached, that rate is
+     * FxClient's hardcoded 0.88 · so the EUR figure was a real USD price
+     * multiplied by an invented number, shipped to the UI tagged as live, with
+     * nothing downstream able to badge it. This class's own docstring says the
+     * fabrication was removed; it had only been removed from the price leg.
+     *
+     * There is no honest EUR mark without an observed rate, so there is no EUR
+     * mark: this raises, and get() falls through to the last real price or to
+     * nothing at all. That is the same rule unavailable() already applies one
+     * field over, and the reason it has to be a throw rather than a label is
+     * that a label loses to a number every single time it is rendered.
+     *
+     * A rate that was quoted earlier and is merely old is a different case and
+     * survives · but it makes the whole mark 'cached', because a fresh USD
+     * price converted at yesterday's rate is not a live EUR price and saying
+     * so would overstate the weaker leg.
+     */
+    static Px toEur(BigDecimal usd, BigDecimal prevUsd, FxClient.Rate fx) {
+        if (!fx.observed())
+            throw new IllegalStateException("no observed USD to EUR rate · refusing to invent a EUR price");
+        BigDecimal rate = fx.rate();
+        String source = "live".equals(fx.source()) ? "live" : "cached";
         // BOTH legs converted with the SAME rate, deliberately. Converting the
         // mark now and the close on some other call's rate would smuggle FX
         // drift into a number the screen labels as the stock's day move.
-        return new Px(usd.multiply(rate).setScale(2, RoundingMode.HALF_UP), usd, "live",
+        return new Px(usd.multiply(rate).setScale(2, RoundingMode.HALF_UP), usd, source,
                 prevUsd == null ? null : prevUsd.multiply(rate).setScale(2, RoundingMode.HALF_UP));
     }
 
@@ -204,7 +264,13 @@ public final class PriceFeed {
         String chart = getBody("https://query1.finance.yahoo.com/v8/finance/chart/"
                 + URLEncoder.encode(symbol.toUpperCase(Locale.ROOT), StandardCharsets.UTF_8)
                 + "?range=1mo&interval=1d");
-        BigDecimal rate = FxClient.usdToEur().rate();
+        // the same rule as toEur: 30 days of prices converted at a rate nobody
+        // ever quoted is 30 days of invented prices, and a chart is no more
+        // entitled to make one up than a mark is
+        FxClient.Rate fx = FxClient.usdToEur();
+        if (!fx.observed())
+            throw new IllegalStateException("no observed USD to EUR rate · refusing to invent a EUR series");
+        BigDecimal rate = fx.rate();
         Matcher ts = Pattern.compile("\"timestamp\":\\[([0-9,]+)\\]").matcher(chart);
         Matcher cl = Pattern.compile("\"close\":\\[([0-9.,null ]+)\\]").matcher(chart);
         if (!ts.find() || !cl.find()) throw new IllegalStateException("no series");
