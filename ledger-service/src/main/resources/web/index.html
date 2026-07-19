@@ -438,7 +438,18 @@
   .xcol { display:flex; flex-direction:column; gap:14px; min-width:0; }
   .xray-grid .card { padding:14px 16px; }
   #xsvg { display:block; }
-  @media (max-width:1180px) { .xray-grid { grid-template-columns:1fr; } .guide { position:static; max-height:none; } }
+  @media (max-width:1180px) {
+    /* One column. display:contents dissolves the two column wrappers so the
+       CARDS become the grid items, which is what makes them orderable at all:
+       without it the whole right-hand column follows the whole left one and the
+       trace lands below the ecosystem panel, miles from the map it replays. */
+    .xray-grid { grid-template-columns:1fr; }
+    .xray-grid > .xcol { display:contents; }
+    .xray-grid > .xcol > * { order:3; }
+    .xray-grid > .xcol > *:first-child { order:1; }   /* the map */
+    #trace-card { order:2; }                          /* then the trace */
+    .guide { position:static; max-height:none; }
+  }
   svg text { font-family:system-ui; }
   .node { cursor:pointer; }
   .node rect, .node ellipse, .node path { fill:#1c2330; stroke:var(--line); stroke-width:1.5; }
@@ -2023,7 +2034,23 @@ async function xrayTick() {
   } else if (!$('#guide-hint').textContent) {
     $('#guide-hint').textContent = 'Tip: the three tabs above change how deep I go.';
   }
-  } catch (e) { /* transient fetch failure · the next tick retries */ }
+  } catch (e) {
+    /* This used to be an empty block commented "transient fetch failure".
+       The try wraps the WHOLE tick, so it was swallowing every rendering bug in
+       eighty lines as though it were a flaky network call: the live activity
+       feed simply stopped updating and said nothing, forever, and the only clue
+       was that clicking it still worked. A fetch that fails is expected and
+       silent. Anything else is a bug and must say so. */
+    const transient = e instanceof TypeError && /fetch|NetworkError|Failed to fetch/i.test(e.message || '');
+    if (!transient) {
+      console.error('xrayTick failed, live activity is now stale:', e);
+      const tk = $('#ticker');
+      if (tk && !tk.dataset.stale) {
+        tk.dataset.stale = '1';
+        tk.innerHTML = '<span class="muted">live feed stalled · ' + String(e.message || e).slice(0, 90) + '</span>';
+      }
+    }
+  }
 }
 window.tickClick = evJson => { const e = JSON.parse(evJson);
   const subj = e.type.indexOf('trade:') === 0 ? 'ev:trade' : e.type === 'mortgage' ? 'ev:mortgage' : 'ev:' + e.type;
@@ -2108,6 +2135,14 @@ function playTrace(tr) {
   void fill.getBoundingClientRect();
 
   // narrate each step as its first hop leaves, and move the bar with it
+  /* One continuous sweep over the real duration. It used to jump to whatever
+     percentage the last step STARTED at, so a five second replay left the bar
+     stuck near eighty percent until a final timer snapped it to full: it looked
+     like a three second animation that then hung. */
+  requestAnimationFrame(() => {
+    fill.style.transition = `width ${j.total}ms linear`;
+    fill.style.width = '100%';
+  });
   const firstHopOf = {};
   j.hops.forEach(h => { if (firstHopOf[h.step] === undefined) firstHopOf[h.step] = h.start; });
   steps.forEach((s2, i) => {
@@ -2116,8 +2151,6 @@ function playTrace(tr) {
     playTimers.push(setTimeout(() => {
       markStep(i);
       $('#play-caption').textContent = `step ${i + 1}/${steps.length} · ${s2.detail} · ${s2.region}`;
-      fill.style.transition = 'width 600ms linear';
-      fill.style.width = Math.round((at + 600) / j.total * 100) + '%';
     }, at));
   });
 
@@ -2130,7 +2163,6 @@ function playTrace(tr) {
   playTimers.push(setTimeout(() => {
     document.querySelectorAll('.trace-step').forEach(el => el.classList.remove('active'));
     showReplayInFlight(null);
-    fill.style.width = '100%';
     $('#play-caption').textContent = `✓ real journey, real timestamps · ${realTotal}ms end to end, replayed slow enough to read`;
   }, j.total + 250));
 }
