@@ -228,6 +228,14 @@
   .tick-ic { width:24px !important; height:24px !important; font-size:12px !important; }
   .tick-item.new { animation:slidein .25s ease; }
   .tick-item:hover { background:rgba(255,255,255,.04); }
+  /* Which row you are looking at on the left. The map animates the SELECTED
+     transaction, so the list has to say which one that is: without it the
+     replay is a picture of something you have to remember choosing. */
+  .tick-item.picked {
+    background:rgba(88,166,255,.10);
+    box-shadow:inset 0 0 0 1px rgba(88,166,255,.55), 0 0 14px rgba(88,166,255,.16);
+  }
+  .tick-item.picked .tick-ic { filter:drop-shadow(0 0 5px rgba(88,166,255,.65)); }
   @keyframes slidein { from { opacity:0; transform:translateY(-7px); } }
   .tick-ic { width:28px; height:28px; border-radius:50%; background:#2b3245; display:flex; align-items:center;
     justify-content:center; font-size:13px; flex:none; }
@@ -438,6 +446,17 @@
   .xcol { display:flex; flex-direction:column; gap:14px; min-width:0; }
   .xray-grid .card { padding:14px 16px; }
   #xsvg { display:block; }
+  /* THE MAP FITS THE PHONE. The diagram is authored in a 720x600 viewBox and
+     scaled to the container width, so on a 390px phone it renders about 325px
+     tall: readable, but the boxes below push the map itself off screen before
+     you have seen it whole. Capping the drawn height against the VIEWPORT
+     rather than the container keeps the entire topology on one screen, which is
+     the only way the animation is watchable there. preserveAspectRatio keeps it
+     centred instead of stretching the geometry the edges are measured from. */
+  @media (max-width:700px) {
+    #xsvg { max-height:52dvh; }
+    .xray-grid > .xcol > *:first-child { padding:10px 8px; }
+  }
   @media (max-width:1180px) {
     /* One column. display:contents dissolves the two column wrappers so the
        CARDS become the grid items, which is what makes them orderable at all:
@@ -798,6 +817,10 @@
           </div>
           <div id="trace-steps"></div>
         </div>
+        <div class="card">
+          <h2>Live activity · every commit, publish and delivery</h2>
+          <div id="ticker"><span class="muted">watching…</span></div>
+        </div>
         <div class="card guide" id="guide">
           <div class="guide-head"><span class="live-dot"></span><h3 id="guide-title">The Guide</h3></div>
           <div class="guide-tabs">
@@ -813,10 +836,6 @@
             <div id="inspect-body"></div>
           </div>
           <div id="guide-hint"></div>
-        </div>
-        <div class="card">
-          <h2>Live activity · every commit, publish and delivery</h2>
-          <div id="ticker"><span class="muted">watching…</span></div>
         </div>
       </div>
     </div>
@@ -1990,7 +2009,8 @@ async function xrayTick() {
     prevTickSig = sig;
     $('#ticker').innerHTML = top.map(e => {
       const id = e.type + e.tx + e.ts, isNew = !tickIds.has(id) && !firstPoll;
-      return `<div class="tick-item${isNew ? ' new' : ''}" onclick='tickClick(${JSON.stringify(JSON.stringify(e))})'>
+      const picked = activeTrace && activeTrace.tx === e.tx;
+      return `<div class="tick-item${isNew ? ' new' : ''}${picked ? ' picked' : ''}" data-tx="${e.tx}" onclick='tickClick(${JSON.stringify(JSON.stringify(e))})'>
         <div class="tick-ic">${ICON[e.type] || '·'}</div>
         <div class="tick-main">${evLine(e)}<div class="tick-sub">${new Date(e.ts).toLocaleTimeString()} · tx ${e.tx.slice(0, 8)}…</div></div>
         <span class="chip ${e.region}">${e.region}</span></div>`;
@@ -2058,6 +2078,10 @@ window.tickClick = evJson => { const e = JSON.parse(evJson);
 
 function renderTrace(tr, tx) {
   activeTrace = tr;
+  // the list must show the new selection immediately · waiting for the next
+  // 2s tick means clicking a row appears to do nothing for two seconds
+  document.querySelectorAll('#ticker .tick-item').forEach(el =>
+    el.classList.toggle('picked', el.dataset.tx === tr.tx));
   const t0 = new Date(tr.steps[0].ts).getTime();
   const total = new Date(tr.steps[tr.steps.length - 1].ts).getTime() - t0;
   $('#trace-card').hidden = false;
@@ -2278,7 +2302,9 @@ $('#eco-pg').onclick = () => { gShow('shard0'); inspect('shard0'); };
 $('#eco-kafka').onclick = () => { gShow('kafka'); inspect('kafka'); };
 $('#eco-k8s').onclick = () => gShow('deploy');
 
-$('#trace-clear').onclick = () => { stopPlay(); activeTrace = null; $('#trace-card').hidden = true; $('#play-wrap').hidden = true;
+$('#trace-clear').onclick = () => { stopPlay(); activeTrace = null;
+  document.querySelectorAll('#ticker .tick-item.picked').forEach(el => el.classList.remove('picked'));
+  $('#trace-card').hidden = true; $('#play-wrap').hidden = true;
   document.querySelectorAll('.node').forEach(n => n.classList.remove('onpath')); gShow('welcome'); };
 
 /* ---------------- the operations tape: the backend as a market tape ---------------- */
