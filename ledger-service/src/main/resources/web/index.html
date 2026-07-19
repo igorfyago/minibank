@@ -2109,6 +2109,25 @@ function reach(nd, holdMs) {
   if (el) el.classList.add('visited');
 }
 
+/* Money is in the pipe from departure until arrival, and during a replay the
+   box shows what WAS in flight then, not the live zero. While it does, the 2s
+   poller must not overwrite it. null hands the box back.
+
+   This and its variable were deleted by accident when playTrace was rewritten
+   to use the journey model: the old playSegment and this block sat in one
+   region and the region was cut by position. Nothing complained, because
+   xrayTick referenced replayInFlight inside a try whose catch was empty, so the
+   ReferenceError was swallowed on every tick and the live activity feed simply
+   stopped updating and said nothing. Two bugs holding each other up. */
+let replayInFlight = null;
+function showReplayInFlight(amount) {
+  replayInFlight = amount == null ? null : amount;
+  const fly = $('#inflight-num'); if (!fly) return;
+  if (replayInFlight == null) { fly.parentNode.classList.remove('inflight-on'); return; }
+  fly.textContent = '€' + Number(amount).toFixed(2);
+  fly.parentNode.classList.add('inflight-on');
+}
+
 /** Highlight the step being narrated. */
 function markStep(i) {
   document.querySelectorAll('.trace-step').forEach((el, j) => el.classList.toggle('active', j === i));
