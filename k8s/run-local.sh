@@ -23,7 +23,10 @@ kubectl label node k3d-${CLUSTER}-agent-0 topology.kubernetes.io/region=eu-west-
 kubectl label node k3d-${CLUSTER}-agent-1 topology.kubernetes.io/region=eu-west-2 --overwrite
 
 echo "==> building and importing the image"
-docker build -t minibank:local ledger-service
+# context is the repo root, not ledger-service · the bank now links against the
+# sibling sso-client module, which a module-scoped context cannot see. See the
+# header of ledger-service/Dockerfile.
+docker build -t minibank:local -f ledger-service/Dockerfile .
 k3d image import minibank:local -c "$CLUSTER"
 
 echo "==> applying manifests"

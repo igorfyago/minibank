@@ -100,9 +100,24 @@ public final class Main {
         // the one-command dev run embeds it on :8090
         if (System.getenv("FX_URL") == null) dev.minibank.fx.FxService.start(8090);
 
+        // WHO IS CALLING · wired here and nowhere else. HttpApi.handle asks
+        // this one question per request; every handler below it stays unaware
+        // that SSO exists.
+        //
+        // Configured by environment because the issuer is a location, not a
+        // decision: the same image runs against auth.b4rruf3t.com in
+        // production and against a local issuer on a laptop. The default is
+        // the real one, unlike BankAuth.AUDIENCE, which has no default at all
+        // · getting the issuer wrong fails closed and loudly (no token
+        // validates), whereas getting the audience wrong fails OPEN, by
+        // accepting another app's credentials.
+        HttpApi.identity(new BankAuth(
+                System.getenv().getOrDefault("SSO_ISSUER", BankAuth.DEFAULT_ISSUER)));
+
         HttpApi.start(port);
 
-        System.out.println("minibank up (sharded): http://localhost:" + port);
+        System.out.println("minibank up (sharded): http://localhost:" + port
+                + " · identity " + (Enforcement.on() ? "ENFORCED" : "permissive"));
         Thread.currentThread().join();   // the virtual threads do the work
     }
 }

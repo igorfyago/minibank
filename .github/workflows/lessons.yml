@@ -14,7 +14,11 @@
 # production code changes, and no test learns anything about CI.
 #
 # Locally the identical contract, in one command:
-#   docker compose up -d --wait && cd ledger-service && mvn -B test
+#   docker compose up -d --wait && mvn -B -pl ledger-service -am test
+#
+# From the ROOT, and -am is not optional: the bank links against the sibling
+# sso-client module, which is published to no repository, so a build scoped to
+# ledger-service alone cannot resolve it.
 #
 name: lessons
 
@@ -112,9 +116,15 @@ jobs:
       # Notifications.createOwnDatabase, the Flyway migrations the app runs),
       # because a test that cannot stand up its own world is not a lesson, it is
       # a fixture with extra steps.
+      # FROM THE REPOSITORY ROOT, with -am, and no longer from ledger-service.
+      # The bank validates tokens with the sibling sso-client module, which is
+      # published to no repository, so `cd ledger-service && mvn test` can no
+      # longer resolve its own dependencies. -am builds sso-client first in the
+      # same reactor · which also means its 33 validator tests run here, and
+      # that is a feature: the bank's identity lessons are only worth as much
+      # as the validator underneath them.
       - name: the lessons
-        working-directory: ledger-service
-        run: mvn -B -ntp test -Dtest='!OutboxLessonTest' -DfailIfNoSpecifiedTests=false
+        run: mvn -B -ntp -pl ledger-service -am test -Dtest='!OutboxLessonTest' -DfailIfNoSpecifiedTests=false
 
       - name: surefire reports
         if: failure()
@@ -183,8 +193,7 @@ jobs:
           cache: maven
 
       - name: compile while the broker boots
-        working-directory: ledger-service
-        run: mvn -B -ntp -DskipTests test-compile
+        run: mvn -B -ntp -pl ledger-service -am -DskipTests test-compile
 
       - name: wait for the broker to answer a real metadata request
         run: |
@@ -202,8 +211,13 @@ jobs:
           echo "kafka never answered"; docker logs "$id"; exit 1
 
       - name: the outbox lesson
-        working-directory: ledger-service
-        run: mvn -B -ntp test -Dtest=OutboxLessonTest
+        # -Dsurefire.failIfNoSpecifiedTests, NOT -DfailIfNoSpecifiedTests: the
+        # unprefixed name was removed in surefire 3.x and is now silently
+        # ignored, which matters here because -am puts sso-client in the
+        # reactor and no test there matches this pattern. The other job gets
+        # away with the old spelling because its pattern is a negation and
+        # therefore matches sso-client's tests anyway.
+        run: mvn -B -ntp -pl ledger-service -am test -Dtest=OutboxLessonTest -Dsurefire.failIfNoSpecifiedTests=false
 
       - name: surefire reports
         if: failure()

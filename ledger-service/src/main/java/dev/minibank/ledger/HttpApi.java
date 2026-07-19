@@ -937,8 +937,9 @@ public final class HttpApi {
     // ------------------------------------------------------------- identity
 
     /**
-     * The SSO seam. ANONYMOUS until somebody wires a validator in, which is
-     * to say: until then this whole section is provably a no-op.
+     * The SSO seam. Main wires a BankAuth over the estate's real issuer at
+     * boot; it stays ANONYMOUS in any process that does not, which is what
+     * keeps the tests that care about other things from needing an issuer.
      *
      * A static field rather than constructor injection, which is how the
      * broker does it (BrokerApi holds a CallerIdentity field). The difference
@@ -1010,47 +1011,77 @@ public final class HttpApi {
     }
 
     /**
-     * Resolve the Authorization header into an identity, or into nothing.
+     * Resolve the Authorization header into a verdict, attaching the caller
+     * when there is one to attach.
      *
      * The catch is the permissive rollout written down. SsoIdentity's contract
      * already says an implementation must not throw, but the implementation is
-     * a network call to auth.b4rruf3t.com wearing a lambda, and a JWKS fetch
-     * timing out is an outage in the directory rather than in the bank. During
-     * a dark launch that must degrade to "nobody is identified" · which is
-     * precisely today's behaviour, on every route, with the demo still working
-     * · instead of turning one slow dependency into a 500 across the whole
-     * API. Falling through to the catch in handle would do the second thing.
+     * a network call to auth.b4rruf3t.com, and a JWKS fetch timing out is an
+     * outage in the directory rather than in the bank. That must degrade to
+     * "nobody is identified" · which is precisely the pre-SSO behaviour, on
+     * every route, with the demo still working · instead of turning one slow
+     * dependency into a 500 across the whole API. Falling through to the catch
+     * in handle would do the second thing.
      *
-     * Note what is NOT here: no 401, no 403, no branch at all on the failure
-     * being a missing header versus a forged one. Enforcement is a later,
-     * human decision and it is not made in this method.
+     * ABSENT, NOT REJECTED, IN THAT CATCH, and the distinction is the one
+     * judgement call in this method. We could not check the credential, which
+     * is not the same as having checked it and found it wanting. Answering 401
+     * because our own validator is sick would take a dependency's bad minute
+     * and turn it into "every token on the estate stopped working", which
+     * reads to an operator as a compromised signing key rather than as a
+     * timeout. The credential the caller sent may well have been perfect.
      */
-    private static void attach(HttpExchange ex) {
+    private static SsoIdentity.Verdict authenticate(HttpExchange ex) {
         try {
-            identity.customerFor(ex.getRequestHeaders().getFirst("Authorization"))
-                    .ifPresent(CALLER::set);
+            SsoIdentity.Verdict who = identity.verdict(ex.getRequestHeaders().getFirst("Authorization"));
+            if (who instanceof SsoIdentity.Verdict.Known k && k.customerId() != null) {
+                CALLER.set(k.customerId());
+            }
+            return who;
         } catch (Throwable t) {
             // Throwable, not Exception, and the difference is the whole point.
-            // The adapter this seam is built for is a lambda over a jar that is
-            // not on the classpath yet · the first thing it can go wrong with on
-            // activation day is NoClassDefFoundError, which is an Error. Catching
-            // Exception here would let that escape into handle(), which also
-            // catches only Exception, and kill the response outright: no 500, no
-            // body, no metric. A dark launch that can black out the API on a
-            // missing jar is not dark. Found by an adversarial review.
+            // The adapter behind this seam is a jar loaded at boot, so the first
+            // thing it can go wrong with is NoClassDefFoundError, which is an
+            // Error. Catching Exception here would let that escape into
+            // handle(), which also catches only Exception, and kill the response
+            // outright: no 500, no body, no metric. A rollout that can black out
+            // the API on a missing jar is not a safe rollout. Found by an
+            // adversarial review.
             System.err.println("sso: identity unavailable, continuing anonymously · " + t);
+            return SsoIdentity.Verdict.ABSENT;
         }
+    }
+
+    /**
+     * The 401, and the only place this service issues one.
+     *
+     * The body says nothing about WHY. The reason travels to stderr, where an
+     * operator can see that every token since 09:00 failed on audience, and
+     * not to the caller, who is on the far side of a trust boundary and would
+     * be handed a validation oracle. Same argument as SsoClient's own javadoc,
+     * applied one layer out.
+     *
+     * WWW-Authenticate is not decoration: it is what makes this a 401 rather
+     * than a 403 in the RFC 7235 sense, and it is the difference between a
+     * client that knows to go and re-authenticate and one that gives up.
+     */
+    private static Response unauthorized(HttpExchange ex, String why) {
+        System.err.println("sso: refused " + ex.getRequestURI().getPath() + " · " + why);
+        ex.getResponseHeaders().set("WWW-Authenticate",
+                "Bearer realm=\"" + BankAuth.AUDIENCE + "\"");
+        return Response.json(401, "{\"error\":\"invalid credential\"}");
     }
 
     private static void handle(HttpExchange ex, Handler h) throws IOException {
         long start = System.nanoTime();
         Response r;
+        boolean api = ex.getRequestURI().getPath().startsWith("/api/");
         try {
-            if (ex.getRequestURI().getPath().startsWith("/api/") && !allowed(ex)) {
+            if (api && !allowed(ex)) {
                 r = Response.json(429, "{\"error\":\"rate limited · the token bucket is empty; it refills at 25/s. " +
                         "Idempotency makes retries safe, this makes them cheap.\"}");
             } else {
-                // Identity is attached HERE, once, for every route · rather
+                // Identity is resolved HERE, once, for every route · rather
                 // than in the eight handlers that read a customer id. The
                 // difference matters on the day someone adds a ninth: a
                 // per-handler version ships that route with no identity and
@@ -1059,13 +1090,48 @@ public final class HttpApi {
                 // The position within this method is chosen too. AFTER the 429
                 // short-circuit, so a rate-limited request never pays for a
                 // token validation. BEFORE the Metrics block and
-                // sendResponseHeaders below, so nothing here can touch the
-                // status, the body, the content type, or the route=/status=
-                // labels. Attaching an identity changes WHOSE data a handler
-                // reads and changes nothing else.
-                attach(ex);
+                // sendResponseHeaders below, so a refusal here is counted and
+                // timed exactly like any other response: a 401 storm shows up
+                // on the same Grafana panel as a 500 storm, which is the whole
+                // reason for refusing loudly instead of degrading quietly.
+                SsoIdentity.Verdict who = authenticate(ex);
                 try {
-                    r = h.run(ex);
+                    // THE THREE ANSWERS. A switch rather than a chain of
+                    // instanceof, so that a fourth Verdict becomes a compile
+                    // error here · at the one place that turns identity into a
+                    // status code · instead of silently landing in a default
+                    // that behaves like an anonymous request.
+                    r = switch (who) {
+                        // A credential was presented and it does not verify.
+                        // Refused in BOTH modes: this is the case Enforcement
+                        // does not govern, because the caller already asked to
+                        // be held to something by sending it. Silently serving
+                        // them as anonymous is how a token that stopped working
+                        // on a key rotation goes unnoticed for a month.
+                        case SsoIdentity.Verdict.Rejected bad -> unauthorized(ex, bad.why());
+
+                        // Nothing was presented. Permissively this is the
+                        // demo, untouched; under enforcement it is the case
+                        // the switch exists to change, and only on /api/.
+                        // /metrics stays scrapeable by a Prometheus that holds
+                        // no token, the static demo pages stay readable, and
+                        // /issuer/v1 stays open to minipay, whose settlement
+                        // calls are machine-to-machine and are a separate
+                        // conversation from a human's browser session.
+                        case SsoIdentity.Verdict.Absent ignored ->
+                                api && Enforcement.on()
+                                        ? unauthorized(ex, "enforcing · no credential presented")
+                                        : h.run(ex);
+
+                        // A credential that verified. Whether it mapped to a
+                        // customer of ours is deliberately NOT a branch: a
+                        // linked subject and an unlinked visitor take the same
+                        // line to the same handler, and the only trace of the
+                        // difference is whether CALLER was set. Making these
+                        // two answer differently would be an oracle for which
+                        // humans hold accounts here.
+                        case SsoIdentity.Verdict.Known ignored -> h.run(ex);
+                    };
                 } finally {
                     CALLER.remove();
                 }

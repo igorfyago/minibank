@@ -73,6 +73,26 @@
       <artifactId>flyway-database-postgresql</artifactId>
       <version>10.20.1</version>
     </dependency>
+    <!-- The estate's token validator · IN-REPO (../sso-client), not a third
+         party, and the "no frameworks" rule is intact: it is ~400 lines of
+         JDK-only code with zero dependencies of its own, and the bank uses it
+         for the same reason it uses the Postgres driver rather than writing
+         one. Reimplementing RS256 validation per service is how two services
+         derive different identities from the same signed token.
+
+         THIS MADE THE MODULE NON-STANDALONE, which had teeth: this pom used
+         to build with `cd ledger-service && mvn test`, and both the Dockerfile
+         and the CI job did exactly that. Neither can resolve a sibling that is
+         not published to any repository. Both now build from the repo root
+         with -pl ledger-service -am · see ledger-service/Dockerfile and
+         .github/workflows/lessons.yml, which were changed in the same breath
+         as this dependency because a dependency that breaks the deploy is not
+         a landed dependency. -->
+    <dependency>
+      <groupId>dev.b4rruf3t</groupId>
+      <artifactId>sso-client</artifactId>
+      <version>0.1.0</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

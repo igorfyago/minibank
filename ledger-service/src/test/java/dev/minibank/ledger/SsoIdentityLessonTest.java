@@ -14,7 +14,6 @@ import java.net.http.HttpResponse;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
-import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,25 +23,32 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * SSO IN THE BANK · WIRED, NOT ENFORCING · and the hole that opens on
+ * SSO IN THE BANK · WIRED, NOT REQUIRED · and the hole that opens on
  * activation day.
  *
- * The rollout is permissive: validate a token if one is present, attach the
- * identity, never 401 yet. The public demo at bank.b4rruf3t.com has no
- * accounts and no logins, and it must keep working byte for byte.
- *
- * The directive asks every app on the estate to prove three things. Those are
- * lessons 1 to 3. Lesson 4 is the one nobody asked for, and it is the one that
- * moves money:
+ * The rollout is permissive, and the word means one specific thing: nothing
+ * becomes newly REQUIRED. The public demo at bank.b4rruf3t.com has no accounts
+ * and no logins, and it must keep working byte for byte. It does NOT mean a
+ * credential that fails to verify is humoured · see lesson 3, which used to
+ * assert the opposite and was wrong.
  *
  *   lesson 1  a valid bank-audience token attaches an identity, and the
  *             identified customer's book is what gets served
  *   lesson 2  no token · every route behaves EXACTLY as it did before SSO
  *             existed, same status and same bytes, and nothing 401s
- *   lesson 3  a token minted for another app's audience attaches nothing,
- *             and is still not an error
+ *   lesson 2b the same, for the seven MUTATING routes caller() was threaded
+ *             through, because a dark launch that alters a write is worse
+ *   lesson 3  a token minted for another app's audience is REFUSED, 401,
+ *             with a body that says nothing about why
+ *   lesson 3b a valid token whose subject nobody linked is a VISITOR: a 200,
+ *             the anonymous behaviour, and not mapped to anybody's account
  *   lesson 4  a valid token for A plus ?customer=B serves A, never B ·
  *             on the read path AND on the write path
+ *
+ * Lessons 3 and 3b are the two halves of one idea and are best read together.
+ * A broken credential is refused; a good credential that happens to name
+ * nobody here is not. The first is a misconfiguration that should be loud, the
+ * second is Tuesday.
  *
  * Lesson 4 passes trivially today (nothing is ever identified) and would
  * still pass the other three if the precedence were backwards. That is
@@ -133,18 +139,34 @@ class SsoIdentityLessonTest {
      * with the cryptography replaced by string equality and the DIRECTORY
      * LOOKUP left real.
      *
-     * Every rejection returns the same empty · no header, wrong scheme, wrong
-     * audience, a subject nobody linked. That indistinguishability is the
-     * contract in SsoIdentity.customerFor, not an accident of this stub.
+     * It answers with the same three verdicts BankAuth does, and the grouping
+     * is the contract rather than an accident of this stub:
+     *
+     *   no header            Absent    · the demo, untouched
+     *   wrong scheme         Rejected  · a credential that is not one
+     *   wrong audience       Rejected  · a valid credential, not valid HERE
+     *   linked subject       Known(id) · identified
+     *   unlinked subject     Known(null) · a visitor, and indistinguishable
+     *                                     from the line above, from outside
+     *
+     * BankAuthLessonTest runs the same lessons through the real RS256
+     * validator with real signatures. This class keeps the stub because its
+     * subject is the BANK's half · precedence, the IDOR, the untouched demo ·
+     * and those are clearest when no cryptography is in the frame.
      */
     static final SsoIdentity STUB = header -> {
-        if (header == null || !header.startsWith("Bearer ")) return Optional.empty();
+        if (header == null || header.isBlank()) return SsoIdentity.Verdict.ABSENT;
+        if (!header.startsWith("Bearer ")) {
+            return new SsoIdentity.Verdict.Rejected("not a Bearer credential");
+        }
         String[] parts = header.substring(7).split(":", 2);     // "<audience>:<subject>"
-        if (parts.length != 2 || !AUDIENCE.equals(parts[0])) return Optional.empty();
+        if (parts.length != 2 || !AUDIENCE.equals(parts[0])) {
+            return new SsoIdentity.Verdict.Rejected("not this bank's audience");
+        }
         try {
-            return Optional.ofNullable(Directory.customerForSso(parts[1]));
+            return new SsoIdentity.Verdict.Known(parts[1], Directory.customerForSso(parts[1]));
         } catch (Exception e) {
-            return Optional.empty();                            // an outage is not an identity
+            return new SsoIdentity.Verdict.Known(parts[1], null);  // an outage is not a bad token
         }
     };
 
@@ -234,33 +256,96 @@ class SsoIdentityLessonTest {
             assertNotEquals(403, anon, r.path() + " must never 403 during a permissive rollout");
             assertTrue(anon < 500, r.path() + " anonymous must not become a server error · got " + anon);
 
-            // and a token for another app changes nothing about any of them
+            // and a token for another app is refused on every one of them,
+            // uniformly · the choke point is HttpApi.handle, so a route cannot
+            // be forgotten. The old version of this loop asserted the opposite
+            // (wrongAud == anon); see lesson 3 for why that assertion was the
+            // dangerous one.
             int wrongAud = statusOfPost(r.path(), token("mart.b4rruf3t.com", ALICE_SUB), r.body());
-            assertEquals(anon, wrongAud,
-                    r.path() + " answered differently for a wrong-audience token · that is a behaviour change");
+            assertEquals(401, wrongAud,
+                    r.path() + " must refuse a credential that does not verify here, not humour it");
+
+            // the write never happened · a refused request must not reach the
+            // handler at all, which is what makes refusing safe to add to
+            // money-moving routes
+            assertNotEquals(anon, wrongAud,
+                    r.path() + " a rejected credential must not take the anonymous path");
         }
     }
 
     @Test
-    @DisplayName("lesson 3: a token for another app's audience attaches nothing · and still is not an error")
-    void lesson3_wrongAudienceAttachesNothing() throws Exception {
+    @DisplayName("lesson 3: a token for another app's audience is REFUSED · a credential that does not work here is not the same as no credential")
+    void lesson3_wrongAudienceIsRefused() throws Exception {
         // a perfectly valid token, minted for the shop, presented to the bank
         String mart = token("mart.b4rruf3t.com", ALICE_SUB);
 
-        assertEquals(200, status("/api/statement?customer=" + BOB, mart),
-                "wrong audience is not a 401 during a permissive rollout");
-        assertEquals("[]", get("/api/statement?customer=" + BOB, mart).trim(),
-                "it attached no identity, so the request fell back to the parameter");
+        // THIS LESSON CHANGED ITS ANSWER, and the reversal is the teaching.
+        //
+        // It used to assert 200: wrong audience attached no identity, the
+        // request fell back to ?customer=, and nothing 401d because
+        // "permissive" was read as "never refuse anything". That is the
+        // reading that costs the most to discover. A mart token at the bank is
+        // not an anonymous browser · it is an integration that is misconfigured
+        // RIGHT NOW, and serving it a cheerful 200 means the misconfiguration
+        // survives until somebody wonders why nobody is ever identified.
+        //
+        // Permissive means nothing is newly REQUIRED (lesson 2 still holds,
+        // byte for byte). It does not mean a broken credential is humoured.
+        assertEquals(401, status("/api/statement?customer=" + BOB, mart),
+                "a token minted for another app is a credential that does not verify here");
 
-        // the important half: it did NOT quietly authenticate as Alice
+        // the important half, unchanged and still the point: it did NOT
+        // quietly authenticate as Alice. Refusing and mis-identifying are both
+        // failures; only one of them moves money.
         assertFalse(get("/api/statement?customer=" + BOB, mart).contains("777"),
                 "a mart token must never open the bank");
 
-        // and with no parameter either, it is exactly the anonymous 400 ·
-        // a mart token is indistinguishable from no token at all
+        // the refusal says nothing about WHY · no "wrong audience", no subject,
+        // nothing an attacker can use to probe what this bank would accept
+        assertEquals("{\"error\":\"invalid credential\"}", get("/api/statement?customer=" + BOB, mart));
+
+        // and it is the SAME refusal with no parameter · a rejected credential
+        // never reaches the handler, so it can never reach the handler's 400
         HttpResponse<String> none = send("/api/statement", mart);
-        assertEquals(400, none.statusCode());
-        assertEquals("{\"error\":\"need ?customer=id\"}", none.body());
+        assertEquals(401, none.statusCode(), "the credential is refused before the parameter is even read");
+        assertEquals("{\"error\":\"invalid credential\"}", none.body());
+    }
+
+    // ------------------------------------------------------------------
+    @Test
+    @DisplayName("lesson 3b: a KNOWN visitor with no account here is not an error, and is not somebody else's account")
+    void lesson3b_unlinkedSubjectIsAVisitor() throws Exception {
+        // A real person, signed into the estate, who simply does not bank
+        // here. The estate has 25 demo customers and none of them are linked,
+        // so this is the ordinary case rather than the exotic one.
+        String visitor = token(AUDIENCE, UNLINKED_SUB);
+
+        assertNull(Directory.customerForSso(UNLINKED_SUB), "nobody has linked this subject");
+
+        // NOT a 401. The credential is perfect; it just does not name a
+        // customer of ours. Refusing here would mean the bank 401s every
+        // signed-in shopper who follows a link to the public demo.
+        assertEquals(200, status("/api/statement?customer=" + BOB, visitor),
+                "a valid token nobody linked is a visitor, and a visitor is not an error");
+
+        // NOT mapped to anyone either · the request falls all the way back to
+        // the parameter, exactly as an anonymous one would. The failure this
+        // guards against is a lookup that returns a default or a first row on
+        // a miss and hands a stranger somebody's book.
+        assertEquals("[]", get("/api/statement?customer=" + BOB, visitor).trim(),
+                "the visitor got Bob's empty book because Bob is what was asked for, not because they are Bob");
+        assertFalse(get("/api/statement?customer=" + ALICE, visitor).isEmpty());
+        assertTrue(get("/api/statement?customer=" + ALICE, visitor).contains("777"),
+                "and asking for Alice by id behaves anonymously too · no identity was attached to override it");
+
+        // INDISTINGUISHABLE from a linked subject, from outside. This is the
+        // oracle argument, and it is the one part of the old collapsed
+        // contract that survives: if an unlinked subject answered differently
+        // from a linked one, this endpoint would enumerate which humans hold
+        // accounts at this bank.
+        assertEquals(status("/api/accounts", token(AUDIENCE, ALICE_SUB)),
+                status("/api/accounts", visitor),
+                "linked and unlinked subjects must not be tellable apart by status");
     }
 
     // ------------------------------------------------------------------
