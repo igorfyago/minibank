@@ -1237,6 +1237,20 @@ let openProd = null;
 const sliderVals = {};
 const lastAuth = {};   // the most recent card authorization per user (this session)
 window.prodOpen = k => { if (k === 'total') return; openProd = openProd === k ? null : k; prevPortSig = ''; loadPortfolio(); };
+// THE PORTFOLIO APP LIVES ON ITS OWN HOSTNAME, not under a path here. Its
+// pages fetch absolute /api/... paths that would resolve against THIS origin
+// and hit the ledger's identically-named routes — same paths, same
+// ?customer=, entirely different schema, HTTP 200. See deploy/Caddyfile for
+// the long version. Derived from the current host rather than hard-coded so
+// dev and prod both work; local dev has no bank./broker. split, so it falls
+// back to the broker's own port.
+const brokerHref = customer => {
+  const h = location.hostname;
+  const base = h.startsWith('bank.')
+    ? location.protocol + '//broker.' + h.slice('bank.'.length)
+    : location.protocol + '//' + h + ':8091';
+  return base + '/portfolio?customer=' + encodeURIComponent(customer);
+};
 window.slideVal = (k, v) => { sliderVals[k] = Number(v); const o = document.querySelector('#sl-' + k + '-out'); if (o) o.textContent = '€' + Number(v).toLocaleString('en-US'); };
 function slider(k, min, max, step, dflt) {
   const v = sliderVals[k] ?? (sliderVals[k] = dflt);
@@ -1329,7 +1343,8 @@ async function loadPortfolio() {
       `<div class="ch" id="ch-bt"></div>` + slider('bt', 10, 250, 5, 50) +
       `<div class="prod-btns"><button class="mini" onclick="pTrade('btc','buy',false)">buy</button>
        ${Number(pf.btcEur) > 0.5 ? `<button class="mini" onclick="pTrade('btc','sell',false)">sell</button>
-       <button class="mini" onclick="pTrade('btc','sell',true)">sell all</button>` : ''}</div>
+       <button class="mini" onclick="pTrade('btc','sell',true)">sell all</button>` : ''}
+       <button class="mini" onclick="location.href=brokerHref(${me})">open portfolio ↗</button></div>
        <div class="prod-sub" style="margin-top:6px">one transaction, four entries, two currencies · both ledgers sum to zero</div>
        <div class="ph" id="ph-bt"></div>`)
     + tile('ap',
@@ -1338,7 +1353,8 @@ async function loadPortfolio() {
       `<div class="ch" id="ch-ap"></div>` + slider('ap', 10, 250, 5, 50) +
       `<div class="prod-btns"><button class="mini" onclick="pTrade('aapl','buy',false)">buy</button>
        ${Number(pf.aaplEur) > 0.5 ? `<button class="mini" onclick="pTrade('aapl','sell',false)">sell</button>
-       <button class="mini" onclick="pTrade('aapl','sell',true)">sell all</button>` : ''}</div>
+       <button class="mini" onclick="pTrade('aapl','sell',true)">sell all</button>` : ''}
+       <button class="mini" onclick="location.href=brokerHref(${me})">open portfolio ↗</button></div>
        <div class="ph" id="ph-ap"></div>`)
     + tile('ln',
       `<div class="prod-name">🏦 Loan</div><div class="prod-val">${loanBal === 0 ? '€0.00' : fmt(pf.loan)}</div>

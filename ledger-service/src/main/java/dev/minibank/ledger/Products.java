@@ -6,6 +6,10 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -82,6 +86,76 @@ public final class Products {
     }
 
     // ------------------------------------------------------------------
+    // THE SHELF, in full · fixed offsets AND registry-allocated holdings
+    // ------------------------------------------------------------------
+    /**
+     * One account on a customer's shelf: enough to move it, and to build it
+     * on the far side of a move. `symbol` is null for the six fixed offsets
+     * and the instrument's ticker for a registry-allocated holding.
+     */
+    public record ShelfAccount(long id, String symbol, String label, String currency, String kind) {}
+
+    /**
+     * EVERY account that belongs to this customer, whether it sits at a fixed
+     * offset or was allocated by the registry.
+     *
+     * WHY THIS EXISTS AND WHY IT IS NOT JUST OFFSETS. Relocation used to walk
+     * Products.OFFSETS, which is the complete shelf only for as long as the
+     * bank lists exactly the two instruments that have an offset. The moment
+     * an instrument is listed through the registry, a customer holding it has
+     * an account that OFFSETS does not know about · and a relocation that
+     * walks OFFSETS alone would leave that holding behind on the old shard.
+     * That is precisely the stranded-shelf bug this bank already fixed once,
+     * arriving by a new door. So the walk is over the union, deduplicated by
+     * id: BTC and AAPL appear in both lists (offset 200/300 and registry
+     * slots 0/1) and must be moved once, not twice.
+     *
+     * Ordered: the fixed offsets first, in id order, then the registry
+     * holdings by slot. Deterministic, because a relocation that visits
+     * accounts in a different order on a retry is a relocation whose failures
+     * are hard to reason about.
+     */
+    public static List<ShelfAccount> shelfAccounts(Shard shard, long customerId) throws SQLException {
+        Map<Long, ShelfAccount> byId = new LinkedHashMap<>();
+        for (long off : OFFSETS) {
+            long id = customerId + off;
+            String kind = off == CARD ? "credit" : off == LOAN ? "loan" : Ledger.KIND_CUSTOMER;
+            String ccy = off == BTC ? "BTC" : off == AAPL ? "AAPL" : "EUR";
+            String symbol = off == BTC ? "BTC" : off == AAPL ? "AAPL" : null;
+            byId.put(id, new ShelfAccount(id, symbol, label(off), ccy, kind));
+        }
+        try (Connection c = shard.open()) {
+            for (AssetRegistry.Asset a : AssetRegistry.all(c)) {
+                // the RECORDED id, not merely the derived one · a shelf walk
+                // that derived while the money sat in a recorded account
+                // would walk straight past it
+                long id = AssetRegistry.holdingIdFor(c, a, customerId);
+                byId.putIfAbsent(id, new ShelfAccount(
+                        id, a.symbol(), a.label(), a.currency(), Ledger.KIND_CUSTOMER));
+            }
+        }
+        return new ArrayList<>(byId.values());
+    }
+
+    /** Build one shelf account on an EXPLICIT shard · what a relocation needs
+     *  so the balance has somewhere to land. Idempotent. */
+    public static void ensureShelfAccountOn(Shard shard, long customerId, ShelfAccount a) throws SQLException {
+        try (Connection c = shard.open()) {
+            ensure(c, a.id(), a.label(), a.kind(), a.currency());
+            // the MAPPING travels with the account · a holding that arrives
+            // on a shard which has never recorded it would be re-derived on
+            // the next trade, and a re-derivation is a guess where a fact
+            // already exists
+            if (a.symbol() != null) AssetRegistry.recordHolding(c, a.symbol(), customerId, a.id());
+        }
+        try {
+            Directory.register(a.id(), a.label(), shard.index);
+        } catch (Exception ignored) {
+            // no directory in arithmetic-router contexts (lesson tests)
+        }
+    }
+
+    // ------------------------------------------------------------------
     // card authorization: the hold lifecycle, as transfers
     // ------------------------------------------------------------------
     // A card payment is TWO moments, not one. AUTHORIZE reserves the money
@@ -146,8 +220,6 @@ public final class Products {
     public static Ledger.TransferResult trade(UUID txId, long customerId, String asset,
                                               boolean buy, BigDecimal eur, BigDecimal price) throws SQLException {
         if (eur.signum() <= 0 || price.signum() <= 0) throw new IllegalArgumentException("amount and price must be positive");
-        long assetAcct = customerId + ("btc".equals(asset) ? BTC : AAPL);
-        long brokerAsset = "btc".equals(asset) ? Shard.BROKER_BTC : Shard.BROKER_AAPL;
         BigDecimal units = eur.divide(price, 8, RoundingMode.HALF_UP);
         if (units.signum() == 0) throw new IllegalArgumentException("amount too small at this price");
 
@@ -159,6 +231,13 @@ public final class Products {
                     conn.rollback();
                     return new Ledger.AlreadyProcessed();
                 }
+                // THE LOOKUP THAT REPLACED THE TERNARY. An unlisted symbol
+                // raises UnknownAsset here rather than settling into apple.
+                AssetRegistry.Asset listed = AssetRegistry.bySymbol(conn, asset);
+                long brokerAsset = listed.brokerAccount();
+                // the holding account is born on the first trade that needs
+                // it · inside this transaction, so a rollback un-creates it
+                long assetAcct = AssetRegistry.ensureHolding(conn, asset, customerId);
                 // ordered locking across all four rows · same global rule
                 long[] ids = {Shard.BROKER_EUR, brokerAsset, customerId, assetAcct};
                 java.util.Arrays.sort(ids);
@@ -220,8 +299,6 @@ public final class Products {
             throws SQLException {
         if (units.signum() <= 0 || cash.signum() <= 0)
             throw new IllegalArgumentException("units and cash must be positive");
-        long assetAcct = customerId + ("btc".equals(asset) ? BTC : AAPL);
-        long brokerAsset = "btc".equals(asset) ? Shard.BROKER_BTC : Shard.BROKER_AAPL;
 
         Shard home = Shards.forCustomer(customerId);
         try (Connection conn = home.open()) {
@@ -231,6 +308,15 @@ public final class Products {
                     conn.rollback();
                     return new Ledger.AlreadyProcessed();
                 }
+                // THE LOOKUP THAT REPLACED THE TERNARY, and the reason the
+                // broker's catalog is no longer the only thing standing
+                // between a new listing and a mis-credit. Settlement.handle
+                // hands this method whatever symbol the venue filled; an
+                // unlisted one raises here, the fill is refused, and the
+                // broker unwinds. No else-branch, so no wrong holding.
+                AssetRegistry.Asset listed = AssetRegistry.bySymbol(conn, asset);
+                long brokerAsset = listed.brokerAccount();
+                long assetAcct = AssetRegistry.ensureHolding(conn, asset, customerId);
                 long[] ids = {Shard.BROKER_EUR, brokerAsset, customerId, assetAcct};
                 java.util.Arrays.sort(ids);              // the global lock order, unchanged
                 Ledger.Account main = null, assetA = null;

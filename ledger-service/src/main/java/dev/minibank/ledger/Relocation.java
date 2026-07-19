@@ -65,12 +65,21 @@ public final class Relocation {
             //     (BTC rides the BTC clearing account). These legs are
             //     unwindable, so a failure here leaves the customer exactly
             //     where they started.
-            for (long off : Products.OFFSETS) {
-                long acct = customerId + off;
+            //     THE WALK IS OVER THE WHOLE SHELF, not over OFFSETS. A
+            //     registry-allocated holding (any instrument listed after
+            //     BTC and AAPL) has no fixed offset, so walking OFFSETS
+            //     alone would strand it on the old shard · the same bug
+            //     this class was written to fix, arriving by a new door.
+            for (Products.ShelfAccount slot : Products.shelfAccounts(from, customerId)) {
+                long acct = slot.id();
                 // a customer from before the product shelf existed has
                 // nothing of this kind to move · absent is not an error here,
                 // it is an empty leg
                 if (!from.hasAccount(acct)) continue;
+                // the destination shelf is built eagerly for the six fixed
+                // offsets above; a registry holding is built here, only for
+                // the instruments this customer actually holds
+                Products.ensureShelfAccountOn(to, customerId, slot);
                 UUID legId = leg(move, acct);
                 BigDecimal amount = from.departBalance(legId, acct);
                 if (amount.signum() != 0) crossed.add(acct);
@@ -90,7 +99,8 @@ public final class Relocation {
             // 3 · the shelf's ROUTING rows move with the shelf. A customer in
             //     uk whose savings still route to eu is the bug this fixes:
             //     the router would send product writes to foreign soil.
-            for (long off : Products.OFFSETS) Directory.flip(customerId + off, toShardIndex);
+            for (Products.ShelfAccount slot : Products.shelfAccounts(to, customerId))
+                Directory.flip(slot.id(), toShardIndex);
             Directory.flip(customerId, toShardIndex);  // the pointer flip · the move IS this line
         } catch (Exception e) {
             // unwind: every shelf leg that crossed goes back where it came
@@ -137,9 +147,13 @@ public final class Relocation {
             Products.ensureOn(home, customerId);
             for (Shard other : Shards.all()) {
                 if (other == home) continue;
-                for (long off : Products.OFFSETS) {
-                    long acct = customerId + off;
+                // the whole shelf again · a registry-allocated holding can be
+                // stranded exactly like savings were, and the repair that
+                // only knew about OFFSETS would walk straight past it
+                for (Products.ShelfAccount slot : Products.shelfAccounts(other, customerId)) {
+                    long acct = slot.id();
                     if (!other.hasAccount(acct)) continue;
+                    Products.ensureShelfAccountOn(home, customerId, slot);
                     UUID legId = UUID.nameUUIDFromBytes(
                             ("repair:" + acct + ":" + home.index).getBytes(StandardCharsets.UTF_8));
                     BigDecimal amount = other.departBalance(legId, acct);

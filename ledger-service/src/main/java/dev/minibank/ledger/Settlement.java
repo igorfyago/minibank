@@ -103,7 +103,25 @@ public final class Settlement {
         BigDecimal cash = new BigDecimal(Json.str(payload, "cash"));
         String asset = symbol.toLowerCase();
 
-        Ledger.TransferResult result = Products.settleFill(fillId, customerId, asset, buy, units, cash);
+        // THE LINE THAT USED TO BE THE MIS-CREDIT VECTOR. This method hands
+        // the ledger whatever symbol the venue filled, and it never validated
+        // it · the HTTP trade path checked, the Kafka settlement path did
+        // not, and the ledger's ternary turned every unvalidated symbol into
+        // the customer's APPLE account. The registry has no else-branch now,
+        // so an unlisted symbol raises. Catch it HERE rather than letting it
+        // kill the consumer thread: an instrument the broker can route and
+        // the ledger cannot settle is a refusal, which the saga already knows
+        // how to unwind, and a redelivery is a no-op because the refusal is
+        // gated by a deterministic id.
+        Ledger.TransferResult result;
+        try {
+            result = Products.settleFill(fillId, customerId, asset, buy, units, cash);
+        } catch (AssetRegistry.UnknownAsset e) {
+            System.err.println("settlement refused: " + e.getMessage());
+            Products.recordSettlementRefusal(fillId, customerId, symbol, buy, units,
+                    "instrument not listed in the ledger");
+            return;
+        }
 
         if (result instanceof Ledger.InsufficientFunds) {
             // the money side said no · tell the broker so it can unwind, and

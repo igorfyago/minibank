@@ -31,22 +31,25 @@ public final class Catalog {
     /**
      * Idempotent, safe on every boot · the same habit as the system accounts.
      *
-     * WHY EXACTLY TWO. It is tempting to fill this table out so the portfolio
-     * screen looks like a real brokerage, and the price feed would cooperate:
-     * Yahoo resolves any ticker you hand it. The SETTLEMENT path does not.
-     * Products.settleFill maps a symbol onto a ledger account with
+     * WHY STILL EXACTLY TWO, now that the ledger can carry more.
      *
-     *     assetAcct = customerId + ("btc".equals(asset) ? BTC : AAPL)
+     * This comment used to explain that a third row here would be actively
+     * dangerous: Products.settleFill mapped a symbol onto an account with
+     * `customerId + ("btc".equals(asset) ? BTC : AAPL)`, so every symbol that
+     * was not bitcoin settled into the customer's APPLE account, and the
+     * books still summed to zero in every currency · a wrong holding that
+     * passed every check the bank runs. It closed by saying the third
+     * instrument was a ledger change, not a row in this table.
      *
-     * so every symbol that is not bitcoin settles into the customer's APPLE
-     * account. Seeding MSFT here would produce a tradable instrument whose
-     * fills credit the wrong holding · the books would still sum to zero,
-     * which is exactly what makes it dangerous: a wrong number that passes
-     * every check the bank runs. Listing an instrument means the whole stack
-     * can price it AND settle it, and today that is BTC and AAPL.
-     *
-     * The third instrument is a ledger change (asset account numbering), not
-     * a row in this table.
+     * That ledger change has been made. Asset account numbering now comes
+     * from AssetRegistry, an unlisted symbol raises instead of defaulting,
+     * and a customer's holding account is allocated on first trade. So the
+     * hazard is gone, and what is left is the ordinary reason a brokerage
+     * does not list things casually: listing is a business decision with
+     * regulatory weight, and it is not this method's to make. Use list()
+     * below, which lists an instrument in BOTH places at once · the broker's
+     * catalog and the ledger's registry · because an instrument present in
+     * only one of them is exactly the asymmetry that caused the old bug.
      */
     public static void seed() throws SQLException {
         try (Connection c = BrokerDb.open()) {
@@ -54,6 +57,29 @@ public final class Catalog {
             // would be a lie told in a column heading
             put(c, "BTC", "crypto", "BTC", "Bitcoin", "CRYPTO");
             put(c, "AAPL", "equity", "AAPL", "Apple Inc.", "NASDAQ.NMS");
+        }
+    }
+
+    /**
+     * LIST an instrument · the whole act, both halves.
+     *
+     * A row in this table makes a symbol routable. An entry in the ledger's
+     * asset registry makes it SETTLEABLE. An instrument that has the first
+     * and not the second is a tradable thing whose fills the ledger will
+     * refuse, and before the registry existed it was a tradable thing whose
+     * fills landed in the wrong account. So the two are done together, here,
+     * and the ledger half goes first: if the registry refuses the symbol (a
+     * slot collision, a currency contradiction), nothing becomes tradable.
+     *
+     * assetCode is the ledger CURRENCY of the asset leg · it is what the
+     * registry keys its clearing account on, and until now it was written
+     * into this table and never read by anything that mattered.
+     */
+    public static void list(String symbol, String kind, String assetCode,
+                            String displayName, String exchange) throws SQLException {
+        dev.minibank.ledger.AssetRegistry.register(symbol, assetCode, displayName.toLowerCase());
+        try (Connection c = BrokerDb.open()) {
+            put(c, symbol, kind, assetCode, displayName, exchange);
         }
     }
 

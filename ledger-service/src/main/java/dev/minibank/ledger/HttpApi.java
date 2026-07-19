@@ -286,7 +286,13 @@ public final class HttpApi {
                         default -> {
                             if (kind.startsWith("trade:")) {
                                 String[] parts = kind.split(":");
-                                label = "btc".equals(parts[1]) ? "Bitcoin" : "Apple stock";
+                                // The display twin of the ternary the registry
+                                // replaced in settlement · left behind, it told
+                                // a customer who bought MSFT that they had
+                                // bought Apple stock. The ledger stopped
+                                // guessing which asset this was; so does the
+                                // statement.
+                                label = AssetRegistry.labelOrSymbol(c, parts[1]);
                                 tag = parts[2];   // buy | sell
                             } else if ("external".equals(otherKind)) {
                                 label = in ? "Money added" : (otherOwner == null ? "Payment" : otherOwner);
@@ -660,70 +666,9 @@ public final class HttpApi {
         if (q != null) for (String p : q.split("&")) if (p.startsWith("tx=")) tx = p.substring(3);
         if (tx == null) return Response.json(400, "{\"error\":\"need ?tx=uuid\"}");
         UUID id = UUID.fromString(tx);
-
-        /* You may arrive here holding a REFUND's id rather than the payment's.
-           The activity list shows a refund as its own row, and a refund's id is
-           derived by hashing the original, which is one way: given the refund
-           you cannot compute what it refunded. Clicking it therefore asked for
-           the story of a transaction that nothing else mentions, and got a
-           beginning-less fragment: no payer, no payee, no amount, none of the
-           journey that caused it.
-           A refund now records its parent, so the question "what is this a
-           refund OF" is a lookup rather than an impossible inversion. Resolve
-           to the original first, and every refund traces the whole saga it
-           belongs to. */
-        for (Shard s : Shards.all()) {
-            try (Connection c = s.open();
-                 var ps = c.prepareStatement("SELECT parent_tx FROM transactions WHERE id = ? AND parent_tx IS NOT NULL")) {
-                ps.setObject(1, id);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next() && rs.getObject(1) != null) {
-                        id = (UUID) rs.getObject(1);
-                        tx = id.toString();
-                        break;
-                    }
-                }
-            }
-        }
         UUID refundId = UUID.nameUUIDFromBytes(("refund:" + id).getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
-        /**
-         * A step, and WHERE IT SITS IN THE CAUSAL CHAIN.
-         *
-         * The rank exists because the timestamps cannot be trusted to order
-         * this. They are drawn from three independent clock domains: the eu
-         * database stamps depart, the uk database stamps arrive, the relay's
-         * own process stamps the ack, and the notifications database stamps the
-         * echo. Worse, Postgres now() is TRANSACTION time, not statement time,
-         * so a row records when its transaction opened rather than when it
-         * committed. A cross-region transfer was therefore recorded, live, with
-         * the arrival 22ms BEFORE the publish that caused it.
-         *
-         * Sorting a distributed saga by wall clock is the mistake. You cannot
-         * totally order events across independent nodes that way, and this is a
-         * bank whose whole point is to be honest about that. The causal order
-         * is known in advance from the saga's shape, so it is stated, and the
-         * timestamps are what they always were: observations, useful for
-         * showing how long things took and useless for deciding what came
-         * first.
-         *
-         * Rank 2 holds arrive AND the first notification deliberately. They are
-         * genuinely CONCURRENT: two consumer groups reading one message, so
-         * neither causes the other and either may land first. Within a rank the
-         * timestamp breaks the tie, which is exactly the case where comparing
-         * them is meaningful.
-         */
-        record Step(java.time.Instant ts, String step, String region, String detail, int rank) {
-            Step(java.time.Instant ts, String step, String region, String detail) {
-                this(ts, step, region, detail, switch (step) {
-                    case "transfer", "depart" -> 0;
-                    case "published" -> 1;
-                    case "arrive", "notify" -> 2;
-                    case "refund" -> 3;
-                    default -> step.startsWith("relocate:") ? 0 : 2;
-                });
-            }
-        }
+        record Step(java.time.Instant ts, String step, String region, String detail) {}
         java.util.List<Step> steps = new java.util.ArrayList<>();
         String payer = null, payee = null, amount = null;
 
@@ -770,15 +715,8 @@ public final class HttpApi {
                     try (ResultSet rs = ps.executeQuery()) {
                         while (rs.next()) {
                             if (rs.getTimestamp(3) != null) {
-                                // A bounce writes a SECOND outbox row, so one
-                                // transaction has two publishes and two echoes.
-                                // The compensating pair belongs after the
-                                // refund, not interleaved with the original.
-                                boolean bounced = String.valueOf(rs.getString(1)).startsWith("bounced:");
                                 steps.add(new Step(rs.getTimestamp(3).toInstant(), "published", region,
-                                        bounced ? "relay -> Kafka (the compensating event)"
-                                                : "relay -> Kafka (broker acked, then marked)",
-                                        bounced ? 4 : 1));
+                                        "relay -> Kafka (broker acked, then marked)"));
                             }
                         }
                     }
@@ -793,16 +731,13 @@ public final class HttpApi {
             ps.setString(3, "bounced:" + tx);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    boolean bounced = String.valueOf(rs.getString(1)).startsWith("bounced:");
                     steps.add(new Step(rs.getTimestamp(2).toInstant(), "notify", "notifications",
-                            "notification stored (idempotent consumer)", bounced ? 5 : 2));
+                            "notification stored (idempotent consumer)"));
                 }
             }
         }
 
-        // Causal order first, and the clock only to break ties WITHIN a rank,
-        // which is the only place comparing these clocks means anything.
-        steps.sort(java.util.Comparator.comparingInt(Step::rank).thenComparing(Step::ts));
+        steps.sort(java.util.Comparator.comparing(Step::ts));
         StringBuilder b = new StringBuilder("{\"tx\":\"").append(tx).append('"');
         if (payer != null) b.append(",\"payer\":\"").append(Json.esc(payer)).append('"');
         if (payee != null) b.append(",\"payee\":\"").append(Json.esc(payee)).append('"');
@@ -1142,10 +1077,23 @@ public final class HttpApi {
         String asset = Json.str(body, "asset"), side = Json.str(body, "side"), eur = Json.str(body, "eur");
         if (txId == null || customer == null || asset == null || side == null || eur == null)
             return Response.json(400, "{\"error\":\"need txId, customer, asset, side, eur\"}");
-        if (!"btc".equals(asset) && !"aapl".equals(asset))
-            return Response.json(400, "{\"error\":\"asset must be btc or aapl\"}");
+        // the same fact the settlement path enforces, asked the same way ·
+        // the two used to disagree, and the disagreement was the bug
+        // asked of the shard that will SETTLE it, not of shard 0 · a symbol
+        // listed on one shard and not the other used to pass here and fail
+        // after the venue had already filled
+        if (!AssetRegistry.isRegistered(asset, Long.parseLong(customer)))
+            return Response.json(400, "{\"error\":\"" + Json.esc(asset) + " is not a listed instrument\"}");
         try {
             PriceFeed.Px px = PriceFeed.get(asset);
+            // Widening this endpoint from a btc/aapl whitelist to "anything
+            // registered" let through symbols the price feed has no mark for:
+            // PriceFeed answers with an unpriced Px rather than a fabricated
+            // one, and px.price() is then null. Trading at a null price is a
+            // NullPointerException at best and a zero-priced trade at worst.
+            if (px == null || px.price() == null || px.price().signum() <= 0)
+                return Response.json(503, "{\"error\":\"no price for " + Json.esc(asset)
+                        + " right now · the trade was not placed\"}");
             var result = Products.trade(UUID.fromString(txId), Long.parseLong(customer),
                     asset, "buy".equals(side), new BigDecimal(eur), px.price());
             Metrics.inc("minibank_ledger_events_total", "kind=\"trade\"");

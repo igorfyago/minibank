@@ -52,8 +52,20 @@ public final class Main {
         // reconciliation: earlier builds relocated the main account only,
         // stranding product balances on the customer's old region. No-op
         // once every shelf is home.
-        int repaired = Relocation.repairShelves();
-        if (repaired > 0) System.out.println("shelf repair: " + repaired + " account(s) brought home");
+        // BEST EFFORT, AND THAT HAS TO BE ENFORCED HERE. This walks every
+        // customer on every shard, so any one of them being unroutable, any
+        // registry row that exists on one shard and not the other, or one
+        // shard being briefly unreachable, used to propagate straight out of
+        // main() and stop the bank from starting. A reconciliation that can
+        // refuse to let the bank boot is worse than the drift it repairs:
+        // the drift affects one customer, the crash affects everybody.
+        try {
+            int repaired = Relocation.repairShelves();
+            if (repaired > 0) System.out.println("shelf repair: " + repaired + " account(s) brought home");
+        } catch (Exception e) {
+            System.err.println("shelf repair skipped · " + e
+                    + " · the bank is starting anyway; run the repair again once this is resolved");
+        }
         Notifications.createOwnDatabase();
 
         for (Shard s : Shards.all()) {

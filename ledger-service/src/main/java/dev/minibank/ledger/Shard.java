@@ -63,12 +63,40 @@ public final class Shard {
     public static final long IN_TRANSIT_BTC = 8;
     public static final long IN_TRANSIT_AAPL = 9;
 
-    /** The clearing account money of this currency travels through. */
+    /**
+     * The clearing account money of this currency travels through.
+     *
+     * THE SWITCH THIS REPLACED was the relocation-path twin of the asset
+     * ternary, and it failed the same way: `default -> IN_TRANSIT` meant a
+     * currency nobody had added to the switch relocated through the EUR
+     * clearing account, which breaks the per-currency sum-zero audit on BOTH
+     * shards at once. Hard to spot, too, because greps for 'btc' never find
+     * a currency switch.
+     *
+     * Now: EUR is the bank's own money and keeps the original clearing
+     * account. Anything else must be a REGISTERED asset currency, and an
+     * unregistered one raises instead of defaulting · the same fail-closed
+     * rule the settlement path follows, for the same reason.
+     */
+    static long inTransitFor(Connection c, String currency) throws SQLException {
+        if ("EUR".equals(currency)) return IN_TRANSIT;
+        AssetRegistry.Asset a = AssetRegistry.byCurrency(c, currency);
+        if (a == null)
+            throw new IllegalStateException("no clearing account for currency '" + currency
+                    + "' · relocating it through the EUR pipe would break the per-currency audit");
+        return a.clearingAccount();
+    }
+
+    /** The legacy shape, kept for callers that hold no connection · the two
+     *  seeded asset currencies answer from constants, everything else has to
+     *  ask the registry through the form above. */
     public static long inTransitFor(String currency) {
         return switch (currency) {
             case "BTC"  -> IN_TRANSIT_BTC;
             case "AAPL" -> IN_TRANSIT_AAPL;
-            default     -> IN_TRANSIT;
+            case "EUR"  -> IN_TRANSIT;
+            default     -> throw new IllegalStateException(
+                    "no clearing account for currency '" + currency + "' without a registry lookup");
         };
     }
 
@@ -102,6 +130,13 @@ public final class Shard {
             ensureSystemAccount(c, BROKER_BTC, "broker", "BTC");
             ensureSystemAccount(c, BROKER_AAPL, "broker", "AAPL");
             ensureSystemAccount(c, CAFE, "cafe", "EUR");
+            // the registry, and the broker + clearing accounts of every
+            // instrument listed in it · a shard is never missing the other
+            // side of a trade it may be asked to settle. BTC and AAPL are
+            // seeded there with the ids they already have (5/8 and 6/9), so
+            // these two lines create nothing new on an existing database.
+            AssetRegistry.createTablesOn(c);
+            AssetRegistry.ensureSlotAccountsOn(c, Ledger.KIND_EXTERNAL);
         }
     }
 
@@ -228,7 +263,7 @@ public final class Shard {
         try (Connection conn = open()) {
             conn.setAutoCommit(false);
             try {
-                if (!Ledger.claimTx(conn, refundId, "refund", origTxId)) {
+                if (!Ledger.claimTx(conn, refundId, "refund")) {
                     conn.rollback();
                     return new Ledger.AlreadyProcessed();
                 }
@@ -321,7 +356,7 @@ public final class Shard {
                 // need it to know which clearing account to lock. Then lock
                 // ascending (clearing ids are < 10, accounts >= 10), the
                 // same global ordering rule every other transaction obeys.
-                long clearing = inTransitFor(currencyOf(conn, accountId));
+                long clearing = inTransitFor(conn, currencyOf(conn, accountId));
                 Ledger.lockAccount(conn, clearing);
                 BigDecimal amount = Ledger.lockAccount(conn, accountId).balance();
                 if (amount.signum() == 0) {          // nothing to move
@@ -355,7 +390,7 @@ public final class Shard {
                     conn.rollback();
                     return false;
                 }
-                long clearing = inTransitFor(currencyOf(conn, accountId));
+                long clearing = inTransitFor(conn, currencyOf(conn, accountId));
                 Ledger.lockAccount(conn, clearing);
                 Ledger.lockAccount(conn, accountId);
                 Ledger.insertEntry(conn, txId, clearing, amount.negate());
