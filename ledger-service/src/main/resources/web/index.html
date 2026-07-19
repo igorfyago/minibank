@@ -1613,9 +1613,36 @@ async function loadPortfolio() {
 const stmtCache = MB.swrCache({ ttl: 4000 });
 const statementOf = acct => stmtCache.get(String(acct), () => api('/api/statement?customer=' + acct));
 
+/**
+ * Money moved, so EVERY view of that money is stale, not just this tab's.
+ *
+ * This used to refresh the accounts, the statement and the portfolio and stop
+ * there. The X-ray was left to its own 2s poller, which skips xrayTick entirely
+ * unless the X-ray tab is already on screen, so acting through Rita while her
+ * panel covered another tab updated the balances and left the map and the
+ * activity feed showing the world as it was before.
+ *
+ * AND ONE REFRESH IS NOT ENOUGH, which is the more interesting half. A transfer
+ * is committed when the API returns, but the rest of the story has not happened
+ * yet: the relay publishes to Kafka a beat later and the notification lands
+ * after that. Refreshing once shows the commit and misses its consequences, and
+ * the feed then looks stuck for exactly as long as it takes someone to give up
+ * and reload. So the refresh follows the saga instead of racing it, sampling
+ * again as the asynchronous tail arrives. This is what eventual consistency
+ * costs on the read side, and pretending otherwise is what made it look broken.
+ */
+const REFRESH_TAIL_MS = [0, 350, 900, 1800, 3200];
+let refreshTimers = [];
 function refreshAll() {
   stmtCache.invalidate();     // money moved · the cache must not out-vote it
-  loadAccounts(); prevStmtSig = ''; loadStatement(); prevPortSig = ''; loadPortfolio();
+  refreshTimers.forEach(clearTimeout); refreshTimers = [];
+  REFRESH_TAIL_MS.forEach(delay => refreshTimers.push(setTimeout(() => {
+    loadAccounts(); prevStmtSig = ''; loadStatement(); prevPortSig = ''; loadPortfolio();
+    // the map and the feed are views of the same money · refresh them whether
+    // or not their tab happens to be the one in front
+    try { xrayTick(); } catch (e) { console.error('refreshAll: xrayTick', e); }
+    try { tapeTick(); } catch (e) { console.error('refreshAll: tapeTick', e); }
+  }, delay)));
 }
 /* the statement · the double-entry ledger, told the way a bank app tells it */
 async function loadStatement() {
@@ -2258,15 +2285,28 @@ async function xrayTick() {
 
   const fresh = evs.filter(e => !seen.has(e.type + e.tx + e.ts));
   evs.forEach(e => seen.add(e.type + e.tx + e.ts));
-  /* One event at a time, and never over the top of a replay. Six events at
-     350ms apart, each up to three balls, put eighteen balls on a map with ten
-     edges: that is where "balls born spontaneously" came from. The newest event
-     is the one worth showing; the rest are already in the activity list. */
-  if (!firstPoll && Date.now() > playingUntil && fresh.length) {
-    const newest = fresh[0];
-    const j = MB.journey([eventToStep(newest)], MAP);
-    if (j.hops.length) { runJourney(j); playingUntil = Date.now() + j.total + 200; }
-  }
+  /* QUEUE the unseen events rather than animating whichever one happens to
+     arrive while the map is free.
+     ---------------------------------------------------------------------
+     One event at a time is right: six events 350ms apart, each up to three
+     balls, put eighteen balls on a map with ten edges, and that is where the
+     spontaneous ones came from. But the old rule ALSO threw away everything
+     that arrived while an animation was running: an event was marked seen on
+     the tick that fetched it, and dropped if playingUntil had not expired.
+     A payment is three events over roughly a hundred milliseconds · the commit,
+     then the relay publishing, then the notification · so the commit animated,
+     claimed the map, and the two consequences were marked handled without ever
+     being drawn. The map lit eu Postgres and stopped there, permanently,
+     because nothing would ever consider those events again.
+     Queued instead, they play in order, and the whole journey crosses the map
+     the way it actually happened. Marked seen when QUEUED, drawn when the map
+     is free. */
+  fresh.slice().reverse().forEach(e => {          // oldest first · that is the order it happened
+    const j = MB.journey([eventToStep(e)], MAP);
+    if (j.hops.length) liveQueue.push(j);
+  });
+  if (liveQueue.length > 12) liveQueue.splice(0, liveQueue.length - 12);  // a backlog nobody will watch
+  if (!firstPoll) drainLiveQueue();
 
   const top = evs.slice(0, 7);
   const sig = top.map(e => e.type + e.tx + e.ts).join('|');
@@ -2349,6 +2389,22 @@ window.tickClick = evJson => { const e = JSON.parse(evJson);
 function renderTrace(tr, tx) {
   activeTrace = tr;
   clearTimeout(loopTimer); loopTimer = null;   // never loop the journey you just left
+  /* Decide whether this journey CAN be drawn at selection time, not at play
+     time. setReplayable used to be called only inside playTrace, so choosing an
+     undrawable transaction never evaluated it and the buttons simply kept
+     whatever state the previous transaction had left them in: enabled, and
+     dead. Whether a control works is a property of what is selected, so it is
+     settled the moment the selection changes. */
+  {
+    const canDraw = tr.steps && tr.steps.length && MB.journey(tr.steps, MAP).hops.length > 0;
+    setReplayable(!!canDraw);
+    if (!canDraw) {
+      $('#play-wrap').hidden = false;
+      $('#play-caption').textContent = tr.steps && tr.steps.length
+        ? `no map animation for this one · ${tr.steps.map(s => s.step).join(', ')} happens off this diagram`
+        : 'no recorded steps for this transaction';
+    }
+  }
   // the list must show the new selection immediately · waiting for the next
   // 2s tick means clicking a row appears to do nothing for two seconds
   document.querySelectorAll('#ticker .tick-item').forEach(el =>
@@ -2447,6 +2503,40 @@ function setLooping(on) {
   if (on && activeTrace) playTrace(activeTrace);
 }
 
+/* Live events waiting for the map. See the note in xrayTick: they used to be
+   discarded whenever one was already playing, which silently ate every
+   consequence of the event being animated. */
+let liveQueue = [];
+let drainTimer = null;
+function drainLiveQueue() {
+  if (drainTimer) return;                       // already draining
+  const step = () => {
+    drainTimer = null;
+    if (!liveQueue.length) return;
+    if (Date.now() < playingUntil) {            // a replay owns the map · wait, do not drop
+      drainTimer = setTimeout(step, Math.max(120, playingUntil - Date.now()));
+      return;
+    }
+    const j = liveQueue.shift();
+    runJourney(j);
+    playingUntil = Date.now() + j.total + 120;
+    // come back for the next one the moment this journey is done
+    drainTimer = setTimeout(step, j.total + 180);
+  };
+  step();
+}
+
+/** A journey the map cannot draw gets no replay controls, rather than dead ones. */
+function setReplayable(can) {
+  ['#replay-btn', '#loop-btn'].forEach(sel => {
+    const b = $(sel); if (!b) return;
+    b.disabled = !can;
+    b.style.opacity = can ? '' : '.35';
+    b.style.pointerEvents = can ? '' : 'none';
+  });
+  if (!can && looping) setLooping(false);
+}
+
 /** Called when a replay finishes. Queues the next one, if we still should. */
 function loopAgain() {
   if (!looping || !activeTrace) return;
@@ -2501,7 +2591,20 @@ function playTrace(tr) {
   // unit tested over every case this bank can produce. All that is left here is
   // drawing it and narrating it.
   const j = MB.journey(steps, MAP);
-  if (!j.hops.length) return;
+  if (!j.hops.length) {
+    /* Nothing on this map corresponds to what happened. A broker settlement is
+       the real case: one step, kind "settle:aapl:sell", which touches no node
+       the topology draws. Returning silently left a trace card showing replay
+       and loop buttons that did nothing at all when pressed, with no
+       explanation, which is a control that lies about being a control. */
+    $('#play-wrap').hidden = false;
+    $('#play-caption').textContent = steps.length
+      ? `no map animation for this one · ${steps.map(s => s.step).join(', ')} happens off this diagram`
+      : 'no recorded steps for this transaction';
+    setReplayable(false);
+    return;
+  }
+  setReplayable(true);
   runJourney(j);
   playingUntil = Date.now() + j.total + 400;
 

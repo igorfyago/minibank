@@ -883,17 +883,102 @@ test('every node drawn is either wired into the graph or a declared unwired one'
   assert.deepEqual(orphans, [], 'drawn with no edges and not on the unwired list · add the edge, or the node to the list');
 });
 
-test('the live poller cannot animate over a running replay', () => {
-  // The regression that produced "an unexpected second loop": the 2s poller
-  // called animateEvent with no idea a replay was in progress.
-  // Reads for `>` and not `<`, and the difference is the whole assertion. The
-  // poller animates only once now is PAST the window a replay claimed; the
-  // inverted spelling was checked in briefly against a line that does not
-  // exist anywhere in the page, so the test failed while the behaviour it
-  // describes was present and correct the entire time. Check the premise
-  // before changing the system.
-  assert.ok(/Date\.now\(\) > playingUntil/.test(INDEX),
-    'the poller must yield while a deliberate animation owns the map');
-  assert.ok(!/fresh\.slice\(0, 6\)[\s\S]{0,60}animateEvent/.test(INDEX),
-    'the poller must not fan six events onto the map at once');
+/*
+ * A LIVE EVENT ARRIVING MID-ANIMATION IS QUEUED, NOT DROPPED.
+ *
+ * This test used to read `assert.ok(/Date\.now\(\) > playingUntil/.test(INDEX))`,
+ * which asserted that one particular LINE OF SOURCE TEXT appeared somewhere in
+ * the page. That line was the dropping logic: mark the event seen, then discard
+ * it if an animation is running. So when a stale copy of index.html reverted the
+ * queue and put the dropping logic back, this test went GREEN, on the exact
+ * commit that reintroduced the bug it exists to catch. A guard that passes
+ * BECAUSE of the regression is worse than no guard, because it is also a signal
+ * that nothing is wrong.
+ *
+ * So it asserts behaviour now. It lifts the real drainLiveQueue out of the page
+ * and runs it in a vm against a virtual clock, a stub runJourney, and a real
+ * queue, then checks what actually happens to events that arrive while a replay
+ * owns the map. Rewriting the scheduler to drop them fails this test; no
+ * spelling of any line can make it pass.
+ *
+ * COVERS: the drain scheduler · that a queued event survives a busy map, that
+ * it is drawn once the map frees up, that ordering is preserved, and that the
+ * queue empties rather than growing forever.
+ *
+ * DOES NOT COVER: the enqueue site itself. That lives in xrayTick, which is
+ * bound to fetch, the DOM and the SVG and cannot be driven from node, so the
+ * one thing checked here structurally is that xrayTick still hands its events
+ * to this scheduler. If someone changes xrayTick to build journeys and drop
+ * them without calling drainLiveQueue, only the browser will notice.
+ */
+test('a live event arriving while an animation runs is queued and drawn later', () => {
+  const vm = require('node:vm');
+
+  const start = INDEX.indexOf('function drainLiveQueue()');
+  assert.ok(start > 0, 'drainLiveQueue must exist · the live queue is the fix');
+  // the page is CRLF · anchor on the first closing brace in column one, either way
+  const close = /\r?\n\}\r?\n/.exec(INDEX.slice(start));
+  assert.ok(close, 'drainLiveQueue must be a top level function to be liftable');
+  const src = INDEX.slice(start, start + close.index + close[0].length);
+
+  // a virtual clock, so the test is deterministic rather than a sleep race
+  let now = 10_000, seq = 0;
+  const timers = [];
+  const ctx = {
+    liveQueue: [], drainTimer: null, playingUntil: 0, drawn: [], Math,
+    Date: { now: () => now },
+    setTimeout: (fn, ms) => { timers.push({ id: ++seq, at: now + Math.max(0, ms), fn }); return seq; },
+    runJourney: j => ctx.drawn.push(j.name),
+  };
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx);
+
+  const advanceTo = target => {
+    for (;;) {
+      const due = timers.filter(t => t.at <= target).sort((a, b) => a.at - b.at)[0];
+      if (!due) break;
+      timers.splice(timers.indexOf(due), 1);
+      now = due.at;
+      due.fn();
+    }
+    now = target;
+  };
+
+  // A replay claims the map for five seconds. Then a payment happens: three
+  // events about a hundred milliseconds apart · the commit, the relay
+  // publishing, the notification · all landing inside that window.
+  ctx.playingUntil = now + 5000;
+  ctx.liveQueue.push({ name: 'committed', total: 300 },
+                     { name: 'published', total: 300 },
+                     { name: 'notified',  total: 300 });
+  vm.runInContext('drainLiveQueue()', ctx);
+
+  assert.deepEqual(ctx.drawn, [],
+    'nothing may be drawn on top of the replay that owns the map');
+  assert.equal(ctx.liveQueue.length, 3,
+    'events arriving mid-animation must be KEPT · the regression marked them ' +
+    'seen and threw them away, so a payment lit the eu database and its Kafka ' +
+    'and notification steps were never drawn at all');
+
+  advanceTo(now + 10_000);
+
+  assert.deepEqual(ctx.drawn, ['committed', 'published', 'notified'],
+    'every queued event must reach the map, in the order it happened');
+  assert.equal(ctx.liveQueue.length, 0, 'the queue must drain, not accumulate');
+  assert.equal(ctx.drainTimer, null, 'an empty queue must not hold a live timer');
+});
+
+test('the live poller hands its events to the queue rather than drawing directly', () => {
+  // The structural half, and deliberately narrow: it only checks the WIRING
+  // that the behaviour test above cannot reach into. See the note above.
+  const i = INDEX.indexOf('async function xrayTick()');
+  const j = INDEX.indexOf('window.tickClick', i);
+  assert.ok(i > 0 && j > i, 'xrayTick must still be findable in the page');
+  const tick = INDEX.slice(i, j);
+  assert.ok(/liveQueue\.push\(/.test(tick),
+    'xrayTick must enqueue the events it fetched');
+  assert.ok(/drainLiveQueue\(\)/.test(tick),
+    'xrayTick must ask the queue to drain');
+  assert.ok(!/runJourney\(/.test(tick),
+    'xrayTick must not animate directly · that is how it used to race replays');
 });
