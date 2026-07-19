@@ -2022,15 +2022,28 @@ async function xrayTick() {
 
   const fresh = evs.filter(e => !seen.has(e.type + e.tx + e.ts));
   evs.forEach(e => seen.add(e.type + e.tx + e.ts));
-  /* One event at a time, and never over the top of a replay. Six events at
-     350ms apart, each up to three balls, put eighteen balls on a map with ten
-     edges: that is where "balls born spontaneously" came from. The newest event
-     is the one worth showing; the rest are already in the activity list. */
-  if (!firstPoll && Date.now() > playingUntil && fresh.length) {
-    const newest = fresh[0];
-    const j = MB.journey([eventToStep(newest)], MAP);
-    if (j.hops.length) { runJourney(j); playingUntil = Date.now() + j.total + 200; }
-  }
+  /* QUEUE the unseen events rather than animating whichever one happens to
+     arrive while the map is free.
+     ---------------------------------------------------------------------
+     One event at a time is right: six events 350ms apart, each up to three
+     balls, put eighteen balls on a map with ten edges, and that is where the
+     spontaneous ones came from. But the old rule ALSO threw away everything
+     that arrived while an animation was running: an event was marked seen on
+     the tick that fetched it, and dropped if playingUntil had not expired.
+     A payment is three events over roughly a hundred milliseconds · the commit,
+     then the relay publishing, then the notification · so the commit animated,
+     claimed the map, and the two consequences were marked handled without ever
+     being drawn. The map lit eu Postgres and stopped there, permanently,
+     because nothing would ever consider those events again.
+     Queued instead, they play in order, and the whole journey crosses the map
+     the way it actually happened. Marked seen when QUEUED, drawn when the map
+     is free. */
+  fresh.slice().reverse().forEach(e => {          // oldest first · that is the order it happened
+    const j = MB.journey([eventToStep(e)], MAP);
+    if (j.hops.length) liveQueue.push(j);
+  });
+  if (liveQueue.length > 12) liveQueue.splice(0, liveQueue.length - 12);  // a backlog nobody will watch
+  if (!firstPoll) drainLiveQueue();
 
   const top = evs.slice(0, 7);
   const sig = top.map(e => e.type + e.tx + e.ts).join('|');
@@ -2220,6 +2233,29 @@ function setLooping(on) {
   const b = $('#loop-btn');
   if (b) { b.classList.toggle('on', on); b.textContent = on ? '⏹ stop' : '↻ loop'; }
   if (on && activeTrace) playTrace(activeTrace);
+}
+
+/* Live events waiting for the map. See the note in xrayTick: they used to be
+   discarded whenever one was already playing, which silently ate every
+   consequence of the event being animated. */
+let liveQueue = [];
+let drainTimer = null;
+function drainLiveQueue() {
+  if (drainTimer) return;                       // already draining
+  const step = () => {
+    drainTimer = null;
+    if (!liveQueue.length) return;
+    if (Date.now() < playingUntil) {            // a replay owns the map · wait, do not drop
+      drainTimer = setTimeout(step, Math.max(120, playingUntil - Date.now()));
+      return;
+    }
+    const j = liveQueue.shift();
+    runJourney(j);
+    playingUntil = Date.now() + j.total + 120;
+    // come back for the next one the moment this journey is done
+    drainTimer = setTimeout(step, j.total + 180);
+  };
+  step();
 }
 
 /** A journey the map cannot draw gets no replay controls, rather than dead ones. */
