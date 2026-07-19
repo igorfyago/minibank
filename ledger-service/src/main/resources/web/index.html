@@ -2124,8 +2124,33 @@ let playTimers = [], following = null, playedSteps = 0;
    Press replay, wait two seconds, and a second differently-timed animation
    landed on top of the first. That is the "unexpected second loop". */
 let playingUntil = 0;
+/**
+ * End the current animation AND erase what it drew.
+ *
+ * This used to clear only the timers, which cancelled the steps that had not
+ * happened yet and left everything already on screen exactly where it was. Two
+ * things therefore survived into the next cycle:
+ *
+ *   BALLS STILL IN FLIGHT. Each pulse animates on its own requestAnimationFrame
+ *   and removes itself only when its hop completes, so a new cycle starting
+ *   mid-hop ran alongside the old one. Loop it a few times and there are balls
+ *   from three generations on the map at once, which is precisely the "they all
+ *   overlap" symptom.
+ *
+ *   VISITED NODES. The marks accumulated across cycles, so by the third loop
+ *   every box was lit and "which boxes has this payment reached" answered
+ *   "all of them", which is the one question the highlight exists to answer.
+ *
+ * So the map is ephemeral to the newest trigger: whatever is starting now owns
+ * the canvas, and the previous journey leaves nothing behind. A replay always
+ * begins from an empty map, which is also what makes the progression readable.
+ */
 function stopPlay() {
   playTimers.forEach(clearTimeout); playTimers = []; following = null; playingUntil = 0;
+  const layer = $('#pulse-layer');
+  if (layer) while (layer.firstChild) layer.removeChild(layer.firstChild);
+  document.querySelectorAll('.node.visited, .node.hot, .node.hot-amber')
+    .forEach(el => el.classList.remove('visited', 'hot', 'hot-amber'));
 }
 
 /* LOOPING A REPLAY.
