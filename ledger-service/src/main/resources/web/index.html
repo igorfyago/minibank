@@ -2179,6 +2179,17 @@ function setLooping(on) {
   if (on && activeTrace) playTrace(activeTrace);
 }
 
+/** A journey the map cannot draw gets no replay controls, rather than dead ones. */
+function setReplayable(can) {
+  ['#replay-btn', '#loop-btn'].forEach(sel => {
+    const b = $(sel); if (!b) return;
+    b.disabled = !can;
+    b.style.opacity = can ? '' : '.35';
+    b.style.pointerEvents = can ? '' : 'none';
+  });
+  if (!can && looping) setLooping(false);
+}
+
 /** Called when a replay finishes. Queues the next one, if we still should. */
 function loopAgain() {
   if (!looping || !activeTrace) return;
@@ -2233,9 +2244,21 @@ function playTrace(tr) {
   // unit tested over every case this bank can produce. All that is left here is
   // drawing it and narrating it.
   const j = MB.journey(steps, MAP);
-  if (!j.hops.length) return;
+  if (!j.hops.length) {
+    /* Nothing on this map corresponds to what happened. A broker settlement is
+       the real case: one step, kind "settle:aapl:sell", which touches no node
+       the topology draws. Returning silently left a trace card showing replay
+       and loop buttons that did nothing at all when pressed, with no
+       explanation, which is a control that lies about being a control. */
+    $('#play-wrap').hidden = false;
+    $('#play-caption').textContent = steps.length
+      ? `no map animation for this one · ${steps.map(s => s.step).join(', ')} happens off this diagram`
+      : 'no recorded steps for this transaction';
+    setReplayable(false);
+    return;
+  }
+  setReplayable(true);
   runJourney(j);
-  playingUntil = Date.now() + j.total + 400;
 
   const realTotal = steps.length > 1
     ? Math.max(new Date(steps[steps.length - 1].ts) - new Date(steps[0].ts), 1) : 0;
