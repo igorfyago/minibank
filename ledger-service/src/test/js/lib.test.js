@@ -557,6 +557,15 @@ const GRAPH_PAIRS = [
   ['shard0', 'kafka'], ['shard1', 'kafka'],
   ['kafka', 'applier'], ['kafka', 'notif'],
   ['applier', 'shard0'], ['applier', 'shard1'],
+  // the securities loop and the SSO boundary. No FLOW step walks these yet, so
+  // they change no journey · they are here so this fixture keeps saying the
+  // same thing as the map it is a copy of.
+  ['api', 'issuer'], ['issuer', 'directory'],
+  ['shard0', 'ksettle'], ['shard1', 'ksettle'],
+  ['ksettle', 'brokercons'], ['brokercons', 'brokerdb'],
+  ['broker', 'brokerdb'], ['brokerdb', 'korders'],
+  ['korders', 'settle'], ['settle', 'shard0'], ['settle', 'shard1'],
+  ['api', 'jwks'], ['sso', 'directory'], ['api', 'notif'],
 ];
 
 test('mapGraph derives an edge name from its endpoints, so the name cannot lie', () => {
@@ -780,7 +789,10 @@ const INDEX = fs.readFileSync(
   path.join(__dirname, '../../main/resources/web/index.html'), 'utf8');
 
 function drawnEdges() {
-  const svg = INDEX.slice(INDEX.indexOf('<svg viewBox="0 0 720 600"'),
+  // Matched on the width only. The map grew a securities loop and the viewBox
+  // got taller; a selector that pinned the HEIGHT made a layout change look
+  // like eleven unrelated test failures.
+  const svg = INDEX.slice(INDEX.indexOf('<svg viewBox="0 0 720 '),
                           INDEX.indexOf('<g id="pulse-layer">'));
   return new Set([...svg.matchAll(/data-edge="([a-z0-9_]+)"/g)].map(m => m[1]));
 }
@@ -813,7 +825,10 @@ test('an edge name always matches the nodes it connects', () => {
   // browser_api actually drew browser -> caddy, so every reader that split the
   // name on the underscore lit the wrong node. Names are derived now; this
   // makes sure nobody hand-writes a contradicting one back in.
-  const svg = INDEX.slice(INDEX.indexOf('<svg viewBox="0 0 720 600"'),
+  // Matched on the width only. The map grew a securities loop and the viewBox
+  // got taller; a selector that pinned the HEIGHT made a layout change look
+  // like eleven unrelated test failures.
+  const svg = INDEX.slice(INDEX.indexOf('<svg viewBox="0 0 720 '),
                           INDEX.indexOf('<g id="pulse-layer">'));
   const nodes = new Set([...svg.matchAll(/data-node="([a-z0-9]+)"/g)].map(m => m[1]));
   for (const e of drawnEdges()) {
@@ -824,9 +839,59 @@ test('an edge name always matches the nodes it connects', () => {
   }
 });
 
+/**
+ * THE FOURTH COPY: the node ids.
+ *
+ * The three tests above police the EDGES. Nothing policed the endpoints, and a
+ * pair naming a node the SVG does not have fails in the quietest way this page
+ * has: querySelector returns null, glow() returns early, and the animation
+ * draws precisely nothing with no error anywhere. A typo in one identifier is
+ * indistinguishable from "that step never happened".
+ *
+ * The reverse direction is pinned too, but as a LIST rather than as zero. Some
+ * boxes on this map genuinely have no edges · they are context (what else runs
+ * on the machine) or they are state the journey lights up without travelling to
+ * (in flight). Naming them makes adding a twelfth one a deliberate act.
+ */
+const UNWIRED_NODES = [
+  'intransit',                                                  // lit as state, never travelled to
+  'ssodb',                                                      // the SSO's own database, drawn for the boundary
+  'rita', 'pricefeed', 'fx', 'redis', 'prometheus', 'grafana',  // context: also running on the box
+];
+
+function drawnNodes() {
+  const svg = INDEX.slice(INDEX.indexOf('<svg viewBox="0 0 720 '),
+                          INDEX.indexOf('<g id="pulse-layer">'));
+  return new Set([...svg.matchAll(/data-node="([a-z0-9]+)"/g)].map(m => m[1]));
+}
+
+test('every node the graph names is actually drawn, or its ball lands on nothing', () => {
+  const drawn = drawnNodes();
+  const named = new Set();
+  const block = INDEX.slice(INDEX.indexOf('const MAP_PAIRS'), INDEX.indexOf('const MAP ='));
+  for (const m of block.matchAll(/\['([a-z0-9]+)', '([a-z0-9]+)'\]/g)) { named.add(m[1]); named.add(m[2]); }
+  assert.ok(named.size > 0, 'MAP_PAIRS must be parseable, or this test proves nothing');
+  assert.deepEqual([...named].filter(n => !drawn.has(n)), [],
+    'declared in MAP_PAIRS but no such data-node: the animation would silently draw nothing');
+});
+
+test('every node drawn is either wired into the graph or a declared unwired one', () => {
+  const block = INDEX.slice(INDEX.indexOf('const MAP_PAIRS'), INDEX.indexOf('const MAP ='));
+  const named = new Set();
+  for (const m of block.matchAll(/\['([a-z0-9]+)', '([a-z0-9]+)'\]/g)) { named.add(m[1]); named.add(m[2]); }
+  const orphans = [...drawnNodes()].filter(n => !named.has(n) && !UNWIRED_NODES.includes(n));
+  assert.deepEqual(orphans, [], 'drawn with no edges and not on the unwired list · add the edge, or the node to the list');
+});
+
 test('the live poller cannot animate over a running replay', () => {
   // The regression that produced "an unexpected second loop": the 2s poller
   // called animateEvent with no idea a replay was in progress.
+  // Reads for `>` and not `<`, and the difference is the whole assertion. The
+  // poller animates only once now is PAST the window a replay claimed; the
+  // inverted spelling was checked in briefly against a line that does not
+  // exist anywhere in the page, so the test failed while the behaviour it
+  // describes was present and correct the entire time. Check the premise
+  // before changing the system.
   assert.ok(/Date\.now\(\) > playingUntil/.test(INDEX),
     'the poller must yield while a deliberate animation owns the map');
   assert.ok(!/fresh\.slice\(0, 6\)[\s\S]{0,60}animateEvent/.test(INDEX),

@@ -447,15 +447,22 @@
   .xcol { display:flex; flex-direction:column; gap:14px; min-width:0; }
   .xray-grid .card { padding:14px 16px; }
   #xsvg { display:block; }
-  /* THE MAP FITS THE PHONE. The diagram is authored in a 720x600 viewBox and
+  /* THE MAP FITS THE PHONE. The diagram is authored in a 720x730 viewBox and
      scaled to the container width, so on a 390px phone it renders about 325px
      tall: readable, but the boxes below push the map itself off screen before
      you have seen it whole. Capping the drawn height against the VIEWPORT
      rather than the container keeps the entire topology on one screen, which is
      the only way the animation is watchable there. preserveAspectRatio keeps it
      centred instead of stretching the geometry the edges are measured from. */
+  /* 62dvh, and the number moved WITH the viewBox rather than being nudged by
+     eye. The cap was 52dvh against a 600-tall diagram, which drew the map at
+     52/600 of the viewport height. The securities loop made it 730 tall, and
+     holding 52dvh would have shrunk every label by 17% for no reason other
+     than that the constant was written before the map grew. 62dvh restores
+     the same drawn scale (0.68 vs the old 0.69) and the whole topology is
+     still on one screen, which is the only thing the cap is defending. */
   @media (max-width:700px) {
-    #xsvg { max-height:52dvh; }
+    #xsvg { max-height:62dvh; }
     .xray-grid > .xcol > *:first-child { padding:10px 8px; }
   }
   @media (max-width:1180px) {
@@ -477,6 +484,27 @@
   .node text { fill:var(--text); font-size:12px; font-weight:600; }
   .node .sub { fill:var(--dim); font-weight:400; font-size:10px; }
   .edge { stroke:var(--dim); stroke-width:1.5; marker-end:url(#arr); opacity:.7; }
+  /* TWO LINKS THAT ARE NOT ORDINARY LINKS, AND ONE THAT IS NOT A LINK AT ALL.
+     A map that draws every connection the same way can only say "these things
+     talk". These three say something the plain edges cannot, so they are drawn
+     differently on purpose, and the legend under the map reuses these EXACT
+     class names rather than restating them in CSS of its own · a swatch that
+     is a copy is a swatch that eventually disagrees with the diagram. */
+  /* HAZARD: this link is real, it runs today, and it crosses a boundary this
+     system claims to have. Red, heavier, dashed the other way. */
+  .edge.hazard { stroke:var(--red); stroke-width:2.5; stroke-dasharray:8 5; opacity:.95;
+    marker-end:url(#arr-red); }
+  /* GHOST: this link DOES NOT EXIST. No arrowhead, because an arrowhead is a
+     claim about traffic, and no flow animation, because nothing travels a link
+     that is not there. The only thing being drawn is the absence. */
+  .edge.ghost { stroke:var(--dim); stroke-width:1.5; stroke-dasharray:2 6; opacity:.3;
+    marker-end:none; animation:none; }
+  .xlegend { display:flex; flex-wrap:wrap; justify-content:center; gap:6px 18px;
+    margin-top:9px; font-size:11px; color:var(--dim); line-height:1.5; }
+  .xlg { display:inline-flex; align-items:flex-start; gap:8px; max-width:340px; text-align:left; }
+  .xlg svg { flex:none; margin-top:5px; }
+  .xlg b { color:var(--text); font-weight:650; }
+  .xlg b.haz { color:var(--red); }
   .light { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
   .ok { background:var(--green); box-shadow:0 0 8px var(--green); }
   .bad { background:var(--red); box-shadow:0 0 8px var(--red); }
@@ -710,9 +738,11 @@
       <div class="xcol">
         <div class="card">
           <h2>The living map · click anything</h2>
-          <svg viewBox="0 0 720 600" width="100%" id="xsvg">
+          <svg viewBox="0 0 720 730" width="100%" id="xsvg">
             <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-              <path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker></defs>
+              <path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker>
+              <marker id="arr-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" fill="#f85149"/></marker></defs>
             <line class="edge" data-edge="browser_caddy"    x1="96"  y1="40"  x2="128" y2="40"/>
             <line class="edge" data-edge="caddy_api"      x1="232" y1="40"  x2="271" y2="40"/>
             <line class="edge" data-edge="api_directory"  x1="293" y1="62"  x2="186" y2="100"/>
@@ -724,6 +754,29 @@
             <line class="edge" data-edge="applier_shard0" x1="140" y1="328" x2="222" y2="266"/>
             <line class="edge" data-edge="applier_shard1" x1="178" y1="328" x2="396" y2="268"/>
             <line class="edge" data-edge="kafka_notif"    x1="455" y1="356" x2="507" y2="356"/>
+            <!-- the securities loop · running since the broker shipped, drawn nowhere until now.
+                 Two topics, one direction each: settlements leave the shards, orders come back. -->
+            <line class="edge" data-edge="api_issuer"          x1="361" y1="62"  x2="361" y2="148"/>
+            <line class="edge" data-edge="issuer_directory"    x1="295" y1="180" x2="216" y2="140"/>
+            <line class="edge" data-edge="shard0_ksettle"      x1="258" y1="266" x2="258" y2="400"/>
+            <line class="edge" data-edge="shard1_ksettle"      x1="462" y1="266" x2="462" y2="400"/>
+            <line class="edge" data-edge="ksettle_brokercons"  x1="470" y1="423" x2="530" y2="423"/>
+            <line class="edge" data-edge="brokercons_brokerdb" x1="535" y1="446" x2="558" y2="579"/>
+            <line class="edge" data-edge="broker_brokerdb"     x1="640" y1="526" x2="640" y2="570"/>
+            <line class="edge" data-edge="brokerdb_korders"    x1="600" y1="638" x2="600" y2="660"/>
+            <line class="edge" data-edge="korders_settle"      x1="490" y1="660" x2="490" y2="526"/>
+            <line class="edge" data-edge="settle_shard0"       x1="235" y1="480" x2="235" y2="265"/>
+            <line class="edge" data-edge="settle_shard1"       x1="500" y1="480" x2="500" y2="263"/>
+            <!-- THE THREE THAT ARE DRAWN DIFFERENTLY. See the legend under the map. -->
+            <!-- The bank never validates the SSO token. This line is the shape of a
+                 check nobody wrote, so it is drawn as absent: no arrow, no motion. -->
+            <line class="edge ghost"  data-edge="api_jwks"      x1="430" y1="62"  x2="550" y2="175"/>
+            <!-- The SSO holds a JDBC admin connection straight into the bank's own
+                 routing database. Two services, one schema, no contract. -->
+            <line class="edge hazard" data-edge="sso_directory" x1="100" y1="200" x2="100" y2="148"/>
+            <!-- Notifications.openForRead(): the API reads minibank_notifications over
+                 JDBC, across a boundary the map above says only Kafka crosses. -->
+            <line class="edge hazard" data-edge="api_notif"     x1="449" y1="62"  x2="615" y2="330"/>
             <g class="node" data-node="browser" transform="translate(8,18)">
               <rect width="88" height="44" rx="9"/><text x="44" y="20" text-anchor="middle">Browser</text>
               <text x="44" y="34" text-anchor="middle" class="sub">PWA · vanilla JS</text></g>
@@ -736,6 +789,20 @@
             <g class="node" data-node="directory" transform="translate(26,100)">
               <rect width="190" height="48" rx="9"/><text x="95" y="21" text-anchor="middle">Directory</text>
               <text x="95" y="36" text-anchor="middle" class="sub">pg-control :5433 · customer → region</text></g>
+            <g class="node" data-node="issuer" transform="translate(295,148)">
+              <rect width="130" height="44" rx="9"/><text x="65" y="20" text-anchor="middle">Issuer</text>
+              <text x="65" y="34" text-anchor="middle" class="sub">/issuer/v1/* · in-JVM</text></g>
+            <g class="node" data-node="jwks" transform="translate(550,150)">
+              <rect width="160" height="44" rx="9"/><text x="80" y="20" text-anchor="middle">JWKS</text>
+              <text x="80" y="34" text-anchor="middle" class="sub">/.well-known/jwks.json · RS256</text></g>
+            <g class="node" data-node="sso" transform="translate(10,200)">
+              <rect width="180" height="48" rx="9"/><text x="90" y="21" text-anchor="middle">SSO :8090</text>
+              <text x="90" y="36" text-anchor="middle" class="sub">dev.b4rruf3t.sso.Main · own JVM</text></g>
+            <g class="node" data-node="ssodb" transform="translate(12,264)">
+              <path d="M0,12 a58,12 0 0 1 116,0 v38 a58,12 0 0 1 -116,0 z"/>
+              <ellipse cx="58" cy="12" rx="58" ry="12"/>
+              <text x="58" y="34" text-anchor="middle">pg sso</text>
+              <text x="58" y="48" text-anchor="middle" class="sub">db sso · pg-control</text></g>
             <g class="node" data-node="intransit" transform="translate(537,101)">
               <rect width="124" height="46" rx="23"/><text x="62" y="21" text-anchor="middle">in flight</text>
               <text x="62" y="37" text-anchor="middle" class="sub" id="inflight-num">€0.00</text></g>
@@ -758,29 +825,68 @@
             <g class="node" data-node="notif" transform="translate(507,330)">
               <rect width="114" height="52" rx="9"/><text x="57" y="22" text-anchor="middle">Notifications</text>
               <text x="57" y="38" text-anchor="middle" class="sub">own DB · dedupe</text></g>
-            <g class="node" data-node="rita" transform="translate(60,470)">
+            <!-- THE SECURITIES LOOP. A fill changes a position (broker db) and a
+                 balance (shard db) and no transaction spans them, so it is a saga:
+                 shards publish settlements, the broker consumes them, the broker
+                 publishes orders, the ledger consumes them and lands the money.
+                 Two topics, one direction each, because a consumer producing back
+                 onto its own topic is a loop waiting to happen. -->
+            <g class="node" data-node="ksettle" transform="translate(250,400)">
+              <rect width="220" height="46" rx="9"/><text x="110" y="20" text-anchor="middle">topic settlements</text>
+              <text x="110" y="35" text-anchor="middle" class="sub">Kafka · ledger → broker</text></g>
+            <g class="node" data-node="brokercons" transform="translate(530,400)">
+              <rect width="180" height="46" rx="9"/><text x="90" y="20" text-anchor="middle">broker-orders</text>
+              <text x="90" y="35" text-anchor="middle" class="sub">consumer group · in the broker</text></g>
+            <g class="node" data-node="settle" transform="translate(215,480)">
+              <rect width="292" height="46" rx="9"/><text x="146" y="20" text-anchor="middle">Settlement</text>
+              <text x="146" y="35" text-anchor="middle" class="sub">group broker-settlement · in the ledger JVM</text></g>
+            <g class="node" data-node="broker" transform="translate(556,480)">
+              <rect width="154" height="46" rx="9"/><text x="77" y="20" text-anchor="middle">Broker :8091</text>
+              <text x="77" y="35" text-anchor="middle" class="sub">BrokerService · own deployment</text></g>
+            <g class="node" data-node="brokerdb" transform="translate(556,570)">
+              <path d="M0,12 a77,12 0 0 1 154,0 v46 a77,12 0 0 1 -154,0 z"/>
+              <ellipse cx="77" cy="12" rx="77" ry="12"/>
+              <text x="77" y="40" text-anchor="middle">minibank_broker</text>
+              <text x="77" y="55" text-anchor="middle" class="sub">fifth database · pg-control</text></g>
+            <g class="node" data-node="korders" transform="translate(480,660)">
+              <rect width="200" height="46" rx="9"/><text x="100" y="20" text-anchor="middle">topic orders</text>
+              <text x="100" y="35" text-anchor="middle" class="sub">Kafka · broker → ledger</text></g>
+            <!-- context · also running on this machine, wired to nothing on this map -->
+            <g class="node" data-node="rita" transform="translate(16,400)">
               <rect width="200" height="52" rx="9"/><text x="100" y="22" text-anchor="middle">Rita · support agent</text>
               <text x="100" y="38" text-anchor="middle" class="sub">gpt-4o-mini · 7 tools · Allow/Deny</text></g>
-            <g class="node" data-node="pricefeed" transform="translate(422,470)">
+            <g class="node" data-node="pricefeed" transform="translate(20,480)">
               <rect width="168" height="52" rx="9"/><text x="84" y="22" text-anchor="middle">PriceFeed</text>
               <text x="84" y="38" text-anchor="middle" class="sub">CoinGecko · Yahoo · 60s</text></g>
-            <g class="node" data-node="fx" transform="translate(610,470)">
-              <rect width="104" height="52" rx="9"/><text x="52" y="22" text-anchor="middle">FX</text>
-              <text x="52" y="38" text-anchor="middle" class="sub">own process :8090</text></g>
-            <g class="node" data-node="redis" transform="translate(280,470)">
+            <g class="node" data-node="redis" transform="translate(356,560)">
               <rect width="122" height="52" rx="9"/><text x="61" y="22" text-anchor="middle">Redis</text>
               <text x="61" y="38" text-anchor="middle" class="sub" id="redis-sub">cache · warming</text></g>
-            <g class="node" data-node="prometheus" transform="translate(8,548)">
-              <rect width="348" height="44" rx="9"/><text x="120" y="19" text-anchor="middle">Prometheus</text>
-              <text x="120" y="33" text-anchor="middle" class="sub">scrapes GET /metrics · every counter live</text></g>
-            <g class="node" data-node="grafana" transform="translate(372,548)">
+            <g class="node" data-node="fx" transform="translate(370,660)">
+              <rect width="104" height="52" rx="9"/><text x="52" y="22" text-anchor="middle">FX</text>
+              <text x="52" y="38" text-anchor="middle" class="sub">own process :8090</text></g>
+            <g class="node" data-node="grafana" transform="translate(4,560)">
               <rect width="342" height="44" rx="9"/><text x="171" y="19" text-anchor="middle">Grafana</text>
               <text x="171" y="33" text-anchor="middle" class="sub">dashboards on the Kubernetes cluster</text></g>
+            <g class="node" data-node="prometheus" transform="translate(8,660)">
+              <rect width="348" height="44" rx="9"/><text x="120" y="19" text-anchor="middle">Prometheus</text>
+              <text x="120" y="33" text-anchor="middle" class="sub">scrapes GET /metrics · every counter live</text></g>
             <g id="pulse-layer"></g>
           </svg>
           <div class="muted" style="text-align:center; font-size:11.5px; margin-top:6px">
-            every box is a real running process · raw Java 21, zero frameworks · PostgreSQL ×4 · Kafka · Redis · Prometheus ·
+            every box is a real running process · raw Java 21, zero frameworks · PostgreSQL ×5 · Kafka · Redis · Prometheus ·
             38 executable proofs in the repo</div>
+          <div class="xlegend">
+            <span class="xlg"><svg width="42" height="10" aria-hidden="true"><line class="edge" x1="1" y1="5" x2="40" y2="5"/></svg>
+              <span><b>a link that exists.</b> Messages and money travel it, and the dashes travel with them.</span></span>
+            <span class="xlg"><svg width="42" height="10" aria-hidden="true"><line class="edge hazard" x1="1" y1="5" x2="40" y2="5"/></svg>
+              <span><b class="haz">a link that exists and should not.</b> It reaches across a boundary this
+              system claims to have: the SSO opens a JDBC admin connection into the bank's own routing
+              database, and the API reads the notifications database directly instead of only through Kafka.</span></span>
+            <span class="xlg"><svg width="42" height="10" aria-hidden="true"><line class="edge ghost" x1="1" y1="5" x2="40" y2="5"/></svg>
+              <span><b>a link that does not exist.</b> The bank never fetches the JWKS and never validates
+              the SSO token. Drawn faded, with no arrowhead and no motion, so the gap is visible rather
+              than merely unmentioned.</span></span>
+          </div>
         </div>
         <div class="card">
           <h2>The ecosystem, live</h2>
@@ -1577,7 +1683,21 @@ const EDGES = {
   shard0_kafka:[265,268,305,328], shard1_kafka:[455,268,415,328],
   kafka_applier:[265,356,213,356],
   applier_shard0:[140,328,222,266], applier_shard1:[178,328,396,268],
-  kafka_notif:[455,356,507,356]
+  kafka_notif:[455,356,507,356],
+  // the issuer, and the securities loop the broker has been running unmapped
+  api_issuer:[361,62,361,148], issuer_directory:[295,180,216,140],
+  shard0_ksettle:[258,266,258,400], shard1_ksettle:[462,266,462,400],
+  ksettle_brokercons:[470,423,530,423], brokercons_brokerdb:[535,446,558,579],
+  broker_brokerdb:[640,526,640,570], brokerdb_korders:[600,638,600,660],
+  korders_settle:[490,660,490,526],
+  settle_shard0:[235,480,235,265], settle_shard1:[500,480,500,263],
+  /* The two hazards are ordinary links geometrically · they carry real traffic
+     and a ball may travel them. api_jwks is here for the coordinate invariant
+     ONLY: no FLOW step names it, nothing calls pulse() on it, and the line is
+     drawn with the animation switched off. A ball on that edge would be the
+     map telling the same lie the missing check already tells. */
+  sso_directory:[100,200,100,148], api_notif:[449,62,615,330],
+  api_jwks:[430,62,550,175]
 };
 /* dur matters. It used to be hardcoded at 700ms while playTrace gives most
    steps 450, so a step's bullets were still in the air two steps later and the
@@ -1621,6 +1741,16 @@ const MAP_PAIRS = [
   ['shard0', 'kafka'], ['shard1', 'kafka'],
   ['kafka', 'applier'], ['kafka', 'notif'],
   ['applier', 'shard0'], ['applier', 'shard1'],
+  /* Everything below here was already running and was drawn nowhere. No FLOW
+     step walks these paths yet, so no journey changes shape; they are declared
+     because the map draws them, and an edge the graph does not know about is an
+     edge the animation will one day be asked to travel and silently will not. */
+  ['api', 'issuer'], ['issuer', 'directory'],
+  ['shard0', 'ksettle'], ['shard1', 'ksettle'],
+  ['ksettle', 'brokercons'], ['brokercons', 'brokerdb'],
+  ['broker', 'brokerdb'], ['brokerdb', 'korders'],
+  ['korders', 'settle'], ['settle', 'shard0'], ['settle', 'shard1'],
+  ['api', 'jwks'], ['sso', 'directory'], ['api', 'notif'],
 ];
 const MAP = MB.mapGraph(MAP_PAIRS);
 
@@ -1726,6 +1856,46 @@ const GUIDE = {
     plain: () => [`Its own process on :8090 (its own container in production): one responsibility, exchange rates. USD→EUR from frankfurter.app, cached 60s, no database, no ledger access · the only contract between it and the bank is HTTP. Asset prices display in dollars; the ledger settles euros through this rate.`],
     how: () => [`The bank calls it with a HARD ~500ms deadline and a fallback: FX slow or down → the last good rate, honestly labeled, and the payment path never stalls. Deadline + fallback is the circuit-breaker pattern at demo scale · there is a test that kills the service and proves the client survives.`],
     win: () => [`Microservices are boundaries around DATA OWNERSHIP, not a performance tool. Rates change owner, schema and deploy cadence independently of money · this boundary earns its network hop by sharing zero state with the ledger. Split when a boundary earns it; until then a modular monolith with database-shaped seams (this bank) is the defensible answer.`] },
+  issuer: { t: 'Issuer · /issuer/v1/*, a package, not a process',
+    plain: () => [`Card issuing lives at /issuer/v1/instruments, /authorizations and /clearing, served by the same JVM as the rest of the bank. minipay (the acquirer) calls it over HTTP exactly as if it were somewhere else, and it routes through the directory like every other customer-scoped call.`],
+    how: () => [`A boundary drawn in the URL and in the package, not in the deployment. The four-party card model needs an issuer that can say yes or no to an authorization and clear it later; that is a responsibility, and a responsibility does not need its own container to be real.`],
+    win: () => [`Split a service when the DATA wants a different owner, not when the diagram wants another box. The seam is already here: the day issuing needs its own release cadence, the HTTP contract in front of it does not change.`] },
+  sso: { t: 'SSO :8090 · a separate identity provider',
+    plain: () => [`dev.b4rruf3t.sso.Main, its own JVM, live at auth.b4rruf3t.com. It signs RS256 tokens, publishes the public half at /.well-known/jwks.json, and keeps sessions and users in its own database on the shared control Postgres.`],
+    how: () => [`Sign with the private key, hand out the public key, and any service can verify a token without calling anyone. That is the whole point of asymmetric tokens: verification is local and cheap.`],
+    win: () => [`The red line on the map is the honest part. This SSO reaches into the BANK's routing database over a JDBC admin connection to keep customers aligned, which is two services sharing one schema · the coupling a database-per-service rule exists to forbid. It is drawn because it is true, not because it is good.`] },
+  ssodb: { t: 'pg sso · the identity provider’s own database',
+    plain: () => [`Database \`sso\` on the same control Postgres that hosts the routing directory and the notifications database. Users, sessions, and the signing key metadata.`],
+    how: () => [`Separate database, shared server. That is a cost decision, not an architectural one: one machine, five logical databases, and no cross-database query is possible between them.`],
+    win: () => [`Co-tenancy is cheap and reversible. Sharing a SCHEMA is neither, which is exactly the line the hazard edge crosses.`] },
+  jwks: { t: 'JWKS · the check nobody wrote',
+    plain: () => [`GET /.well-known/jwks.json on the SSO returns the RS256 public key. Any service could fetch it once and verify every token it is handed, offline, forever after.`],
+    how: () => [`The bank does not fetch it. There is no signature verification on the ledger's side of the door · that is why the line from the API is drawn faded, with no arrowhead and no motion. The map used to leave this out entirely, which read as "identity is handled".`],
+    win: () => [`An architecture diagram that only draws what exists cannot show you what is missing, and what is missing is usually the thing that hurts. Draw the absence.`] },
+  broker: { t: 'Broker :8091 · its own deployment',
+    plain: () => [`dev.minibank.broker.BrokerService, a second process from the same image, on its own port with its own database. It owns POSITIONS. The ledger owns CUSTODY of the cash. Neither reads the other's tables.`],
+    how: () => [`A fill is written with an outbox row in one commit against minibank_broker, and shipped to the topic afterwards · the same outbox the payment path uses, because the bank already had the right pattern.`],
+    win: () => [`Two services, two databases, one saga. The alternative is 2PC across a position and a balance, which blocks both databases while a coordinator decides and adds a coordinator to fail.`] },
+  brokerdb: { t: 'minibank_broker · the fifth database',
+    plain: () => [`Orders, fills, positions and the broker's own outbox, on pg-control alongside the directory, the notifications database and the SSO's. Nothing in the ledger can reach it, and nothing in it can reach a shard.`],
+    how: () => [`Its outbox is the only way out. Committing the fill and the event together is what makes a crash between "filled" and "told anyone" impossible.`],
+    win: () => [`Database-per-service is not about servers. It is about who is allowed to write a row · and here nobody but the broker is.`] },
+  brokercons: { t: 'broker-orders · the broker’s consumer group',
+    plain: () => [`A consumer group inside the broker process reading topic settlements: the ledger's verdict on each fill. Accepted, and the order is settled; refused, and the position is unwound.`],
+    how: () => [`Its own offsets, tracked independently of every other group on the cluster. Down for an hour and it catches up losslessly, because the topic is the queue.`],
+    win: () => [`The unhappy path is the design. The broker routes before it knows the money is there, so a rejection has to be survivable · that is the compensation half of the saga, not an error handler.`] },
+  settle: { t: 'Settlement · consumer group "broker-settlement"',
+    plain: () => [`A consumer group inside the LEDGER JVM reading topic orders. It writes the cash leg and the asset leg in one local commit on the customer's own shard, then publishes the result back on topic settlements.`],
+    how: () => [`The gate is the fill id, reused verbatim as the ledger's txId. Kafka is at-least-once, so this event will arrive twice eventually; the transactions table has seen that id and the second delivery changes nothing. auto-commit is off, so a settlement that throws keeps its offset and is retried.`],
+    win: () => [`No new idempotency mechanism was invented for securities. The primary key that already made cross-region payments safe makes fills safe too, which is what it means for a pattern to be load-bearing.`] },
+  ksettle: { t: 'topic settlements · ledger → broker',
+    plain: () => [`One Kafka topic, one direction: the ledger telling the broker what the money did. Published from each shard's outbox after the settlement commits.`],
+    how: () => [`Two topics with one direction each, deliberately. A consumer that produced back onto the topic it consumes is a loop waiting for the first retry to find it.`],
+    win: () => [`Direction is a design constraint, not a convention. It is the difference between a saga you can reason about and a cycle you cannot.`] },
+  korders: { t: 'topic orders · broker → ledger',
+    plain: () => [`The other direction: a fill leaves minibank_broker's outbox and arrives at the ledger's Settlement consumer, carrying the fill id that will become the txId.`],
+    how: () => [`Same acks=all, same idempotent producer, same mark-published-after-ack ordering as the payments topic. Crash between send and mark and the event is resent · at-least-once, never at-most-once.`],
+    win: () => [`You cannot commit atomically to Postgres and Kafka. So commit the event WITH the fill and ship it afterwards, and make the far end idempotent.`] },
   pricefeed: { t: 'PriceFeed · live market data',
     plain: () => [`BTC from CoinGecko (EUR and USD in one call); AAPL from Yahoo in USD, euros derived through the FX service. All keyless, cached 60s, source labeled (live/cached/fallback) so the UI never lies about freshness.`],
     how: () => [`The price is captured AT EXECUTION and written into the trade event · the ledger stores euros and units; their ratio IS the price paid. Feeds down? Fallback prices, honestly labeled.`],
@@ -1853,7 +2023,12 @@ document.querySelectorAll('.node').forEach(n => n.onclick = () => {
 let inspectNode = null, prevInspSig = '';
 async function inspect(node) {
   node = ({ directory: 'api' })[node] || node;
-  if (['browser', 'caddy', 'rita', 'pricefeed', 'fx', 'redis', 'prometheus', 'grafana'].includes(node)) { closeInspect(); return; }
+  /* Nodes the /api/xray/inspect switch has no case for. It answers 200 with an
+     empty table list, which closes the panel anyway, so this is not correctness
+     · it is not asking a database a question whose answer is already known. */
+  if (['browser', 'caddy', 'rita', 'pricefeed', 'fx', 'redis', 'prometheus', 'grafana',
+    'issuer', 'sso', 'ssodb', 'jwks', 'broker', 'brokerdb', 'brokercons',
+    'settle', 'korders', 'ksettle'].includes(node)) { closeInspect(); return; }
   inspectNode = node; prevInspSig = '';
   await refreshInspect();
 }
