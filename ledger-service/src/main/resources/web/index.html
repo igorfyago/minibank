@@ -236,6 +236,7 @@
     box-shadow:inset 0 0 0 1px rgba(88,166,255,.55), 0 0 14px rgba(88,166,255,.16);
   }
   .tick-item.picked .tick-ic { filter:drop-shadow(0 0 5px rgba(88,166,255,.65)); }
+  .ghost.on { background:var(--accent); border-color:var(--accent); color:#fff; }
   @keyframes slidein { from { opacity:0; transform:translateY(-7px); } }
   .tick-ic { width:28px; height:28px; border-radius:50%; background:#2b3245; display:flex; align-items:center;
     justify-content:center; font-size:13px; flex:none; }
@@ -809,7 +810,8 @@
         <div class="card" id="trace-card" hidden>
           <h2>Trace <span class="muted" id="trace-tx"></span>
             <button class="ghost" style="float:right;padding:2px 10px" id="trace-clear">✕</button>
-            <button class="ghost" style="float:right;padding:2px 10px;margin-right:8px" id="replay-btn">▶ replay 3s</button></h2>
+            <button class="ghost" style="float:right;padding:2px 10px;margin-right:8px" id="replay-btn">▶ replay</button>
+            <button class="ghost" style="float:right;padding:2px 10px;margin-right:8px" id="loop-btn" title="replay this journey on a loop">↻ loop</button></h2>
           <div id="trace-head" class="muted" style="font-size:12.5px;margin-bottom:6px"></div>
           <div id="play-wrap" hidden>
             <div id="play-bar"><div id="play-fill"></div></div>
@@ -2078,6 +2080,7 @@ window.tickClick = evJson => { const e = JSON.parse(evJson);
 
 function renderTrace(tr, tx) {
   activeTrace = tr;
+  clearTimeout(loopTimer); loopTimer = null;   // never loop the journey you just left
   // the list must show the new selection immediately · waiting for the next
   // 2s tick means clicking a row appears to do nothing for two seconds
   document.querySelectorAll('#ticker .tick-item').forEach(el =>
@@ -2124,6 +2127,42 @@ let playingUntil = 0;
 function stopPlay() {
   playTimers.forEach(clearTimeout); playTimers = []; following = null; playingUntil = 0;
 }
+
+/* LOOPING A REPLAY.
+ *
+ * The map has two jobs and they compete for the same edges: replaying a chosen
+ * journey, and animating live events as the bank actually handles them. A loop
+ * that ran forever would win that fight permanently and the map would stop
+ * showing anything happening NOW, which is most of what makes it worth looking
+ * at. So looping is scoped to a trace being open: it is the visual form of
+ * "study this one", and closing the trace hands the map back to live traffic.
+ *
+ * It also stops when the page is hidden. A background tab animating an SVG
+ * forever is a battery bug on a phone, and nobody is watching it.
+ */
+let looping = false, loopTimer = null;
+const LOOP_PAUSE_MS = 2000;   // long enough to read the caption before it restarts
+
+function setLooping(on) {
+  looping = on;
+  clearTimeout(loopTimer); loopTimer = null;
+  const b = $('#loop-btn');
+  if (b) { b.classList.toggle('on', on); b.textContent = on ? '⏹ stop' : '↻ loop'; }
+  if (on && activeTrace) playTrace(activeTrace);
+}
+
+/** Called when a replay finishes. Queues the next one, if we still should. */
+function loopAgain() {
+  if (!looping || !activeTrace) return;
+  if (document.hidden) return;                       // resumes on visibilitychange
+  if ($('#trace-card').hidden) { setLooping(false); return; }
+  loopTimer = setTimeout(() => { if (looping && activeTrace) playTrace(activeTrace); }, LOOP_PAUSE_MS);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { clearTimeout(loopTimer); loopTimer = null; }
+  else if (looping && activeTrace) loopAgain();
+});
 
 /** Light a node, now, and leave it marked. */
 function reach(nd, holdMs) {
@@ -2206,7 +2245,10 @@ function playTrace(tr) {
   playTimers.push(setTimeout(() => {
     document.querySelectorAll('.trace-step').forEach(el => el.classList.remove('active'));
     showReplayInFlight(null);
-    $('#play-caption').textContent = `✓ real journey, real timestamps · ${realTotal}ms end to end, replayed slow enough to read`;
+    $('#play-caption').textContent = looping
+      ? `↻ looping · real journey, real timestamps · ${realTotal}ms end to end`
+      : `✓ real journey, real timestamps · ${realTotal}ms end to end, replayed slow enough to read`;
+    loopAgain();
   }, j.total + 250));
 }
 
@@ -2268,6 +2310,7 @@ async function followPoll(tx, tries) {
   playTimers.push(setTimeout(() => followPoll(tx, tries + 1), 700));
 }
 $('#replay-btn').onclick = () => { if (activeTrace) playTrace(activeTrace); };
+$('#loop-btn').onclick = () => setLooping(!looping);
 
 /* ---- the ecosystem rail: each technology, live, with a pulse line ---- */
 const ecoS = { pg: [], kafka: [] };
@@ -2302,7 +2345,7 @@ $('#eco-pg').onclick = () => { gShow('shard0'); inspect('shard0'); };
 $('#eco-kafka').onclick = () => { gShow('kafka'); inspect('kafka'); };
 $('#eco-k8s').onclick = () => gShow('deploy');
 
-$('#trace-clear').onclick = () => { stopPlay(); activeTrace = null;
+$('#trace-clear').onclick = () => { setLooping(false); stopPlay(); activeTrace = null;
   document.querySelectorAll('#ticker .tick-item.picked').forEach(el => el.classList.remove('picked'));
   $('#trace-card').hidden = true; $('#play-wrap').hidden = true;
   document.querySelectorAll('.node').forEach(n => n.classList.remove('onpath')); gShow('welcome'); };
