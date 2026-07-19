@@ -2081,6 +2081,22 @@ window.tickClick = evJson => { const e = JSON.parse(evJson);
 function renderTrace(tr, tx) {
   activeTrace = tr;
   clearTimeout(loopTimer); loopTimer = null;   // never loop the journey you just left
+  /* Decide whether this journey CAN be drawn at selection time, not at play
+     time. setReplayable used to be called only inside playTrace, so choosing an
+     undrawable transaction never evaluated it and the buttons simply kept
+     whatever state the previous transaction had left them in: enabled, and
+     dead. Whether a control works is a property of what is selected, so it is
+     settled the moment the selection changes. */
+  {
+    const canDraw = tr.steps && tr.steps.length && MB.journey(tr.steps, MAP).hops.length > 0;
+    setReplayable(!!canDraw);
+    if (!canDraw) {
+      $('#play-wrap').hidden = false;
+      $('#play-caption').textContent = tr.steps && tr.steps.length
+        ? `no map animation for this one · ${tr.steps.map(s => s.step).join(', ')} happens off this diagram`
+        : 'no recorded steps for this transaction';
+    }
+  }
   // the list must show the new selection immediately · waiting for the next
   // 2s tick means clicking a row appears to do nothing for two seconds
   document.querySelectorAll('#ticker .tick-item').forEach(el =>
