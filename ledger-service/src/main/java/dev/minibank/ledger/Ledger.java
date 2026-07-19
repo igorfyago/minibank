@@ -91,8 +91,18 @@ public final class Ledger {
                 CREATE TABLE IF NOT EXISTS transactions (
                     id         UUID PRIMARY KEY,
                     kind       TEXT NOT NULL,
+                    -- What this transaction COMPENSATES, when it compensates
+                    -- something. A refund's own id is derived by hashing the
+                    -- original (nameUUIDFromBytes), which is one way: given a
+                    -- refund you could never get back to what it refunded, so
+                    -- clicking a refund in the activity list looked up a
+                    -- transaction nothing else referenced and showed a story
+                    -- with no beginning. A hash is not a relationship. This is.
+                    parent_tx  UUID,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 )""");
+            st.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS parent_tx UUID");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_tx_parent ON transactions(parent_tx) WHERE parent_tx IS NOT NULL");
             st.execute("""
                 CREATE TABLE IF NOT EXISTS entries (
                     id         BIGSERIAL PRIMARY KEY,
@@ -230,10 +240,16 @@ public final class Ledger {
      *  true if we are first, false if it was already done. Stage 5 leans on
      *  it hard · departure, arrival and refund each gate on their own shard. */
     static boolean claimTx(Connection conn, UUID txId, String kind) throws SQLException {
+        return claimTx(conn, txId, kind, null);
+    }
+
+    /** parentTx names the transaction this one compensates, for a refund. */
+    static boolean claimTx(Connection conn, UUID txId, String kind, UUID parentTx) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
-                "INSERT INTO transactions(id, kind) VALUES (?, ?) ON CONFLICT (id) DO NOTHING")) {
+                "INSERT INTO transactions(id, kind, parent_tx) VALUES (?, ?, ?) ON CONFLICT (id) DO NOTHING")) {
             ps.setObject(1, txId);
             ps.setString(2, kind);
+            ps.setObject(3, parentTx);
             return ps.executeUpdate() == 1;
         }
     }

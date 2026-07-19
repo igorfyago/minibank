@@ -660,6 +660,31 @@ public final class HttpApi {
         if (q != null) for (String p : q.split("&")) if (p.startsWith("tx=")) tx = p.substring(3);
         if (tx == null) return Response.json(400, "{\"error\":\"need ?tx=uuid\"}");
         UUID id = UUID.fromString(tx);
+
+        /* You may arrive here holding a REFUND's id rather than the payment's.
+           The activity list shows a refund as its own row, and a refund's id is
+           derived by hashing the original, which is one way: given the refund
+           you cannot compute what it refunded. Clicking it therefore asked for
+           the story of a transaction that nothing else mentions, and got a
+           beginning-less fragment: no payer, no payee, no amount, none of the
+           journey that caused it.
+           A refund now records its parent, so the question "what is this a
+           refund OF" is a lookup rather than an impossible inversion. Resolve
+           to the original first, and every refund traces the whole saga it
+           belongs to. */
+        for (Shard s : Shards.all()) {
+            try (Connection c = s.open();
+                 var ps = c.prepareStatement("SELECT parent_tx FROM transactions WHERE id = ? AND parent_tx IS NOT NULL")) {
+                ps.setObject(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next() && rs.getObject(1) != null) {
+                        id = (UUID) rs.getObject(1);
+                        tx = id.toString();
+                        break;
+                    }
+                }
+            }
+        }
         UUID refundId = UUID.nameUUIDFromBytes(("refund:" + id).getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
         /**

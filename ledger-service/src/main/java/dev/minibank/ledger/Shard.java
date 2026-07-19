@@ -228,7 +228,7 @@ public final class Shard {
         try (Connection conn = open()) {
             conn.setAutoCommit(false);
             try {
-                if (!Ledger.claimTx(conn, refundId, "refund")) {
+                if (!Ledger.claimTx(conn, refundId, "refund", origTxId)) {
                     conn.rollback();
                     return new Ledger.AlreadyProcessed();
                 }
