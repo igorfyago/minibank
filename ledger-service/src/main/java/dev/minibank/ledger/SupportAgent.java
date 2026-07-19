@@ -164,11 +164,28 @@ public final class SupportAgent {
                 cast.toString(), owner, customerId, region,
                 p(bal.get(customerId)), p(bal.get(customerId + Products.SAVINGS)),
                 p(bal.get(customerId + Products.CARD)), p(bal.get(customerId + Products.HOLDS)),
-                p(bal.get(customerId + Products.BTC)), btc.price().toPlainString(),
-                p(bal.get(customerId + Products.AAPL)), aapl.price().toPlainString(),
+                p(bal.get(customerId + Products.BTC)), px(btc),
+                p(bal.get(customerId + Products.AAPL)), px(aapl),
                 p(bal.get(customerId + Products.LOAN)), inFlight.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString(),
                 recent.isEmpty() ? "none yet" : recent.toString(),
                 transcript == null || transcript.isBlank() ? "(first message)" : transcript);
+    }
+
+    /**
+     * A price the feed does not have is not a price.
+     *
+     * price() is nullable by design · Px carries priced() precisely because an
+     * unpriced symbol is not a free one. This read was left unguarded when the
+     * fabricated fallback prices were deleted, so an upstream that is merely
+     * down took the whole support agent down with an NPE.
+     *
+     * Saying "0" would be worse than the crash. This string is the PROMPT for
+     * an agent that talks to customers and has no way to know the number is
+     * made up, so it would state a false price with total confidence. Naming
+     * the gap is the only answer that is true.
+     */
+    static String px(PriceFeed.Px q) {          // package-visible for the lesson test
+        return q != null && q.priced() ? q.price().toPlainString() : "unavailable (feed is down)";
     }
 
     private static String p(BigDecimal v) {
