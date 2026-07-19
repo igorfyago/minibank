@@ -1422,9 +1422,36 @@ async function loadPortfolio() {
 const stmtCache = MB.swrCache({ ttl: 4000 });
 const statementOf = acct => stmtCache.get(String(acct), () => api('/api/statement?customer=' + acct));
 
+/**
+ * Money moved, so EVERY view of that money is stale, not just this tab's.
+ *
+ * This used to refresh the accounts, the statement and the portfolio and stop
+ * there. The X-ray was left to its own 2s poller, which skips xrayTick entirely
+ * unless the X-ray tab is already on screen, so acting through Rita while her
+ * panel covered another tab updated the balances and left the map and the
+ * activity feed showing the world as it was before.
+ *
+ * AND ONE REFRESH IS NOT ENOUGH, which is the more interesting half. A transfer
+ * is committed when the API returns, but the rest of the story has not happened
+ * yet: the relay publishes to Kafka a beat later and the notification lands
+ * after that. Refreshing once shows the commit and misses its consequences, and
+ * the feed then looks stuck for exactly as long as it takes someone to give up
+ * and reload. So the refresh follows the saga instead of racing it, sampling
+ * again as the asynchronous tail arrives. This is what eventual consistency
+ * costs on the read side, and pretending otherwise is what made it look broken.
+ */
+const REFRESH_TAIL_MS = [0, 350, 900, 1800, 3200];
+let refreshTimers = [];
 function refreshAll() {
   stmtCache.invalidate();     // money moved · the cache must not out-vote it
-  loadAccounts(); prevStmtSig = ''; loadStatement(); prevPortSig = ''; loadPortfolio();
+  refreshTimers.forEach(clearTimeout); refreshTimers = [];
+  REFRESH_TAIL_MS.forEach(delay => refreshTimers.push(setTimeout(() => {
+    loadAccounts(); prevStmtSig = ''; loadStatement(); prevPortSig = ''; loadPortfolio();
+    // the map and the feed are views of the same money · refresh them whether
+    // or not their tab happens to be the one in front
+    try { xrayTick(); } catch (e) { console.error('refreshAll: xrayTick', e); }
+    try { tapeTick(); } catch (e) { console.error('refreshAll: tapeTick', e); }
+  }, delay)));
 }
 /* the statement · the double-entry ledger, told the way a bank app tells it */
 async function loadStatement() {
