@@ -166,19 +166,15 @@ const ALLOWED = new Map([
           + 'fixed operations tape. The portfolio has no ticker bar, so the same '
           + 'reservation would be 46px of dead scroll under the last card.',
     bankOnly: ['padding-bottom'], portfolioOnly: []
-  }],
-  ['|.prod.open', {
-    reason: 'The open tile spans the grid row. The bank\'s expansions are read; '
-          + 'this page\'s is an ORDER TICKET, and a range input does not reflow '
-          + 'the way text does. Measured in a 390px frame against the portfolio\'s '
-          + 'own stylesheet: in a 159.0px grid cell the control is 65.0px wide and '
-          + 'slider(k,10,250,5,50) is 49 stops, so a EUR5 step is 1.3px of travel '
-          + 'and the amount cannot be aimed at. With the span the open tile is '
-          + '328.0px and the control 234.0px, 4.8px a step. Only the OPEN tile is '
-          + 'affected · every closed tile still measures 159.0px, so the grid the '
-          + 'reader sees is the bank\'s.',
-    bankOnly: [], portfolioOnly: ['grid-column']
   }]
+  // The `.prod.open { grid-column:1/-1 }` allowance that used to sit here is
+  // GONE, and its deletion is the point rather than a tidy-up. It bought the
+  // expanded TILE a full grid row so that a 65px range input could become a
+  // 234px one. Holdings are not tiles any more · they are rows in a flat
+  // sorted list, each already the full width of the card, and the order ticket
+  // opens underneath one in a .prod-x that was never in a grid. Nothing is
+  // spanning anything, so there is nothing left to allow. The Watchlist below
+  // still draws .prod tiles in a .prod-grid, and none of them opens.
 ]);
 
 // ==================================================================== tests

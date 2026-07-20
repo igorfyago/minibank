@@ -288,14 +288,33 @@ class PortfolioGroupingLessonTest {
 
     // ------------------------------------------------------------------
     /**
-     * STRUCTURAL. The bands are shipped precisely so the page does not reduce
-     * the rows itself, and nothing else can prove the page took them. A
-     * client-side reduce would sum rounded cents and would have to restate
-     * rule 3 in JavaScript.
+     * STRUCTURAL, and NARROWER THAN IT WAS · read the change note before the
+     * assertions, because the premise of the old test is genuinely gone.
+     *
+     * This lesson used to require that drawHoldings read `p.groups` and that
+     * the page draw `g.marketValue`, `g.dayChange` and `g.unrealized` in a
+     * band above each asset class. The bands have been retired from the
+     * screen: the holdings are one flat sorted list now, the way IBKR's Global
+     * Trader draws a portfolio, and a screen that does not group cannot carry
+     * a subtotal per group. A customer holding one stock and one crypto was
+     * being shown two bands of one holding each, and a subtotal of one is not
+     * a subtotal.
+     *
+     * NOTHING ABOUT THE BACKEND CHANGED. Portfolio.build still computes the
+     * groups and lessons 1 to 8 above still hold it to every rule they always
+     * did · a band that is not drawn today is still the correct answer to
+     * "what is each asset class worth", and the next screen that groups will
+     * find it already right rather than re-deriving it in JavaScript.
+     *
+     * What survives here is the property that was the actual point, applied at
+     * the scale the screen still has: THE PAGE DOES NOT REDUCE MONEY. Every
+     * figure it prints is one the server computed and, where the server
+     * withheld one, the page prints the server's reason rather than inventing
+     * a total from the rows it happens to have.
      */
     @Test
-    @DisplayName("lesson 9: the page reads the shipped bands rather than reducing the rows")
-    void lesson9_thePageReadsTheShippedBands() throws Exception {
+    @DisplayName("lesson 9: the page prints the server's money and reduces none of its own")
+    void lesson9_thePagePrintsTheServersMoney() throws Exception {
         String page = resource("/web-broker/portfolio.html");
 
         int fn = page.indexOf("function drawHoldings");
@@ -303,51 +322,40 @@ class PortfolioGroupingLessonTest {
         int next = page.indexOf("\nfunction ", fn + 1);
         String drawHoldings = page.substring(fn, next < 0 ? page.length() : next);
 
-        // \b so that p.groupsById or a local named groupsFoo cannot pass for
-        // the shipped field · a substring match would let a rename keep this
-        // green, which is how a test stops proving anything
-        assertTrue(java.util.regex.Pattern.compile("\\bp\\.groups\\b").matcher(drawHoldings).find(),
-                "drawHoldings must read the SHIPPED groups. Read:\n" + drawHoldings);
+        // THE BANDS ARE RETIRED, NOT HALF-RETIRED. Leaving the grouping read in
+        // while nothing draws it is how a dead branch survives a redesign and
+        // grows a second screen later.
+        assertTrue(!java.util.regex.Pattern.compile("\\bp\\.groups\\b").matcher(drawHoldings).find(),
+                "the holdings list does not band, so it must not read the shipped grouping "
+                + "either. Read:\n" + drawHoldings);
+        for (String gone : new String[] { "function band(", "function bandPnl(",
+                                          "function groupWhy(", "function groupDayWhy(" }) {
+            assertTrue(!page.contains(gone),
+                    "the band renderers must go with the bands · still present: " + gone);
+        }
 
-        // and the subtotals must be the shipped ones, not re-derived
-        assertTrue(java.util.regex.Pattern.compile("\\bg\\.marketValue\\b").matcher(page).find(),
-                "the band draws the subtotal the server computed");
-        assertTrue(java.util.regex.Pattern.compile("\\bg\\.dayChange\\b").matcher(page).find(),
-                "and the day subtotal, which only the server can withhold correctly");
-        assertTrue(java.util.regex.Pattern.compile("\\bg\\.unrealized\\b").matcher(page).find(),
-                "and the unrealised subtotal");
-
-        // THE BAND'S PERCENTAGES ARE NOT READ, AND THAT IS DELIBERATE.
-        // This used to require g.dayChangePct and g.unrealizedPct on the page.
-        // Measured at 390px against the page's own stylesheet: a .txg-head is
-        // 328px and flex-wrap is nowrap, and with '+€110.00 · +0.74%' beside
-        // '+€1,876.54 · +23.45%' the fixed content wants ~374px · both P&L
-        // spans wrapped internally to 37.5px against an 18.75px line box, and
-        // the flexing .muted that carries the holding count was squeezed to
-        // width 0.0 against a scrollWidth of 6.5. Erased, not truncated, so no
-        // ellipsis could render either, on an ordinary phone with ordinary
-        // five-figure subtotals. Euro only measures 18.75px tall with 30-73px
-        // of slack left for the count. A figure that does not fit is withheld,
-        // never half-drawn · the tile does the same thing for the same reason
-        // (see pnlRow) and hands its percentage to the tap instead.
-        //
-        // What the band DOES have to read is why a subtotal is missing, which
-        // is a fact only the server holds · Acc.whole() is three clauses and
-        // Acc.day() is a fourth, different one.
-        for (String field : new String[] { "g.unpriced", "g.expired", "g.fabricated",
-                                           "g.withoutPrevClose" }) {
+        // THE COUNTS ARE STILL THE SERVER'S, at the scale that survived. A
+        // withheld headline has to name the condition that actually fired, and
+        // only the server counts them · Acc.whole() is three clauses and
+        // Acc.day() is a fourth, different one. The page reads all four off the
+        // aggregate rather than counting rows itself.
+        for (String field : new String[] { "a.unpriced", "a.expired", "a.fabricated",
+                                           "a.withoutPrevClose" }) {
             assertTrue(java.util.regex.Pattern.compile("\\b" + field.replace(".", "\\.") + "\\b")
                             .matcher(page).find(),
-                    "the band must name the condition that withheld it, and only the server "
+                    "the headline must name the condition that withheld it, and only the server "
                     + "counts them · missing " + field);
         }
 
-        // the headline percentage the page has always read and never received
+        // the headline percentages the page has always read and never received
         int hdr = page.indexOf("function drawHeader");
         int hdrEnd = page.indexOf("\nfunction ", hdr + 1);
         String drawHeader = page.substring(hdr, hdrEnd < 0 ? page.length() : hdrEnd);
         assertTrue(java.util.regex.Pattern.compile("\\ba\\.dayChangePct\\b").matcher(drawHeader).find(),
                 "the header reads the day percentage · BrokerApi now actually ships it");
+        assertTrue(java.util.regex.Pattern.compile("\\ba\\.unrealizedPct\\b").matcher(drawHeader).find(),
+                "and the unrealised percentage beside its euro figure, the way the reference "
+                + "puts both units on one labelled row");
 
         // nobody reduces a money column in the browser
         assertTrue(!page.contains(".reduce("),
