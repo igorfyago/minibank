@@ -253,7 +253,10 @@ function fmtQty(qtyStr) {
  *  case that has no multiplier either, and guessing 'shares' at it is the same
  *  invention this whole change removes, just quieter. */
 function unitFor(kind, qty) {
-  return kind === 'crypto' ? '' : ' sh';
+  if (kind === 'crypto') return '';
+  if (kind === 'equity') return ' sh';
+  if (kind === 'option') return num(qty) === 1 ? ' contract' : ' contracts';
+  return '';
 }
 
 /** Largest position first; anything we could not price sinks to the bottom

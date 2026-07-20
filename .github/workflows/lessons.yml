@@ -124,7 +124,7 @@ jobs:
       # that is a feature: the bank's identity lessons are only worth as much
       # as the validator underneath them.
       - name: the lessons
-        run: mvn -B -ntp -pl ledger-service -am test -Dtest='!OutboxLessonTest' -DfailIfNoSpecifiedTests=false
+        run: mvn -B -ntp -pl ledger-service -am test -Dtest='!OutboxLessonTest,!TraceCausalOrderLessonTest' -DfailIfNoSpecifiedTests=false
 
       - name: surefire reports
         if: failure()
@@ -217,7 +217,7 @@ jobs:
         # reactor and no test there matches this pattern. The other job gets
         # away with the old spelling because its pattern is a negation and
         # therefore matches sso-client's tests anyway.
-        run: mvn -B -ntp -pl ledger-service -am test -Dtest=OutboxLessonTest -Dsurefire.failIfNoSpecifiedTests=false
+        run: mvn -B -ntp -pl ledger-service -am test -Dtest='OutboxLessonTest,TraceCausalOrderLessonTest' -Dsurefire.failIfNoSpecifiedTests=false
 
       - name: surefire reports
         if: failure()
