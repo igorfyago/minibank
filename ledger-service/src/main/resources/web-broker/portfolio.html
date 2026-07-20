@@ -229,7 +229,32 @@ function fmtQty(qtyStr) {
   return s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s;
 }
 
-const unitFor = kind => kind === 'crypto' ? '' : ' sh';
+/** What a quantity is COUNTED IN, taken from the kind rather than assumed.
+ *
+ *  This read `kind === 'crypto' ? '' : ' sh'`, so every kind that was not
+ *  crypto was announced as shares · and one contract is not one share, it is a
+ *  claim on `multiplier` of them. An option position of 2 rendered "2 sh",
+ *  understating what is held by a factor of 100 in the one place a reader looks
+ *  to see how much they hold. The tile already knows better three rows down:
+ *  the expansion draws a 'Contract size' cell for exactly this reason, and the
+ *  Avg cost / Last labels are qualified per-contract off the same fact.
+ *
+ *  The bank page was checked for a convention to copy and has none · it renders
+ *  quantities bare beside a label (ivHead) and never suffixes a unit, so there
+ *  was nothing to inherit and this picks its own.
+ *
+ *  Spelled out rather than abbreviated: ' sh' is a unit a reader already knows,
+ *  and no short form of contract is (`ctr` is not a word anyone reads). The
+ *  sub-line comment above holdingTile is explicit that a tile is wider than the
+ *  numeric column the old row gave this and the words fit here.
+ *
+ *  An unknown kind now says nothing instead of saying shares. A row arrives
+ *  uncatalogued when the registry has no entry for the symbol · that is the
+ *  case that has no multiplier either, and guessing 'shares' at it is the same
+ *  invention this whole change removes, just quieter. */
+function unitFor(kind, qty) {
+  return kind === 'crypto' ? '' : ' sh';
+}
 
 /** Largest position first; anything we could not price sinks to the bottom
  *  rather than sorting as if it were worth nothing. */
@@ -689,7 +714,9 @@ function holdingTile(h) {
   // The quantity leads the sub-line: it is the figure the value above is a
   // value OF, so the two want to be adjacent. A tile is wider than the numeric
   // column the row gave this, so the words fit here where they did not there.
-  const sub = [qty === null ? null : qty + unitFor(h.kind), h.name, note]
+  // unitFor gets the RAW h.qty, not the formatted `qty` · it counts to decide
+  // singular against plural, and fmtQty's output is a display string.
+  const sub = [qty === null ? null : qty + unitFor(h.kind, h.qty), h.name, note]
                 .filter(Boolean).map(esc).join(' · ');
 
   return `<div class="prod expandable${isOpen ? ' open' : ''}" onclick="tileOpen('${esc(h.symbol)}')">

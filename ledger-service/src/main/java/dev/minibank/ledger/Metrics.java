@@ -85,6 +85,24 @@ public final class Metrics {
         b.append("# TYPE minibank_fx_lookups_total counter\n");
         emit(b, "minibank_fx_lookups_total");
 
+        b.append("# HELP minibank_mark_refresh_total Background mark refreshes, by outcome.\n");
+        b.append("# TYPE minibank_mark_refresh_total counter\n");
+        emit(b, "minibank_mark_refresh_total");
+
+        // THE NUMBER THAT REPLACED THE HIT RATE as the thing to watch.
+        //
+        // With refresh-ahead the cache hit rate stopped being the interesting
+        // question, because the marks are warmed by a background loop rather
+        // than populated by whoever missed first · lookups become rare and a
+        // rate computed over them says nothing about what customers waited
+        // for. What matters is per SERVE: 'fresh' and 'stale' were answered
+        // out of memory and cost the request nothing, 'cold' means a customer
+        // sat and watched an upstream. Driving that last one to zero is the
+        // entire point of the refresher, and this is how you can tell.
+        b.append("# HELP minibank_mark_serve_total Marks served to a request, by how current the value was.\n");
+        b.append("# TYPE minibank_mark_serve_total counter\n");
+        emit(b, "minibank_mark_serve_total");
+
         // each gauge family must be contiguous: HELP + TYPE immediately
         // followed by ITS OWN samples, or a strict parser drops the type
         b.append("# HELP minibank_inflight_eur Money in flight across regions, right now.\n");
@@ -135,8 +153,19 @@ public final class Metrics {
         long total = hits + misses;
         long httpN = httpCount.sum();
         double avgMs = httpN == 0 ? 0 : (httpSumNanos.sum() / 1e6) / httpN;
+        // marks served without waiting on anything, over marks served at all ·
+        // see the HELP text on minibank_mark_serve_total for why this is the
+        // figure the X-ray should lead with now
+        long warm = sum("minibank_mark_serve_total", "result=\"fresh\"")
+                  + sum("minibank_mark_serve_total", "result=\"stale\"");
+        long cold = sum("minibank_mark_serve_total", "result=\"cold\"");
+        long serves = warm + cold;
         return "{\"cacheHits\":" + hits + ",\"cacheMisses\":" + misses +
                ",\"cacheHitRate\":" + (total == 0 ? 0 : Math.round(hits * 100.0 / total)) +
+               ",\"marksServed\":" + serves +
+               ",\"marksWarm\":" + warm +
+               ",\"marksCold\":" + cold +
+               ",\"markWarmRate\":" + (serves == 0 ? 0 : Math.round(warm * 100.0 / serves)) +
                ",\"httpRequests\":" + httpN +
                ",\"httpAvgMs\":" + Math.round(avgMs * 10) / 10.0 + "}";
     }

@@ -1557,6 +1557,25 @@ function ivHead(inv) {
         : 'a holding has no live price right now';
   }
   else sub = `${inv.holdings} holding${inv.holdings === 1 ? '' : 's'} · today's change not available`;
+  // HOW OLD THE MARKS ARE, when they are not current.
+  //
+  // The server stopped fetching prices while the customer waits · a
+  // background loop keeps them warm and the request is served from whatever
+  // it last observed, which is what took this screen from two seconds to
+  // twenty milliseconds. That trade is only honest if the screen can say when
+  // the number stopped being current. A mark the server labels 'cached' is a
+  // real price from a real moment, and the moment is the part worth stating:
+  // "€64,584" and "€64,584, as of eleven minutes ago" are different claims,
+  // and rendering the second as the first is the same failure as the invented
+  // fallback price this bank already deleted once.
+  const ages = (inv.rows || [])
+    .filter(r => r.priceSource === 'cached' && r.priceAgeSeconds !== null)
+    .map(r => Number(r.priceAgeSeconds));
+  if (ages.length) {
+    const worst = Math.max(...ages);
+    const how = worst < 90 ? `${worst}s` : `${Math.round(worst / 60)} min`;
+    sub += ` · price${ages.length === 1 ? '' : 's'} as of ${how} ago`;
+  }
   return `<div class="prod-name">📈 Investments</div>
     <div class="prod-val">${val === null ? '<span class="prod-sub">not available</span>' : fmt(val)}</div>
     <div class="prod-sub">${sub}</div>`;

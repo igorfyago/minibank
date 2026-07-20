@@ -49,6 +49,29 @@ public final class Cache {
 
     public static boolean enabled() { return pool != null; }
 
+    /**
+     * READ ONLY · no loader, no write, and a miss is simply null.
+     *
+     * Separated from getOrLoad because "is there a shared value" and "may I
+     * call the upstream" are two different questions, and answering them with
+     * one method conflated them in a way that lost real prices. A caller that
+     * is backing off an upstream must still be allowed to read what the fleet
+     * already stored; see PriceFeed.loadOrFetch for the failure that made the
+     * distinction necessary.
+     */
+    public static String get(String cacheName, String key) {
+        JedisPool p = pool;
+        if (p == null) return null;
+        try (Jedis j = p.getResource()) {
+            String hit = j.get("mb:" + cacheName + ':' + key);
+            Metrics.inc("minibank_cache_total",
+                    "cache=\"" + cacheName + "\",result=\"" + (hit != null ? "hit" : "miss") + "\"");
+            return hit;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     /** Read-through: return the cached value, or load it, store it with a TTL
      *  and return it. Any Redis error degrades to a direct load. */
     public static String getOrLoad(String cacheName, String key, int ttlSeconds, Supplier<String> loader) {
@@ -72,6 +95,63 @@ public final class Cache {
             try (Jedis j = p.getResource()) { j.setex(full, ttlSeconds, val); } catch (Exception ignored) {}
         }
         return val;
+    }
+
+    /**
+     * WRITE WITHOUT READING · what a refresh is, as opposed to a load.
+     *
+     * getOrLoad cannot express this: it is read-through by definition, so it
+     * would hand back the very value the refresher exists to replace. With a
+     * long stale TTL that is not a small inefficiency, it is a fleet that
+     * serves one increasingly ancient price forever and reports a perfect hit
+     * rate while doing it.
+     */
+    public static void put(String cacheName, String key, int ttlSeconds, String value) {
+        JedisPool p = pool;
+        if (p == null || value == null) return;
+        try (Jedis j = p.getResource()) { j.setex("mb:" + cacheName + ':' + key, ttlSeconds, value); }
+        catch (Exception ignored) { /* a cache that cannot be written is still not an outage */ }
+    }
+
+    /**
+     * TAKE A SHORT LEASE, or find that somebody else holds it · SET NX EX.
+     *
+     * The refresher's answer to "three pods, one upstream". Whoever wins the
+     * key does the fetch and publishes it for everyone; the others skip the
+     * cycle and read what lands. It is deliberately NOT a lock: nothing is
+     * released, nothing is waited on, and a holder that dies mid-refresh
+     * costs one skipped interval rather than a stuck fleet. The failure mode
+     * of a lease that nobody can take is that every pod refreshes its own,
+     * which is precisely the behaviour without Redis · so this degrades to
+     * correct-but-noisier rather than to broken.
+     */
+    public static boolean lease(String cacheName, String key, int ttlSeconds) {
+        JedisPool p = pool;
+        if (p == null) return true;      // no Redis, no coordination · everyone refreshes their own
+        try (Jedis j = p.getResource()) {
+            return "OK".equals(j.set("mb:lease:" + cacheName + ':' + key, "1",
+                    redis.clients.jedis.params.SetParams.setParams().nx().ex(ttlSeconds)));
+        } catch (Exception e) {
+            return true;                 // Redis unreachable · fall back to refreshing locally
+        }
+    }
+
+    /**
+     * Does this key exist · asked of a marker that deliberately holds no value.
+     *
+     * PriceFeed records the FACT that a symbol could not be priced, and that
+     * fact is worth sharing across pods and across restarts for the same
+     * reason it is worth keeping in process: an unpriceable ticker otherwise
+     * costs a full upstream timeout on the first request after every deploy.
+     * The marker holds no number by construction · see the negative-cache
+     * docstring in PriceFeed · so there is nothing here that could ever be
+     * mistaken for a price.
+     */
+    public static boolean has(String cacheName, String key) {
+        JedisPool p = pool;
+        if (p == null) return false;
+        try (Jedis j = p.getResource()) { return j.exists("mb:" + cacheName + ':' + key); }
+        catch (Exception e) { return false; }
     }
 
     /** Invalidate one key · used when the directory pointer flips on relocation. */

@@ -1394,6 +1394,9 @@ public final class HttpApi {
         int unpriced = 0, withoutPrevClose = 0, expiredCount = 0;
         java.time.Instant dayStart = java.time.LocalDate.now(java.time.ZoneOffset.UTC)
                 .atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        // [Asset, holdingAccountId, units] · collected first so every mark can
+        // be asked for in ONE fan-out rather than one at a time down the walk
+        List<Object[]> owned = new ArrayList<>();
         try (Connection c = home.open()) {
             for (AssetRegistry.Asset a : AssetRegistry.all(c)) {
                 // ASKED BY ACCOUNT ID, one asset at a time, rather than looked
@@ -1409,6 +1412,34 @@ public final class HttpApi {
                 long assetAcct = a.holdingFor(id);
                 BigDecimal units = assetBalance(c, assetAcct);
                 if (units == null || units.signum() == 0) continue;
+                owned.add(new Object[]{a, assetAcct, units});
+            }
+            // EVERY MARK AT ONCE, rather than one at a time down the shelf.
+            //
+            // This loop used to call PriceFeed.get inside the walk above, so a
+            // six-instrument shelf paid its upstream calls IN SERIES: measured
+            // at 305ms across four Yahoo requests plus 145ms to CoinGecko plus
+            // 69ms to the fx-service, for a 546ms request whose database work
+            // was 15ms of it. BrokerApi.watchlist had exactly this bug and
+            // exactly this fix already; the fan-out it uses has been sitting
+            // in PriceFeed the whole time and this caller never took it.
+            //
+            // Refresh-ahead means these calls now almost always find a warm
+            // value and cost nothing at all. The fan-out is what bounds the
+            // remaining case · a genuinely cold shelf · to one round trip
+            // instead of six, and a cold shelf is precisely when it matters.
+            java.util.List<String> wanted = new ArrayList<>();
+            for (Object[] o : owned) {
+                AssetRegistry.Asset a = (AssetRegistry.Asset) o[0];
+                if (!a.expiredAsOf(java.time.LocalDate.now(java.time.ZoneOffset.UTC)))
+                    wanted.add(a.symbol().toLowerCase(java.util.Locale.ROOT));
+            }
+            java.util.Map<String, PriceFeed.Px> marks = PriceFeed.getAll(wanted);
+
+            for (Object[] o : owned) {
+                AssetRegistry.Asset a = (AssetRegistry.Asset) o[0];
+                long assetAcct = (Long) o[1];
+                BigDecimal units = (BigDecimal) o[2];
                 // LOWERCASE, and it is not cosmetic. The registry stores
                 // symbols uppercase; PriceFeed keys them lowercase and routes
                 // "btc" to CoinGecko and everything else to Yahoo. Asking it
@@ -1428,7 +1459,7 @@ public final class HttpApi {
                 // in the registry rather than in a screen.
                 boolean expired = a.expiredAsOf(java.time.LocalDate.now(java.time.ZoneOffset.UTC));
                 PriceFeed.Px px = expired ? null
-                        : PriceFeed.get(a.symbol().toLowerCase(java.util.Locale.ROOT));
+                        : marks.get(a.symbol().toLowerCase(java.util.Locale.ROOT));
                 held.add(new Object[]{a.symbol(), a.label() == null ? a.symbol() : a.label(), units, px,
                         a.multiplier(), expired});
                 // EXPIRED IS COUNTED SEPARATELY FROM UNPRICED, because they
@@ -1525,7 +1556,16 @@ public final class HttpApi {
                // would say the price is coming back, and it is not
                .append("\",\"priceSource\":\"").append(Json.esc(
                        expired ? "expired" : px == null ? "unavailable" : px.source()))
-               .append("\"}");
+               // HOW OLD THE MARK IS, in seconds, and null when it never
+               // carried a time. Refresh-ahead means a price is now served
+               // from a background observation rather than fetched while the
+               // customer waits, which is the whole speedup · and it would be
+               // a quiet lie without this field. A number rendered at the size
+               // of a balance is read as current; the age is what lets the
+               // screen say otherwise when it is not.
+               .append("\",\"priceAgeSeconds\":").append(
+                       px == null || px.ageSeconds() < 0 ? "null" : String.valueOf(px.ageSeconds()))
+               .append("}");
         }
         inv.append("]}");
 

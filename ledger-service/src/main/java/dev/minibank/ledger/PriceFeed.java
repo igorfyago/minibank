@@ -44,23 +44,91 @@ public final class PriceFeed {
      * A zero here would render as "flat today", which is a lie with a
      * plausible face on it.
      */
-    public record Px(BigDecimal price, BigDecimal usd, String source, BigDecimal prevClose) {
+    public record Px(BigDecimal price, BigDecimal usd, String source, BigDecimal prevClose, long asOf) {
 
         /** The shape this record had before prevClose existed. */
         public Px(BigDecimal price, BigDecimal usd, String source) {
-            this(price, usd, source, null);
+            this(price, usd, source, null, 0L);
+        }
+
+        /** The shape it had before the observation time was carried. */
+        public Px(BigDecimal price, BigDecimal usd, String source, BigDecimal prevClose) {
+            this(price, usd, source, prevClose, 0L);
         }
 
         /** Whether there is a number here at all · an unpriced symbol is not a free one. */
         public boolean priced() {
             return price != null && price.signum() > 0;
         }
+
+        /**
+         * HOW OLD THIS MARK IS, in seconds, or -1 when it never carried a time.
+         *
+         * The whole reason refresh-ahead is safe to ship. A background loop
+         * that keeps values warm will, on a bad day, be serving something it
+         * fetched ten minutes ago · and a ten minute old price rendered with
+         * no age beside it is the same category of lie as the invented
+         * fallback this class already refuses to compute. The number is only
+         * honest if the screen can say when it was true.
+         */
+        public long ageSeconds() {
+            return asOf <= 0 ? -1 : Math.max(0, (System.currentTimeMillis() - asOf) / 1000);
+        }
     }
 
     private static final HttpClient http = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.NORMAL)
             .connectTimeout(Duration.ofSeconds(3)).build();
-    private static final Map<String, Object[]> cache = new ConcurrentHashMap<>(); // sym -> [Px, fetchedAtMillis]
+    private static final Map<String, Object[]> cache = new ConcurrentHashMap<>(); // sym -> [Px, observedAtMillis]
+
+    /** How long an observation counts as current. Unchanged · this is the
+     *  number the screens were always built around. */
+    static final long FRESH_MS = 60_000;
+
+    /**
+     * How long the SHARED store keeps a value, which is a different question.
+     *
+     * An hour, against a sixty second freshness window, because the shared
+     * copy's job is no longer "is this current" · the encoded timestamp
+     * answers that · but "is there anything at all to serve a pod that just
+     * booted, or a customer who arrived on a quiet afternoon". Setting these
+     * two numbers equal is what made the cache useless; see loadOrFetch.
+     */
+    static final int STALE_TTL_S = 3600;
+
+    /**
+     * The namespace, versioned again. The encoding grew a fifth field and the
+     * old four-field form carries no observation time, so a half-rolled fleet
+     * reading it would report every mark as ageless · which the screens are
+     * now entitled to render as 'live'.
+     */
+    static final String NS = "prices:live3";
+
+    /**
+     * THE SMALL FIXED SET THIS BANK ACTUALLY MARKS.
+     *
+     * The refresher needs to know what to keep warm, and the honest answer is
+     * "whatever anyone has asked for", not a literal list · this codebase has
+     * had the two-symbol blind spot surgically removed from four different
+     * places already and reintroducing it here as a refresh list would be the
+     * fifth. So interest is RECORDED rather than declared: every get() marks
+     * its symbol, the registry seeds the set at boot, and the loop refreshes
+     * what it finds.
+     *
+     * Bounded, because an unbounded one is a denial of service wearing a
+     * cache's clothes: /api/prices/history takes a symbol from the query
+     * string, and without a ceiling anyone could enlist this process into
+     * polling a thousand tickers forever.
+     */
+    private static final int MAX_TRACKED = 256;
+    private static final java.util.Set<String> tracked =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    static void track(String symbol) {
+        if (symbol != null && tracked.size() < MAX_TRACKED) tracked.add(symbol);
+    }
+
+    static java.util.Set<String> tracked() { return java.util.Set.copyOf(tracked); }
 
     private PriceFeed() {}
 
@@ -111,9 +179,54 @@ public final class PriceFeed {
         return upstreamAttempts.get();
     }
 
+    /**
+     * The namespace the FACT of a failure lives in · a marker, never a number.
+     *
+     * Deliberately a different key space from the price cache, so that nothing
+     * stored here can ever be read by the branch that relabels a hit as
+     * 'cached'. That is the same separation unpricedAt already enforces in
+     * process; this is only its shared half.
+     */
+    private static final String NS_UNPRICED = "prices:unpriced";
+
     private static boolean backingOff(String symbol) {
         Long t = unpricedAt.get(symbol);
-        return t != null && System.currentTimeMillis() - t < UNPRICED_BACKOFF_MS;
+        if (t != null) return System.currentTimeMillis() - t < UNPRICED_BACKOFF_MS;
+        // NOT KNOWN LOCALLY IS NOT THE SAME AS NOT KNOWN, and the difference
+        // is a whole upstream timeout on the first request after a deploy.
+        // A restart empties the in-process map, so a ticker nothing lists ·
+        // ZZQQ on this shelf · went upstream again on the first page load and
+        // hung there for the full 3s connect timeout while every other mark
+        // was served instantly out of Redis. Measured: 3.04s for a shelf whose
+        // five other prices were already warm. The shared marker means a
+        // restarted pod, or a second pod that never asked, inherits what the
+        // fleet already learned.
+        return Cache.has(NS_UNPRICED, symbol);
+    }
+
+    /**
+     * Have we tried this symbol and come back with nothing, ever?
+     *
+     * Distinct from {@link #backingOff}, which asks the narrower question of
+     * whether the failure is recent enough to still be suppressing calls. This
+     * one stays true after the window lapses and until a fetch actually
+     * succeeds, which is what lets the refresher rather than a customer own
+     * the retry for a ticker nothing lists.
+     */
+    private static boolean knownUnpriceable(String symbol) {
+        return unpricedAt.containsKey(symbol) || Cache.has(NS_UNPRICED, symbol);
+    }
+
+    /** Record the failure for everyone · the window matches the local one, so
+     *  a feed that recovers is still noticed on the same schedule. */
+    private static void markUnpriced(String symbol) {
+        unpricedAt.put(symbol, System.currentTimeMillis());
+        Cache.put(NS_UNPRICED, symbol, (int) (UNPRICED_BACKOFF_MS / 1000), "1");
+    }
+
+    private static void clearUnpriced(String symbol) {
+        unpricedAt.remove(symbol);
+        Cache.invalidate(NS_UNPRICED, symbol);
     }
 
     /**
@@ -129,6 +242,10 @@ public final class PriceFeed {
         cache.clear();
         unpricedAt.clear();
         histCache.clear();
+        // the refresh-ahead set is in-process state too · a test that left it
+        // populated would have a background loop re-warming the very symbol
+        // the next test is trying to observe on a cold start
+        tracked.clear();
     }
 
     /**
@@ -184,60 +301,237 @@ public final class PriceFeed {
         return out;
     }
 
+    /**
+     * A MARK, WITHOUT EVER WAITING ON THE INTERNET · unless there is nothing
+     * at all to serve.
+     *
+     * This method used to be the whole cost of the Products shelf. It checked
+     * an in-process value with a 60 second life, and on the 61st second it
+     * went to CoinGecko or Yahoo with the customer's request still open. The
+     * shelf holds six instruments, portfolio() asked for them one at a time,
+     * and the page therefore paid five upstream round trips in series · about
+     * 540ms on a developer's machine and roughly two seconds from the EC2 box,
+     * on every load that arrived more than a minute after the last one. Which
+     * is to say: on nearly every real load, because real traffic here is
+     * sparse.
+     *
+     * The rule now is that a customer's request never blocks on an upstream it
+     * has an answer for. There are three cases and the first two never touch
+     * the network:
+     *
+     *   FRESH   observed inside FRESH_MS · served, exactly as before.
+     *   STALE   observed longer ago than that · served IMMEDIATELY anyway,
+     *           carrying its true age, and a refresh is queued behind the
+     *           response. This is stale-while-revalidate, the same doctrine
+     *           the front end's swrCache already applies one tier up.
+     *   COLD    nothing has ever been observed for this symbol · and there is
+     *           no honest way to answer instantly, so this one call does block.
+     *           {@link Refresher} exists to make it vanishingly rare: the
+     *           tracked set is refreshed on a schedule whether or not anyone
+     *           asked, so by the time a customer arrives the value is already
+     *           there.
+     *
+     * The cold branch is deliberately NOT made asynchronous. Returning
+     * 'unavailable' for a symbol we simply have not got around to fetching
+     * would be a feed-is-down claim on a day the feed is fine · the same
+     * category of dishonesty as the fallback price, arriving from the other
+     * direction. If we have nothing, we go and get it.
+     */
     public static Px get(String symbol) {
-        // L1: in-process (a single pod serving the same price for 60s).
+        track(symbol);
         Object[] hit = cache.get(symbol);
-        if (hit != null && System.currentTimeMillis() - (long) hit[1] < 60_000) return (Px) hit[0];
+        if (hit != null) {
+            Px last = (Px) hit[0];
+            long observedAt = (long) hit[1];
+            if (System.currentTimeMillis() - observedAt < FRESH_MS) {
+                Metrics.inc("minibank_mark_serve_total", "result=\"fresh\"");
+                return last;
+            }
+            // STALE, AND SERVED ANYWAY · but only if something is actually
+            // going to replace it. A stale value handed out with a refresh
+            // that nobody performs is a price that ages forever, so when
+            // there is no refresher running this falls back to the blocking
+            // load it always did.
+            if (Refresher.queue(symbol)) {
+                Metrics.inc("minibank_mark_serve_total", "result=\"stale\"");
+                return stale(last, observedAt);
+            }
+            return loadOrFetch(symbol);   // counts the serve itself · see below
+        }
+        // NOTHING IN THIS PROCESS · the shared store may still have it, and
+        // only if that misses too is anyone going upstream. loadOrFetch counts
+        // which of those happened.
+        return loadOrFetch(symbol);
+    }
+
+    /**
+     * The blocking path · shared store first, then upstream. This is what
+     * get() used to do on every miss and now does only when nothing is known.
+     */
+    private static Px loadOrFetch(String symbol) {
+        Object[] hit = cache.get(symbol);
         // L2: Redis · SHARED across every pod, so one call to CoinGecko/Yahoo
         // warms the price for the whole fleet, not once per pod.
-        // the loader returns null on upstream failure · a failed price is NOT
-        // cached, so a recovered feed is picked up on the next call instead of
-        // a stale fallback being pinned for 60s across the whole fleet
-        // the cache namespace is versioned: the encoding grew a fourth field
-        // and a half-rolled fleet reading the old three-field form would
-        // silently serve a null prevClose for 60s
-        String enc = backingOff(symbol) ? null : Cache.getOrLoad("prices:live2", symbol, 60, () -> {
-            try {
-                // counted HERE, inside the loader, because this is the only
-                // line in the class that reaches the internet · Redis serving
-                // the answer means the loader never runs and nothing upstream
-                // was asked
-                upstreamAttempts.incrementAndGet();
-                Px f = fetch(symbol);
-                // f.source(), NOT the literal "live". An equity mark converted
-                // at a stale FX rate comes back from fetch() as 'cached', and
-                // hardcoding the label here overwrote that admission on its
-                // way into the shared cache · where the whole fleet would then
-                // read it as live for the next 60 seconds.
-                return f.price().toPlainString() + '|' + f.usd().toPlainString() + '|' + f.source() + '|'
-                        + (f.prevClose() == null ? "" : f.prevClose().toPlainString());
-            } catch (Exception e) { return null; }
-        });
+        //
+        // THE TTL IS NOT THE FRESHNESS WINDOW, and that distinction is the
+        // whole repair. This cache used to be written with a 60 second TTL by
+        // a caller whose own in-process copy also lived exactly 60 seconds,
+        // and the in-process copy was consulted FIRST. So Redis was only ever
+        // asked at the precise moment its own entry had expired: the key was
+        // written at T with a life to T+60, and the first request that could
+        // possibly have needed it arrived at T+60. A single pod could not hit
+        // its own write even once. Measured against the running stack the
+        // counter read 15 lookups, 15 misses, 0 hits · and in production the
+        // 0-18% the X-ray showed was only ever the chance that a DIFFERENT pod
+        // had warmed the key recently, which is why it fell to zero whenever
+        // traffic was sparse or a pod was alone.
+        //
+        // Redis now holds the last good value for an hour and the ENCODED
+        // TIMESTAMP decides whether it is fresh. Expiry is a garbage-collection
+        // policy; freshness is a property of the observation. Conflating the
+        // two is what made a shared cache that never shared anything.
+        // THE SHARED STORE IS READ UNCONDITIONALLY, and the backoff gates only
+        // the upstream call below it.
+        //
+        // These were one expression · a read-through whose whole operation was
+        // skipped while backing off · and that cost real prices. After a
+        // restart with the upstream unreachable, the refresher's first cycle
+        // fails for every symbol and marks them all unpriced; the next request
+        // then found itself backing off and never looked in Redis at all, so a
+        // shelf whose five marks were sitting in the shared store an hour from
+        // expiry rendered as five 'unavailable' rows. Measured exactly that
+        // way before this line was split: every holding unpriced, on a stack
+        // whose Redis was full of good values.
+        //
+        // "Do not call CoinGecko right now" and "do not look at what the fleet
+        // already fetched" are different instructions, and only the first one
+        // was ever intended.
+        String enc = Cache.get(NS, symbol);
+        if (enc != null) {
+            Metrics.inc("minibank_mark_serve_total", "result=\"stale\"");
+        } else if (knownUnpriceable(symbol) && Refresher.queue(symbol)) {
+            // A SYMBOL WE HAVE ALREADY FAILED TO PRICE is not worth a
+            // customer's time to re-attempt.
+            //
+            // The measurement that found this: after refresh-ahead removed
+            // every other upstream call from the request path, the shelf still
+            // spent 40-60ms on some loads, and the probe put all of it in one
+            // Yahoo request for ZZQQ · a ticker nothing lists. An unpriceable
+            // symbol never lands in the value cache, so it reached here on
+            // every request, and whenever its backoff had just lapsed the
+            // unlucky customer paid the retry. The backoff bounded how OFTEN
+            // that happened and never moved it off the request path.
+            //
+            // The retry still has to happen · a delisted ticker can come back
+            // and a new listing has to start working without a restart · but
+            // it is background work by nature, because nobody is waiting on
+            // the answer 'still nothing'. So the refresher owns it.
+            //
+            // THIS TEST SITS BELOW THE SHARED READ, and that ordering is the
+            // whole correctness of it. It was above, and the result was that a
+            // restart with the upstream unreachable rendered every holding as
+            // 'unavailable' while Redis held five good marks an hour from
+            // expiry · the refresher's first failing cycle marked them all
+            // unpriced, and this branch then answered on their behalf without
+            // ever looking. Known-unpriceable is a reason not to CALL anyone;
+            // it was never a reason not to look at what we already have.
+            Metrics.inc("minibank_mark_serve_total", "result=\"stale\"");
+        } else if (!backingOff(symbol)) {
+            Metrics.inc("minibank_mark_serve_total", "result=\"cold\"");
+            enc = encode(fetchUpstream(symbol));
+            if (enc != null) Cache.put(NS, symbol, STALE_TTL_S, enc);
+        } else {
+            Metrics.inc("minibank_mark_serve_total", "result=\"stale\"");
+        }
         // the ATTEMPT is recorded, never the answer · see UNPRICED_BACKOFF_MS.
         // put and not putIfAbsent: the window has to restart on each failed
         // attempt, or the first timestamp ages out and never refreshes, and
         // the backoff silently stops backing off.
-        if (enc == null) { if (!backingOff(symbol)) unpricedAt.put(symbol, System.currentTimeMillis()); }
-        else unpricedAt.remove(symbol);
+        if (enc == null) { if (!backingOff(symbol)) markUnpriced(symbol); }
+        else clearUnpriced(symbol);
         Px px;
         if (enc != null) {
             px = decode(enc, symbol);
         } else if (hit != null) {          // upstream down: last good price, honestly labeled
             Px last = (Px) hit[0];
-            px = new Px(last.price(), last.usd(), "cached", last.prevClose());
+            px = stale(last, (long) hit[1]);
         } else {
             px = unavailable();
         }
         // AN ADMISSION IS NOT AN OBSERVATION, so it does not go in the cache.
         //
-        // Storing it would pin "I do not know" for 60 seconds and delay the
-        // recovery it is meant to be temporary about. Worse, it would become
-        // the `hit` that the branch above reads on the NEXT failure, and that
-        // branch relabels whatever it finds as 'cached' · which is how an
-        // invented price used to launder itself into looking like a real one
-        // that was merely old. Only a price we actually saw is worth keeping.
-        if (px.priced()) cache.put(symbol, new Object[]{px, System.currentTimeMillis()});
+        // Storing it would pin "I do not know" and delay the recovery it is
+        // meant to be temporary about. Worse, it would become the `hit` that
+        // the branch above reads on the NEXT failure, and that branch relabels
+        // whatever it finds as 'cached' · which is how an invented price used
+        // to launder itself into looking like a real one that was merely old.
+        // Only a price we actually saw is worth keeping.
+        if (px.priced()) remember(symbol, px);
         return px;
+    }
+
+    /**
+     * GO UPSTREAM AND PUBLISH, bypassing the shared read.
+     *
+     * The refresher cannot use loadOrFetch: read-through would hand it back
+     * the very Redis value it is trying to replace, and with an hour-long TTL
+     * the fleet would settle into serving one increasingly ancient price
+     * forever while congratulating itself on a 100% hit rate. A refresh is by
+     * definition the one operation that must not be satisfied by the cache.
+     *
+     * Returns null when the upstream had nothing, and writes NOTHING in that
+     * case · a failed refresh must leave the last good value exactly where it
+     * is, which is what makes this fail open.
+     */
+    static Px refreshNow(String symbol) {
+        String enc = encode(fetchUpstream(symbol));
+        if (enc == null) {
+            markUnpriced(symbol);
+            return null;
+        }
+        clearUnpriced(symbol);
+        Cache.put(NS, symbol, STALE_TTL_S, enc);
+        Px px = decode(enc, symbol);
+        if (px.priced()) remember(symbol, px);
+        return px;
+    }
+
+    /** The one place in this class that reaches the internet. */
+    private static String encode(Px f) {
+        if (f == null) return null;
+        return f.price().toPlainString() + '|' + f.usd().toPlainString() + '|' + f.source() + '|'
+                + (f.prevClose() == null ? "" : f.prevClose().toPlainString()) + '|' + f.asOf();
+    }
+
+    private static Px fetchUpstream(String symbol) {
+        try {
+            // counted HERE because this is the only line in the class that
+            // reaches the internet · Redis serving the answer means this never
+            // runs and nothing upstream was asked
+            upstreamAttempts.incrementAndGet();
+            Px f = fetch(symbol);
+            // f.source(), NOT the literal "live". An equity mark converted at
+            // a stale FX rate comes back from fetch() as 'cached', and
+            // hardcoding the label here overwrote that admission on its way
+            // into the shared cache · where the whole fleet would then read it
+            // as live.
+            return new Px(f.price(), f.usd(), f.source(), f.prevClose(), System.currentTimeMillis());
+        } catch (Exception e) { return null; }
+    }
+
+    private static void remember(String symbol, Px px) {
+        cache.put(symbol, new Object[]{px, px.asOf() > 0 ? px.asOf() : System.currentTimeMillis()});
+    }
+
+    /**
+     * The same observation, relabeled as what it now is.
+     *
+     * 'cached' is the word this class has always used for a real price with an
+     * old timestamp, and the age rides along so nothing downstream has to
+     * guess how old 'old' is.
+     */
+    private static Px stale(Px last, long observedAt) {
+        return new Px(last.price(), last.usd(), "cached", last.prevClose(), observedAt);
     }
 
     /**
@@ -273,11 +567,22 @@ public final class PriceFeed {
         return new Px(null, null, "unavailable", null);
     }
 
-    private static Px decode(String enc, String symbol) {
+    /** package-visible so the freshness rule can be asserted against an
+     *  encoded value a test chose, rather than against whatever the internet
+     *  happened to be doing while the suite ran */
+    static Px decode(String enc, String symbol) {
         try {
             String[] p = enc.split("\\|", -1);          // -1: keep a trailing empty prevClose
             BigDecimal prev = p.length > 3 && !p[3].isBlank() ? new BigDecimal(p[3]) : null;
-            return new Px(new BigDecimal(p[0]), new BigDecimal(p[1]), p[2], prev);
+            long asOf = p.length > 4 && !p[4].isBlank() ? Long.parseLong(p[4]) : 0L;
+            // A SHARED VALUE IS OLDER THAN THIS POD, so its age decides its
+            // label rather than the fact that we just read it. Reading a
+            // fifty-minute-old entry out of Redis and calling it 'live'
+            // because the read was fast is the same error as the equity leg
+            // that used to be labeled live after a stale FX conversion.
+            if (asOf > 0 && System.currentTimeMillis() - asOf >= FRESH_MS)
+                return new Px(new BigDecimal(p[0]), new BigDecimal(p[1]), "cached", prev, asOf);
+            return new Px(new BigDecimal(p[0]), new BigDecimal(p[1]), p[2], prev, asOf);
         } catch (Exception e) {
             return unavailable();
         }

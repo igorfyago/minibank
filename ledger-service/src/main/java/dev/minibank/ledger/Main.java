@@ -100,6 +100,15 @@ public final class Main {
         // the one-command dev run embeds it on :8090
         if (System.getenv("FX_URL") == null) dev.minibank.fx.FxService.start(8090);
 
+        // REFRESH-AHEAD · the marks are kept warm by a background loop rather
+        // than fetched by whoever happens to open the Products shelf. Started
+        // AFTER the FX service above, so its first cycle finds a rate to
+        // convert equities through instead of backing off from a service that
+        // had not opened its socket yet. Seeded from the registry so the first
+        // request after a deploy is warm too.
+        Refresher.seedFromRegistry(Shards.forCustomer(10));
+        Refresher.start();
+
         // WHO IS CALLING · wired here and nowhere else. HttpApi.handle asks
         // this one question per request; every handler below it stays unaware
         // that SSO exists.

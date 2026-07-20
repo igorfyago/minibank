@@ -51,12 +51,50 @@ public final class FxClient {
 
     private FxClient() {}
 
-    /** USD→EUR via the FX service, cached 60s in-process.
-     *  A failed lookup is cached only ~10s, so a dead FX service is
-     *  retried soon without being hammered. */
+    /**
+     * USD→EUR, WITHOUT WAITING ON THE FX SERVICE once a rate is known.
+     *
+     * The deadline below is 500ms and the money path is entitled to spend it,
+     * because a payment that must convert has nothing else to do. A SCREEN is
+     * a different case: the portfolio endpoint converts every equity mark
+     * through this rate, so a cold lookup put its full cost in front of the
+     * page · measured at about 70ms of the load, and up to the whole 500ms
+     * when the fx-service is unwell.
+     *
+     * So the same doctrine as PriceFeed.get applies here: a known rate is
+     * served instantly whatever its age, and a stale one is refreshed behind
+     * the caller rather than in front of them. Only a caller with NO rate at
+     * all blocks, and {@link Refresher} exists to make that state brief.
+     */
     public static Rate usdToEur() {
         Object[] hit = cache;
-        if (hit != null && System.currentTimeMillis() - (long) hit[1] < 60_000) return (Rate) hit[0];
+        if (hit != null) {
+            if (System.currentTimeMillis() - (long) hit[1] < 60_000) return (Rate) hit[0];
+            // stale: serve it, refresh behind. The label already tells the
+            // truth · a rate we fetched earlier is 'fx down · last good' or
+            // whatever the service called it, never silently 'live'.
+            //
+            // If there is no refresher running to hand that work to, this
+            // falls back to the blocking lookup it always did. A stale value
+            // plus a refresh that nobody performs is a rate that ages forever,
+            // and that is strictly worse than the 500ms this was trying to
+            // avoid.
+            if (Refresher.FxRefresh.queue()) return (Rate) hit[0];
+            return refreshNow();
+        }
+        return refreshNow();
+    }
+
+    /**
+     * One lookup, and the cache updated · the blocking path, now called by the
+     * refresher on a schedule instead of by a customer on a page load.
+     *
+     * A failed lookup is aged 50s on the way in, so a dead FX service is
+     * retried in ~10s rather than pinned for a minute · the same trick as
+     * before, kept because it is the difference between noticing a recovery
+     * and waiting out a full window for it.
+     */
+    static Rate refreshNow() {
         Rate r = from(BASE);
         long at = r.source().startsWith("fx down") ? System.currentTimeMillis() - 50_000
                                                    : System.currentTimeMillis();

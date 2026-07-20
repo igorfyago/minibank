@@ -73,6 +73,21 @@ services:
       postgres:
         condition: service_healthy
 
+  # REDIS · the shared mark store. k8s has had this all along (k8s/redis.yaml)
+  # and Main defaults REDIS_URL to redis://localhost:6379, so the local stack
+  # was the only place it was missing · which meant every local run was
+  # silently in passthrough mode and the one environment anybody actually
+  # measures could not show what the cache does. Same image k8s pins.
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
   kafka:
     image: apache/kafka:3.8.0
     ports:

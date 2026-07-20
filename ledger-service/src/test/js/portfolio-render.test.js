@@ -196,6 +196,62 @@ test('an expired contract is not described as needing a live mark', () => {
   }
 });
 
+// ================================================================== the UNIT
+// unitFor read `kind === 'crypto' ? '' : ' sh'`, so everything that was not
+// crypto was counted in shares. A contract is not a share · it is a claim on
+// `multiplier` of them, and the tile says so itself two rows down in the
+// 'Contract size' cell. The sub-line understated an option position by 100x.
+
+/** The .prod-sub of a tile · the sub-line that carries the quantity. */
+function subOf(html) {
+  const m = html.match(/<div class="prod-sub">([\s\S]*?)<\/div>/);
+  return m ? m[1] : null;
+}
+
+test('an option position is counted in CONTRACTS, not shares', () => {
+  const p = newPage();
+  const opt = holding({ symbol: 'AAPL260821C250', kind: 'option', qty: '2',
+                        name: "AAPL Aug 21 '26 250 Call",
+                        multiplier: '100', expiresOn: '2026-08-21' });
+  const sub = subOf(p.call('holdingTile', opt));
+
+  assert.ok(sub, 'the tile must carry a sub-line');
+  assert.doesNotMatch(sub, /\bsh\b/,
+    'this is the defect: two contracts control 200 shares and the tile said '
+    + '"2 sh" · ' + JSON.stringify(sub));
+  assert.match(sub, /^2 contracts\b/,
+    'the quantity leads the sub-line and names what it counts: ' + JSON.stringify(sub));
+  // and the expansion that explains the multiplier is still the same fact
+  p.run('open = "AAPL260821C250"');
+  assert.match(p.call('holdingTile', opt), /Contract size<\/span><b[^>]*>100 × underlying/,
+    'the unit on the face and the contract size in the expansion are one claim');
+});
+
+test('one contract is singular · and a share is still a share', () => {
+  const p = newPage();
+  const sub = h => subOf(p.call('holdingTile', h));
+
+  // \b after 'contract' is the assertion · 'contracts' has no boundary there
+  assert.match(sub(holding({ kind: 'option', qty: '1', multiplier: '100' })),
+    /^1 contract\b/, 'a lone contract does not take the plural');
+  assert.match(sub(holding({ kind: 'equity', qty: '5' })), /^5 sh\b/,
+    'equities are unchanged · this fix is not a licence to restyle them');
+  assert.match(sub(holding({ symbol: 'BTC', kind: 'crypto', qty: '0.5', multiplier: '1' })),
+    /^0\.5 ·/, 'crypto carries no unit but the symbol · unchanged');
+});
+
+test('an UNCATALOGUED holding claims no unit at all', () => {
+  const p = newPage();
+  // no registry entry means no multiplier and no kind · the row that already
+  // has nothing true to say about its size used to say "shares" anyway
+  const sub = subOf(p.call('holdingTile',
+    holding({ kind: null, multiplier: null, name: null, exchange: null })));
+  assert.doesNotMatch(sub, /\bsh\b|contract/,
+    'guessing a unit for an unknown kind is the same invention, quieter: '
+    + JSON.stringify(sub));
+  assert.match(sub, /^5\b/, 'the quantity itself is known and still leads');
+});
+
 // ================================================================= the BAND
 test('a band withholds its DAY subtotal for the prior close, not for the mark', () => {
   const p = newPage();
