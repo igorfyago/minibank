@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="icon" href="/portfolio/icon.svg">
 <link rel="apple-touch-icon" href="/portfolio/icon.svg">
-<title>Investments · minibank</title>
+<title>Portfolio · minibroker</title>
 <style>
   /* ================================================================
      THE BANK'S STYLESHEET, NOT A SECOND ONE.
@@ -129,10 +129,15 @@
 </style>
 </head>
 <body>
+<!-- Estate bar: cross-app tabs + the one signed-in user, served by auth. -->
+<script src="https://auth.b4rruf3t.com/eco-nav.js" defer></script>
 <header>
-  <h1>mini<span>bank</span></h1>
+  <!-- This is the broker, and it says so. It wore the bank's wordmark until
+       2026-07-20, which read as the bank having two front doors rather than
+       two services pointing at each other. -->
+  <h1>mini<span>broker</span></h1>
   <nav>
-    <button class="tab-btn on">Investments</button>
+    <button class="tab-btn on">Portfolio</button>
     <a class="tab-btn" id="bank-link" href="#" style="text-decoration:none">Bank</a>
   </nav>
 </header>
