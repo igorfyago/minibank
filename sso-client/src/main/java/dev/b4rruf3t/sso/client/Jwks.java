@@ -59,7 +59,14 @@ public final class Jwks {
             .connectTimeout(Duration.ofSeconds(5))
             .build();
     private final Map<String, CachedKey> cache = new ConcurrentHashMap<>();
-    private final AtomicLong lastRefreshAttempt = new AtomicLong(Long.MIN_VALUE);
+    // Epoch 0, NOT Long.MIN_VALUE. refresh() gates on `now - previous`, and
+    // now minus Long.MIN_VALUE overflows a long into a negative number that is
+    // always below the interval, so the very first refresh was skipped and the
+    // cache never filled · every token then failed validation because no key
+    // was ever fetched. 0 is a real timestamp in the distant past: `now - 0` is
+    // large and positive, so the first fetch always runs, and the rate limit
+    // still holds for every call after it.
+    private final AtomicLong lastRefreshAttempt = new AtomicLong(0L);
 
     public Jwks(String jwksUrl) {
         this.jwksUrl = jwksUrl;
