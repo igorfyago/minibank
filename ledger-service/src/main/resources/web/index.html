@@ -1206,7 +1206,7 @@ document.querySelectorAll('.tab-btn[data-tab]').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tab-btn').forEach(x => x.classList.toggle('on', x === b));
   ['app','xray','console','quiz'].forEach(t => $('#tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
   history.replaceState(null, '', '#' + b.dataset.tab);
-  if (b.dataset.tab === 'xray') xrayTick();
+  if (b.dataset.tab === 'xray') { xrayTick(); autoPickLatest(); }
   if (b.dataset.tab === 'console') { initStudio(); kafkaTick(); }
 });
 
@@ -2404,6 +2404,39 @@ async function xrayTick() {
     }
   }
 }
+/**
+ * Open the X-ray on a real transaction instead of an empty right column.
+ *
+ * Arriving with nothing selected, the trace panel is blank, the guide is
+ * generic and the map is inert: everything the page is FOR sits behind a click
+ * the visitor has no reason to know about. Selecting the newest transaction
+ * makes the first frame the intended one, and the newest is the honest choice
+ * because it is the one the live feed is already about to talk about.
+ *
+ * IDEMPOTENT, in three senses, because this runs on every entry to the tab and
+ * the feed refreshes underneath it every two seconds:
+ *
+ *   it never overrides a CHOICE · if a trace is already selected, whether the
+ *   visitor picked it or a previous auto-pick did, it does nothing at all,
+ *
+ *   it fires ONCE per visit rather than once per poll · the flag is cleared
+ *   when the trace is closed, so closing and returning re-arms it and a visitor
+ *   who deliberately cleared the panel is not fought with,
+ *
+ *   and it TOLERATES an empty feed · the rows arrive asynchronously, so it
+ *   retries a few times at a widening interval and then gives up quietly
+ *   rather than looping forever against a bank that has never been used.
+ */
+let autoPicked = false, autoPickTimer = null;
+function autoPickLatest(attempt = 0) {
+  clearTimeout(autoPickTimer); autoPickTimer = null;
+  if (autoPicked || activeTrace) return;              // already showing something
+  const row = document.querySelector('#ticker .tick-item');
+  if (row) { autoPicked = true; row.click(); return; }
+  if (attempt >= 6) return;                           // an empty bank is a fine reason to stop
+  autoPickTimer = setTimeout(() => autoPickLatest(attempt + 1), 250 + attempt * 250);
+}
+
 window.tickClick = evJson => { const e = JSON.parse(evJson);
   const subj = (e.type.indexOf('trade:') === 0 || e.type.indexOf('settle:') === 0) ? 'ev:trade'
     : e.type === 'mortgage' ? 'ev:mortgage' : 'ev:' + e.type;
@@ -2776,6 +2809,9 @@ $('#eco-kafka').onclick = () => { gShow('kafka'); inspect('kafka'); };
 $('#eco-k8s').onclick = () => gShow('deploy');
 
 $('#trace-clear').onclick = () => { setLooping(false); stopPlay(); activeTrace = null;
+  // closing is a deliberate act · do not immediately undo it, but re-arm so
+  // that leaving the tab and coming back opens on something again
+  autoPicked = false; clearTimeout(autoPickTimer); autoPickTimer = null;
   document.querySelectorAll('#ticker .tick-item.picked').forEach(el => el.classList.remove('picked'));
   $('#trace-card').hidden = true; $('#play-wrap').hidden = true;
   document.querySelectorAll('.node').forEach(n => n.classList.remove('onpath')); gShow('welcome'); };
