@@ -1,22 +1,26 @@
 /**
- * THE TWO PAGES ARE ONE THEME · a test that compares COMPONENT RULES.
+ * THE BROKER PAGES ARE THE BANK'S THEME · a test that compares COMPONENT RULES.
  *
- * web/index.html (the bank) and web-broker/portfolio.html (the portfolio)
- * cannot share a stylesheet today: BrokerApi roots its static files at
- * /web-broker and HttpApi roots at /web, two processes, two ports. So the
- * portfolio carries a COPY of the bank's rules. A copy drifts, and this drift
- * has shipped twice while a source-level check said it had not.
+ * web/index.html (the bank) and the pages under web-broker (portfolio.html,
+ * instrument.html) cannot share a stylesheet today: BrokerApi roots its static
+ * files at /web-broker, HttpApi at /web, two processes, two ports. So each
+ * broker page carries a COPY of the bank's rules. A copy drifts, and this
+ * drift has shipped twice while a source-level check said it had not.
  *
- * Why a token check was not enough. Both pages can hold identical :root
+ * Why a token check was not enough. Two pages can hold identical :root
  * variables and still look like different products, because what a reader sees
  * is the COMPONENT: the radius on a section, the padding in a tile, the grid
  * that money is laid out on. --panel being #161b22 on both pages says nothing
  * about whether a card is 10px or 18px round. So this test compares the
- * declarations of every selector the two pages share, not their variables.
+ * declarations of every selector the pages share, not their variables.
  *
  * It fails if a radius, colour, padding or any other declaration changes on
  * one side only. Mutation-verified: changing `.prod` padding in the portfolio
  * from `11px 13px` to `12px 13px` fails this file, and putting it back passes.
+ *
+ * PARAMETERISED over every broker page, so instrument.html is gated by the
+ * same machinery the day it exists rather than by a copy of this file · the
+ * suite below runs once per page against the same parsed bank sheet.
  *
  * No npm, no package.json, nothing to install · a hand-rolled CSS parser and
  * node's own test runner, the same way lib.test.js works.
@@ -28,12 +32,20 @@ const path = require('node:path');
 
 const RES = path.join(__dirname, '..', '..', 'main', 'resources');
 const BANK_FILE = path.join(RES, 'web', 'index.html');
-const PORT_FILE = path.join(RES, 'web-broker', 'portfolio.html');
+
+/** Every page that carries a copy of the bank's stylesheet, and the <h2>
+ *  sections on it that must sit in the bank's Products wrapper. */
+const PAGES = [
+  { name: 'portfolio', file: path.join(RES, 'web-broker', 'portfolio.html'),
+    sections: ['Holdings', 'Watchlist'] },
+  { name: 'instrument', file: path.join(RES, 'web-broker', 'instrument.html'),
+    sections: ['Chart', 'Ticket', 'Option chain'] },
+];
 
 // ============================================================ the CSS parser
 // Deliberately small and deliberately not a real CSS engine. It has to handle
-// exactly what these two files contain: nested at-rules, multi-selector
-// preludes, and the same selector declared more than once.
+// exactly what these files contain: nested at-rules, multi-selector preludes,
+// and the same selector declared more than once.
 
 const stripComments = css => css.replace(/\/\*[\s\S]*?\*\//g, '');
 
@@ -118,11 +130,10 @@ function parseRules(css, context = '') {
  * (context, selector): declarations merged in source order.
  *
  * This matters. The bank declares `.card` twice · the component near the top
- * and `overflow-x:auto` in a one-liner at the very bottom · while the
- * portfolio declares it once with both. Those are the same computed rule, and
- * a parser that compared rule-by-rule would report a difference that does not
- * exist on screen. What a reader sees is the merge, so the merge is what is
- * compared.
+ * and `overflow-x:auto` in a one-liner at the very bottom · while the broker
+ * pages declare it once with both. Those are the same computed rule, and a
+ * parser that compared rule-by-rule would report a difference that does not
+ * exist on screen. What a reader sees is the merge, so the merge is compared.
  */
 function sheet(file) {
   const merged = new Map();     // "context|selector" -> Map(prop -> value)
@@ -136,14 +147,13 @@ function sheet(file) {
 }
 
 const BANK = sheet(BANK_FILE);
-const PORT = sheet(PORT_FILE);
 
 const selOf = key => key.slice(key.indexOf('|') + 1);
 const ctxOf = key => key.slice(0, key.indexOf('|'));
 
 /** A COMPONENT rule is one that names a class or an id. `*`, `body`, `th`,
  *  `@keyframes` and the like are resets and element defaults · policy, not
- *  components · and the portfolio is allowed to carry a policy the bank does
+ *  components · and a broker page is allowed to carry a policy the bank does
  *  not (it has a reduced-motion kill the bank has no equivalent for). They are
  *  still compared for equality when BOTH pages define them; they are simply
  *  not required to exist on both. */
@@ -156,79 +166,23 @@ const isComponent = sel => /[.#]/.test(sel);
  * declared change that someone has since fixed also fails, which forces the
  * entry to be deleted rather than left lying.
  *
- * `bankOnly` are properties the bank sets and the portfolio deliberately does
- * not. `portfolioOnly` is the mirror. A property both set to DIFFERENT values
- * can never be listed here · that is drift by definition and always fails.
+ * `bankOnly` are properties the bank sets and the page deliberately does not.
+ * `pageOnly` is the mirror. A property both set to DIFFERENT values can never
+ * be listed here · that is drift by definition and always fails.
  */
 const ALLOWED = new Map([
   ['|main', {
     reason: 'The bank reserves 46px at the foot of <main> for #ticker-bar, its '
-          + 'fixed operations tape. The portfolio has no ticker bar, so the same '
-          + 'reservation would be 46px of dead scroll under the last card.',
-    bankOnly: ['padding-bottom'], portfolioOnly: []
+          + 'fixed operations tape. The broker pages have no ticker bar, so the '
+          + 'same reservation would be 46px of dead scroll under the last card.',
+    bankOnly: ['padding-bottom'], pageOnly: []
   }]
-  // The `.prod.open { grid-column:1/-1 }` allowance that used to sit here is
-  // GONE, and its deletion is the point rather than a tidy-up. It bought the
-  // expanded TILE a full grid row so that a 65px range input could become a
-  // 234px one. Holdings are not tiles any more · they are rows in a flat
-  // sorted list, each already the full width of the card, and the order ticket
-  // opens underneath one in a .prod-x that was never in a grid. Nothing is
-  // spanning anything, so there is nothing left to allow. The Watchlist below
-  // still draws .prod tiles in a .prod-grid, and none of them opens.
 ]);
 
-// ==================================================================== tests
-
-test('every selector both pages define declares exactly the same thing', () => {
-  const drift = [];
-  for (const [key, portDecls] of PORT) {
-    const bankDecls = BANK.get(key);
-    if (!bankDecls) continue;                  // covered by the next test
-    const allow = ALLOWED.get(key) || { bankOnly: [], portfolioOnly: [] };
-    const props = new Set([...bankDecls.keys(), ...portDecls.keys()]);
-    for (const p of props) {
-      const b = bankDecls.get(p), q = portDecls.get(p);
-      if (b === q) continue;
-      if (b !== undefined && q === undefined && allow.bankOnly.includes(p)) continue;
-      if (q !== undefined && b === undefined && allow.portfolioOnly.includes(p)) continue;
-      drift.push(`${key}  {${p}}  bank=${JSON.stringify(b)}  portfolio=${JSON.stringify(q)}`);
-    }
-  }
-  assert.deepEqual(drift, [],
-    'the two pages disagree about a shared component:\n  ' + drift.join('\n  '));
-});
-
-// ------------------------------------------------------ DELETION IS DRIFT
-/**
- * THE HOLE THIS CLOSES. The test above walks PORT and skips any key the bank
- * does not have; the invented-component test walks PORT for keys the bank does
- * not have. Neither direction ever walks BANK. So a rule the bank DEFINES and
- * the portfolio DELETES was compared by nothing.
- *
- * Mutation-verified, before the fix: deleting all fourteen money-tile rules
- * from the portfolio · .prod-grid through .prod-x · while leaving every scrap
- * of markup in place left the suite at 6 pass, 0 fail, with the holdings
- * rendering as unstyled stacked divs. Deleting `.prod-chev` alone, `.prod-grid`
- * alone, and the phone `.balance-num{font-size:38px}` line were each missed the
- * same way. One deletion WAS caught · the single `.prod{border/radius/padding}`
- * line · and only because `.prod` happens to be declared twice, so the merged
- * key survived. An accident of source layout is not a guard.
- *
- * WHAT IT CANNOT BE. "The portfolio must define every rule the bank defines"
- * is absurd: the bank has a Kubernetes diagram, a quiz and a ticker tape, and
- * hundreds of rules for them. The honest requirement is narrower and follows
- * from what a copy is FOR · if the portfolio puts a class on an element, it has
- * signed up for the way the bank styles that class, in every context, including
- * the phone breakpoint. So the required set is: every bank rule all of whose
- * classes and ids the portfolio actually uses in its markup.
- *
- * The used-name set is deliberately over-collected · every identifier-shaped
- * token inside any class="…" attribute, interpolation and all. Over-collecting
- * can only ever ADD requirements, and only for names the bank also styles.
- */
-
 /** Every identifier-ish token appearing in any class attribute or id, plus the
- *  ids the script reaches for with $('…'). */
+ *  ids the script reaches for with $('…'). Deliberately over-collected ·
+ *  over-collecting can only ever ADD requirements, and only for names the
+ *  bank also styles. */
 function namesUsed(src) {
   const used = new Set();
   const add = s => { for (const t of s.match(/[A-Za-z][A-Za-z0-9_-]*/g) || []) used.add(t); };
@@ -239,158 +193,183 @@ function namesUsed(src) {
   return used;
 }
 
-const PORT_USES = namesUsed(portSrcRaw());
-function portSrcRaw() { return fs.readFileSync(PORT_FILE, 'utf8'); }
-
 /** The class/id names a selector depends on. `.prod.open .prod-chev` -> the
- *  three of them; a rule is required only when the portfolio uses them ALL. */
+ *  three of them; a rule is required only when the page uses them ALL. */
 const namesIn = sel => (sel.match(/[.#]([A-Za-z][A-Za-z0-9_-]*)/g) || []).map(s => s.slice(1));
 
 /** The ELEMENT types a selector also depends on · `.card h2` wants an h2 and
- *  `.muted code` wants a code, and the portfolio renders one of those. Without
- *  this the test demands rules for elements the page never draws. */
+ *  `.muted code` wants a code. Without this the test demands rules for
+ *  elements the page never draws. */
 function tagsIn(sel) {
   return sel.replace(/::?[a-z-]+(\([^)]*\))?/gi, ' ')      // pseudos are not tags
             .split(/[\s>+~,]+/).filter(Boolean)
             .map(c => (c.match(/^([a-zA-Z][a-zA-Z0-9]*)/) || [])[1])
             .filter(Boolean);
 }
-const PORT_TAGS = new Set([...portSrcRaw().matchAll(/<([a-zA-Z][a-zA-Z0-9]*)[\s>/]/g)].map(m => m[1].toLowerCase()));
 
-test('a rule the bank has and the portfolio USES may not be silently deleted', () => {
-  const missing = [], different = [];
-  for (const [key, bankDecls] of BANK) {
-    const sel = selOf(key);
-    const names = namesIn(sel);
-    if (!names.length) continue;                 // resets and element defaults
-    if (!names.every(n => PORT_USES.has(n))) continue;   // the portfolio never draws it
-    if (!tagsIn(sel).every(t => PORT_TAGS.has(t.toLowerCase()))) continue;
-
-    const portDecls = PORT.get(key);
-    if (!portDecls) { missing.push((ctxOf(key) ? ctxOf(key) + ' ' : '') + sel); continue; }
-    const allow = ALLOWED.get(key) || { bankOnly: [], portfolioOnly: [] };
-    for (const [p, b] of bankDecls) {
-      if (portDecls.get(p) === b) continue;
-      if (!portDecls.has(p) && allow.bankOnly.includes(p)) continue;
-      different.push(`${key}  {${p}}  bank=${JSON.stringify(b)}  portfolio=${JSON.stringify(portDecls.get(p))}`);
-    }
-  }
-  assert.deepEqual(missing, [],
-    'the portfolio uses these classes and has dropped the bank\'s rule for them:\n  '
-    + missing.join('\n  '));
-  assert.deepEqual(different, [],
-    'the portfolio kept the selector and lost the declaration:\n  ' + different.join('\n  '));
-});
-
-test('an animation the portfolio names must still be defined on it', () => {
-  // @keyframes has no class to key off, so the deletion test above cannot see
-  // it · a stylesheet that says `animation:skm` and defines no skm shimmers
-  // nothing, silently.
-  const portCss = styleBlock(PORT_FILE);
-  const wanted = [...BANK.keys()].map(selOf).filter(s => /^@keyframes\b/i.test(s));
-  for (const at of wanted) {
-    const name = at.split(/\s+/)[1];
-    if (!new RegExp(`animation[^;}]*\\b${name}\\b`).test(portCss)) continue;
-    const key = [...PORT.keys()].find(k => selOf(k).replace(/\s+/g, ' ') === at);
-    assert.ok(key, `the portfolio animates with ${name} and no longer defines it`);
-    assert.deepEqual([...PORT.get(key)], [...BANK.get('|' + at)],
-      `@keyframes ${name} has drifted`);
-  }
-});
-
-test('every declared divergence is still real · no stale allowances', () => {
-  for (const [key, allow] of ALLOWED) {
-    const bankDecls = BANK.get(key), portDecls = PORT.get(key);
-    assert.ok(bankDecls && portDecls, `${key} is allow-listed but one page no longer defines it`);
-    for (const p of allow.bankOnly) {
-      assert.ok(bankDecls.has(p) && !portDecls.has(p),
-        `stale allowance: ${key} {${p}} is no longer bank-only · delete the entry (${allow.reason})`);
-    }
-    for (const p of allow.portfolioOnly) {
-      assert.ok(portDecls.has(p) && !bankDecls.has(p),
-        `stale allowance: ${key} {${p}} is no longer portfolio-only · delete the entry`);
-    }
-  }
-});
-
-test('the portfolio invents no component the bank does not have', () => {
-  const invented = [...PORT.keys()]
-    .filter(k => !BANK.has(k) && isComponent(selOf(k)))
-    .map(k => (ctxOf(k) ? `${ctxOf(k)} ` : '') + selOf(k));
-  assert.deepEqual(invented, [],
-    'these exist only on the portfolio · every class must already exist in the bank:\n  '
-    + invented.join('\n  '));
-});
-
-// -------------------------------------------------------- shapes, not rules
-// The rules above prove the two stylesheets agree. They cannot prove the
-// portfolio USES the bank's shapes · a page can hold a perfect copy of .prod
-// and .prod-grid and still draw everything as a list, which is exactly the
-// state this work started from.
-
-const portSrc = fs.readFileSync(PORT_FILE, 'utf8');
 const bankSrc = fs.readFileSync(BANK_FILE, 'utf8');
 const classCombos = src => [...src.matchAll(/class="([^"]*\bcard\b[^"]*)"/g)]
   .map(m => m[1].split(/\s+/).filter(Boolean).sort().join(' '));
 
-/* THE TILES-ON-A-GRID TEST HAS MOVED, and it moved because it was a lie.
- *
- * It used to live here as two independent regexes over the raw source ·
- * `/class="prod-grid"/` and `/class="prod expandable/` · under a name that
- * promised containment. Neither expresses containment, and the strings they
- * looked for appear four more times in this file: the loading skeleton, the
- * watchlist and the empty-watchlist offer all carry a `class="prod-grid"`.
- * Mutation-verified: wrapping the holdings in `<div class="tx-day">` instead
- * of the grid · which stacks every position full width, the exact list shape
- * this work removed · left the suite green.
- *
- * Containment is a property of RENDERED OUTPUT, so it is asserted on rendered
- * output now. portfolio-render.test.js runs the page's own drawHoldings in a
- * vm and walks the div stack of what comes back, so a tile whose ancestry does
- * not contain a .prod-grid fails no matter how the source is spelled. */
+// ==================================================================== tests
+// One suite per broker page, all against the same bank sheet.
 
-test('the portfolio keeps NO transaction-list idiom for its holdings', () => {
-  // Holdings are money, not a log. .tx-row is the bank's shape for a PAYMENT
-  // and drawing a position with it was the whole complaint. Comments may
-  // discuss it (they explain why it went); markup may not use it.
-  assert.doesNotMatch(portSrc, /class="tx-row/,
-    'holdings have regressed to the bank\'s transaction-list idiom');
-});
+for (const page of PAGES) {
+  const PAGE = sheet(page.file);
+  const pageSrc = fs.readFileSync(page.file, 'utf8');
+  const PAGE_USES = namesUsed(pageSrc);
+  const PAGE_TAGS = new Set([...pageSrc.matchAll(/<([a-zA-Z][a-zA-Z0-9]*)[\s>/]/g)]
+    .map(m => m[1].toLowerCase()));
 
-test('the portfolio wraps sections the way the bank wraps Products', () => {
-  // NOT "at least one plain .card". Measured in a browser on both live pages:
-  // the bank's phone surface contains ZERO plain .card · Products and
-  // Transactions are both `card tx-card`, computed border-radius 18px, and
-  // `document.querySelector('.phone .card:not(.acct-card):not(.tx-card)')` is
-  // null on the bank exactly as it is on the portfolio. The bank's 14 plain
-  // 10px .cards all live on its OTHER tabs (x-ray, console, guide, quiz),
-  // which are desktop documentary surfaces and not the phone.
-  //
-  // So the parity that matters is: every card combination the portfolio uses
-  // is one the bank also uses. Asserting a plain .card here would have forced
-  // the portfolio to 10px sections while the bank's equivalent sections are
-  // 18px · manufacturing the drift this file exists to prevent.
-  const bank = new Set(classCombos(bankSrc));
-  const strange = [...new Set(classCombos(portSrc))].filter(c => !bank.has(c));
-  assert.deepEqual(strange, [],
-    'the portfolio wraps a section in a card combination the bank never uses:\n  '
-    + strange.join('\n  '));
+  test(`${page.name}: every selector both pages define declares exactly the same thing`, () => {
+    const drift = [];
+    for (const [key, pageDecls] of PAGE) {
+      const bankDecls = BANK.get(key);
+      if (!bankDecls) continue;                  // covered by the next test
+      const allow = ALLOWED.get(key) || { bankOnly: [], pageOnly: [] };
+      const props = new Set([...bankDecls.keys(), ...pageDecls.keys()]);
+      for (const p of props) {
+        const b = bankDecls.get(p), q = pageDecls.get(p);
+        if (b === q) continue;
+        if (b !== undefined && q === undefined && allow.bankOnly.includes(p)) continue;
+        if (q !== undefined && b === undefined && allow.pageOnly.includes(p)) continue;
+        drift.push(`${key}  {${p}}  bank=${JSON.stringify(b)}  ${page.name}=${JSON.stringify(q)}`);
+      }
+    }
+    assert.deepEqual(drift, [],
+      `the two pages disagree about a shared component:\n  ` + drift.join('\n  '));
+  });
 
-  // AND IT BINDS TO THE SECTIONS THEMSELVES. `classCombos(portSrc).includes(
-  // 'card tx-card')` used to close this test · a presence check over the whole
-  // file, satisfied by any one element anywhere. Mutation-verified: turning
-  // BOTH money sections into plain `<div class="card">` (10px) and dropping a
-  // single empty `<div class="card tx-card"></div>` after <body> left the
-  // suite green while producing exactly the 10px-vs-18px section drift the
-  // comment above says this test exists to prevent. A decoy cannot carry an
-  // <h2>, so the wrapper is looked up BY the heading it wraps.
-  const wrappers = new Map();
-  for (const m of portSrc.matchAll(/<div class="([^"]*)">\s*<h2>([^<]*)<\/h2>/g)) {
-    wrappers.set(m[2].trim(), m[1].split(/\s+/).filter(Boolean).sort().join(' '));
-  }
-  for (const section of ['Holdings', 'Watchlist']) {
-    assert.equal(wrappers.get(section), 'card tx-card',
-      `the ${section} section must be wrapped in the bank's Products wrapper, `
-      + '`card tx-card` · 18px, not a plain 10px .card');
-  }
-});
+  // ------------------------------------------------------ DELETION IS DRIFT
+  /**
+   * THE HOLE THIS CLOSES. The test above walks the page and skips any key the
+   * bank does not have; the invented-component test walks the page for keys
+   * the bank does not have. Neither direction ever walks BANK. So a rule the
+   * bank DEFINES and the page DELETES was compared by nothing.
+   *
+   * Mutation-verified on the portfolio, before the fix: deleting all fourteen
+   * money-tile rules while leaving every scrap of markup in place left the
+   * suite green, with the holdings rendering as unstyled stacked divs.
+   *
+   * WHAT IT CANNOT BE. "The page must define every rule the bank defines" is
+   * absurd: the bank has a Kubernetes diagram, a quiz and a ticker tape. The
+   * honest requirement follows from what a copy is FOR · if the page puts a
+   * class on an element, it has signed up for the way the bank styles that
+   * class, in every context, including the phone breakpoint. So the required
+   * set is: every bank rule all of whose classes and ids the page actually
+   * uses in its markup.
+   */
+  test(`${page.name}: a rule the bank has and the page USES may not be silently deleted`, () => {
+    const missing = [], different = [];
+    for (const [key, bankDecls] of BANK) {
+      const sel = selOf(key);
+      const names = namesIn(sel);
+      if (!names.length) continue;                 // resets and element defaults
+      if (!names.every(n => PAGE_USES.has(n))) continue;   // the page never draws it
+      if (!tagsIn(sel).every(t => PAGE_TAGS.has(t.toLowerCase()))) continue;
+
+      const pageDecls = PAGE.get(key);
+      if (!pageDecls) { missing.push((ctxOf(key) ? ctxOf(key) + ' ' : '') + sel); continue; }
+      const allow = ALLOWED.get(key) || { bankOnly: [], pageOnly: [] };
+      for (const [p, b] of bankDecls) {
+        if (pageDecls.get(p) === b) continue;
+        if (!pageDecls.has(p) && allow.bankOnly.includes(p)) continue;
+        different.push(`${key}  {${p}}  bank=${JSON.stringify(b)}  ${page.name}=${JSON.stringify(pageDecls.get(p))}`);
+      }
+    }
+    assert.deepEqual(missing, [],
+      `${page.name} uses these classes and has dropped the bank's rule for them:\n  `
+      + missing.join('\n  '));
+    assert.deepEqual(different, [],
+      `${page.name} kept the selector and lost the declaration:\n  ` + different.join('\n  '));
+  });
+
+  test(`${page.name}: an animation the page names must still be defined on it`, () => {
+    // @keyframes has no class to key off, so the deletion test above cannot
+    // see it · a stylesheet that says `animation:skm` and defines no skm
+    // shimmers nothing, silently.
+    const pageCss = styleBlock(page.file);
+    const wanted = [...BANK.keys()].map(selOf).filter(s => /^@keyframes\b/i.test(s));
+    for (const at of wanted) {
+      const name = at.split(/\s+/)[1];
+      if (!new RegExp(`animation[^;}]*\\b${name}\\b`).test(pageCss)) continue;
+      const key = [...PAGE.keys()].find(k => selOf(k).replace(/\s+/g, ' ') === at);
+      assert.ok(key, `${page.name} animates with ${name} and no longer defines it`);
+      assert.deepEqual([...PAGE.get(key)], [...BANK.get('|' + at)],
+        `@keyframes ${name} has drifted on ${page.name}`);
+    }
+  });
+
+  test(`${page.name}: every declared divergence is still real · no stale allowances`, () => {
+    for (const [key, allow] of ALLOWED) {
+      const bankDecls = BANK.get(key), pageDecls = PAGE.get(key);
+      assert.ok(bankDecls && pageDecls, `${key} is allow-listed but one page no longer defines it`);
+      for (const p of allow.bankOnly) {
+        assert.ok(bankDecls.has(p) && !pageDecls.has(p),
+          `stale allowance: ${key} {${p}} is no longer bank-only on ${page.name} · delete the entry (${allow.reason})`);
+      }
+      for (const p of allow.pageOnly) {
+        assert.ok(pageDecls.has(p) && !bankDecls.has(p),
+          `stale allowance: ${key} {${p}} is no longer ${page.name}-only · delete the entry`);
+      }
+    }
+  });
+
+  test(`${page.name}: invents no component the bank does not have`, () => {
+    const invented = [...PAGE.keys()]
+      .filter(k => !BANK.has(k) && isComponent(selOf(k)))
+      .map(k => (ctxOf(k) ? `${ctxOf(k)} ` : '') + selOf(k));
+    assert.deepEqual(invented, [],
+      `these exist only on ${page.name} · every class must already exist in the bank:\n  `
+      + invented.join('\n  '));
+  });
+
+  // -------------------------------------------------------- shapes, not rules
+  // The rules above prove the two stylesheets agree. They cannot prove the
+  // page USES the bank's shapes · a page can hold a perfect copy of .prod
+  // and .prod-grid and still draw everything as a list, which is exactly the
+  // state the portfolio work started from. Containment of RENDERED output is
+  // asserted in portfolio-render.test.js; what stays here is what a source
+  // scan can honestly claim.
+
+  test(`${page.name}: keeps NO transaction-list idiom for money`, () => {
+    // Positions and instruments are money, not a log. .tx-row is the bank's
+    // shape for a PAYMENT and drawing a position with it was the whole
+    // complaint. Comments may discuss it; markup may not use it.
+    assert.doesNotMatch(pageSrc, /class="tx-row/,
+      `${page.name} has regressed to the bank's transaction-list idiom`);
+  });
+
+  test(`${page.name}: wraps sections the way the bank wraps Products`, () => {
+    // NOT "at least one plain .card". Measured in a browser on both live
+    // pages: the bank's phone surface contains ZERO plain .card · Products
+    // and Transactions are both `card tx-card`, computed border-radius 18px.
+    // So the parity that matters is: every card combination the page uses is
+    // one the bank also uses. Asserting a plain .card here would manufacture
+    // the 10px-vs-18px drift this file exists to prevent.
+    const bank = new Set(classCombos(bankSrc));
+    const strange = [...new Set(classCombos(pageSrc))].filter(c => !bank.has(c));
+    assert.deepEqual(strange, [],
+      `${page.name} wraps a section in a card combination the bank never uses:\n  `
+      + strange.join('\n  '));
+
+    // AND IT BINDS TO THE SECTIONS THEMSELVES. A presence check over the
+    // whole file is satisfied by any one element anywhere · mutation-verified
+    // on the portfolio: two plain 10px cards plus one empty decoy passed it.
+    // A decoy cannot carry an <h2>, so the wrapper is looked up BY the
+    // heading it wraps. The class attribute sits last in the tag on these
+    // wrappers for exactly this look-up.
+    const wrappers = new Map();
+    for (const m of pageSrc.matchAll(/<div [^>]*class="([^"]*)">\s*<h2>([^<]*)<\/h2>/g)) {
+      wrappers.set(m[2].trim(), m[1].split(/\s+/).filter(Boolean).sort().join(' '));
+    }
+    for (const m of pageSrc.matchAll(/<div class="([^"]*)">\s*<h2>([^<]*)<\/h2>/g)) {
+      wrappers.set(m[2].trim(), m[1].split(/\s+/).filter(Boolean).sort().join(' '));
+    }
+    for (const section of page.sections) {
+      assert.equal(wrappers.get(section), 'card tx-card',
+        `the ${section} section on ${page.name} must be wrapped in the bank's Products wrapper, `
+        + '`card tx-card` · 18px, not a plain 10px .card');
+    }
+  });
+}

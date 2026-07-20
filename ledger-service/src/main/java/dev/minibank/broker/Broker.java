@@ -147,6 +147,39 @@ public final class Broker {
                 return byId(c, id);
             }
 
+            // A CONTRACT IS INDIVISIBLE, and this is the one choke point that
+            // can say so for every venue.
+            //
+            // orders.qty is NUMERIC(20,8) CHECK (qty > 0) · the schema was
+            // built for 0.0013 BTC, so 0.37 contracts passes every database
+            // gate and always will. The venues cannot be the gate either:
+            // SimulatedVenue fills whatever quantity it is handed, and its
+            // notional branch MANUFACTURES the fraction · "50 euro worth" of
+            // a 5.00-premium contract divides out to 0.1 contracts with no
+            // qty ever having passed through any caller's hands. So both
+            // fractional shapes are refused here, where the instrument's kind
+            // is already in hand and where the expiry gate above has settled
+            // that this method is the authoritative place for tradability
+            // rules that must hold for IbkrVenue too.
+            //
+            // The key is the KIND, never the multiplier · a hypothetical
+            // multiplier-1 option still trades in whole contracts, and crypto
+            // stays fractional however this table grows. Rejected AFTER the
+            // order row commits, with a reason: the method's own ordering
+            // rule, a recorded refusal rather than a silent drop.
+            if (listed != null && "option".equals(listed.kind())) {
+                if (qty == null) {
+                    reject(c, id, "option orders are sized in whole contracts, not by notional"
+                            + " · dividing money by a premium manufactures a fractional contract");
+                    return byId(c, id);
+                }
+                if (qty.remainder(BigDecimal.ONE).signum() != 0) {
+                    reject(c, id, "'" + symbol + "' trades in whole contracts · "
+                            + qty.toPlainString() + " is not a whole number of them");
+                    return byId(c, id);
+                }
+            }
+
             BrokerPort.Ack ack;
             try {
                 ack = venue.place(new BrokerPort.OrderRequest(

@@ -73,7 +73,31 @@ public final class AssetRegistry {
     /** Slots 0 and 1 belong to BTC and AAPL and are never derived, so a newly
      *  listed instrument cannot be handed bitcoin's slot. */
     public static final long FIRST_DERIVED_SLOT = 2;
-    public static final long SLOT_LIMIT = 1_000_000L;
+
+    /**
+     * How many slots the derivation can land in · a TRILLION, and the number
+     * is sized against an option CHAIN, not against a list of tickers.
+     *
+     * This was one million, which reads as plenty for instruments named one
+     * at a time and is nothing against a chain: one listed underlying's chain
+     * (8 expiries x 100 strikes x calls and puts = 1,600 OCC symbols) has an
+     * expected n(n-1)/2m = 1.28 colliding pairs at a million slots · a ~72%
+     * chance that at least one contract of a single chain refuses to list.
+     * register() failing loudly is the designed behaviour, but a gate that
+     * trips on most chains is a cap wearing a safety's clothes. At 10^12 the
+     * same chain's collision chance is ~1.3e-6.
+     *
+     * WIDENING THIS RENUMBERS NOTHING. It is consulted exactly once, in
+     * derivedSlot, when a NEW symbol is listed; every recorded slot and
+     * account id is read back from asset_slots/asset_accounts, never
+     * re-derived (see holdingIdFor). The ceiling keeps the largest mintable
+     * id · ASSET_BASE + (SLOT_LIMIT-1) * SLOT_STRIDE + suffix ≈ 1.0e18 ·
+     * an order of magnitude under Long.MAX_VALUE and inside BIGINT.
+     * ASSET_BASE and SLOT_STRIDE are NOT safe to change · they turn recorded
+     * slots into future holding ids · and db/shard/V10__slot_capacity.sql now
+     * enforces that arithmetic as a CHECK rather than a comment.
+     */
+    public static final long SLOT_LIMIT = 1_000_000_000_000L;
 
     /** the smallest offset the product shelf uses · a legacy asset offset
      *  below this is not an offset, it is a misread column */
@@ -186,6 +210,15 @@ public final class AssetRegistry {
             st.execute("ALTER TABLE asset_slots DROP CONSTRAINT IF EXISTS asset_slots_expiry_only_dated");
             st.execute("ALTER TABLE asset_slots ADD CONSTRAINT asset_slots_expiry_only_dated"
                     + " CHECK (expires_on IS NULL OR kind = 'option')");
+            // mirrors db/shard/V10__slot_capacity.sql · the slot-to-accounts
+            // arithmetic as a constraint, so a register() whose formula drifts
+            // from its own recorded history fails in CI, not in production
+            st.execute("ALTER TABLE asset_slots DROP CONSTRAINT IF EXISTS asset_slots_capacity");
+            st.execute("ALTER TABLE asset_slots ADD CONSTRAINT asset_slots_capacity CHECK ("
+                    + " legacy_offset IS NOT NULL"
+                    + " OR (slot >= 2 AND slot < 1000000000000"
+                    + "     AND broker_account   = 1000000000 + slot * 1000000 + 1"
+                    + "     AND clearing_account = 1000000000 + slot * 1000000 + 3))");
             st.execute("""
                 INSERT INTO asset_slots(symbol, currency, label, slot, legacy_offset, broker_account, clearing_account,
                                         multiplier, kind, expires_on)

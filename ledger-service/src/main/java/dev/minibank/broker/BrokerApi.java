@@ -78,6 +78,18 @@ public final class BrokerApi {
         // is a much bigger door than this needs. Same jar, same Redis cache,
         // no HTTP hop.
         route(server, "/api/prices/history", BrokerApi::priceHistory);
+        // the chain screen's data · all three gated on OptionChain's
+        // hardcoded underlyings, so none of them is an open proxy to Yahoo
+        // with our IP on it. Registered HERE, exactly like everything else
+        // this server routes.
+        route(server, "/api/options/underlyings", BrokerApi::optionUnderlyings);
+        route(server, "/api/options/chain", BrokerApi::optionChain);
+        route(server, "/api/options/chart", BrokerApi::optionChart);
+        // the instrument screen · one clean URL for one file.
+        // /instrument?symbol=AAPL and /instrument?underlying=XSP both land
+        // here; the page's assets keep riding the /portfolio prefix, so this
+        // cannot grow into a second static tree to keep in sync.
+        route(server, "/instrument", BrokerApi::instrumentPage);
         // last, and a prefix rather than an exact path, so it never shadows
         // anything above it
         route(server, "/portfolio", BrokerApi::staticFile);
@@ -116,6 +128,14 @@ public final class BrokerApi {
              // and "when did we last really see that" have to travel together
              .append(",\"priceSource\":").append(text(
                      expired ? "expired" : px == null ? "unavailable" : px.source()))
+             // the instrument screen's header: the day is price against prior
+             // close, and only the feed knows the prior close · null when it
+             // never stated one, so the screen omits the day rather than
+             // measuring against a guess. Age in seconds, null when the mark
+             // never carried a time · HttpApi's investments rows' exact rule.
+             .append(",\"prevClose\":").append(money(px == null ? null : px.prevClose()))
+             .append(",\"priceAgeSeconds\":").append(px == null || px.ageSeconds() < 0
+                     ? "null" : String.valueOf(px.ageSeconds()))
              .append(",\"multiplier\":\"").append(plain(i.multiplier())).append('"')
              .append(",\"expiresOn\":").append(i.expiresOn() == null
                      ? "null" : "\"" + i.expiresOn() + "\"")
@@ -176,6 +196,31 @@ public final class BrokerApi {
         // check in the bank's /api/trade does: refusing here costs the
         // customer a 400 instead of a rejected order they have to go and read.
         Catalog.Instrument listed = Catalog.find(symbol);
+        // LIST ON FIRST TRADE · an OCC contract nobody has listed yet is not
+        // a typo, it is a contract this bank has simply never been asked
+        // about. Resolve it against its underlying's own chain and list it ·
+        // registry on every shard first, catalog second, Catalog.list's
+        // ordering · BEFORE the order path runs, so by the time place() is
+        // reached the contract is an ordinary listed instrument. Exactly one
+        // contract lists per first trade, never its chain. A contract that
+        // cannot be listed (not in the chain, expired, unstated contract
+        // size, a registry refusal such as a slot collision) is REFUSED with
+        // the reason, and no order row, no fill and no listing exist after
+        // the refusal · the gate is before the money path, not inside it.
+        if (listed == null && OptionChain.isOcc(symbol)) {
+            try {
+                listed = OptionChain.listOnFirstTrade(symbol);
+            } catch (OptionChain.Refused r) {
+                json(ex, 409, "{\"result\":\"rejected\",\"error\":\"" + Json.esc(r.getMessage()) + "\"}");
+                return;
+            } catch (IllegalStateException e) {
+                // the registry refused (slot collision, contradiction) or the
+                // chain could not be fetched · either way nothing listed and
+                // nothing may trade, and the reason travels to the customer
+                json(ex, 409, "{\"result\":\"rejected\",\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
+                return;
+            }
+        }
         if (listed == null) { json(ex, 400, "{\"error\":\"not a listed instrument: " + Json.esc(symbol) + "\"}"); return; }
         if (listed.expiredAsOf(LocalDate.now(ZoneOffset.UTC))) {
             json(ex, 400, "{\"error\":\"" + Json.esc(symbol) + " expired on " + listed.expiresOn()
@@ -188,6 +233,21 @@ public final class BrokerApi {
         if (qty == null && notional == null) {
             json(ex, 400, "{\"error\":\"need qty or notional\"}");
             return;
+        }
+        // whole contracts only · the pre-flight mirror of the authoritative
+        // gate in Broker.place, for the same reason the expiry pre-flight
+        // above exists: a 400 now beats a rejected order the customer has to
+        // go and read. place() remains the gate that counts.
+        if ("option".equals(listed.kind())) {
+            if (qty == null) {
+                json(ex, 400, "{\"error\":\"option orders are sized in whole contracts, not by notional\"}");
+                return;
+            }
+            if (qty.remainder(BigDecimal.ONE).signum() != 0) {
+                json(ex, 400, "{\"error\":\"" + Json.esc(symbol) + " trades in whole contracts · "
+                        + qty.toPlainString() + " is not a whole number of them\"}");
+                return;
+            }
         }
         BigDecimal limitPx = decimal(Json.str(body, "limitPx"));
         String orderType = type == null ? "market" : type;
@@ -690,6 +750,82 @@ public final class BrokerApi {
                 + PriceFeed.historyJson(asset) + "}");
     }
 
+    // ------------------------------------------------------------------ options
+
+    /** The underlyings a chain can be asked about · the allowlist, verbatim.
+     *  The UI picks from this; free-form symbols never reach Yahoo. */
+    private static void optionUnderlyings(HttpExchange ex) throws Exception {
+        StringBuilder b = new StringBuilder("{\"underlyings\":[");
+        List<String> names = OptionChain.underlyings();
+        for (int i = 0; i < names.size(); i++) {
+            if (i > 0) b.append(',');
+            b.append('"').append(Json.esc(names.get(i))).append('"');
+        }
+        json(ex, 200, b.append("]}").toString());
+    }
+
+    /**
+     * One expiry's calls and puts, the expiration list, and the underlying's
+     * mark · trimmed to what the screen draws, cached server-side, and gated:
+     * an underlying off the allowlist is a 404, an expiry the chain does not
+     * carry is a 400 (Yahoo would echo it back as a silently empty chain,
+     * which the screen would render as a void), and an upstream failure with
+     * nothing cached is a 502 rather than an empty answer wearing a 200.
+     */
+    private static void optionChain(HttpExchange ex) throws Exception {
+        String underlying = param(ex, "underlying");
+        if (underlying == null) { json(ex, 400, "{\"error\":\"need ?underlying=\"}"); return; }
+        if (OptionChain.underlying(underlying) == null) {
+            json(ex, 404, "{\"error\":\"unknown underlying: " + Json.esc(underlying) + "\"}");
+            return;
+        }
+        String expiryParam = param(ex, "expiry");
+        Long expiry = null;
+        if (expiryParam != null) {
+            try {
+                expiry = Long.valueOf(expiryParam);
+            } catch (NumberFormatException e) {
+                json(ex, 400, "{\"error\":\"expiry must be an epoch-seconds value from the expirations list\"}");
+                return;
+            }
+        }
+        try {
+            String payload = OptionChain.chainJson(underlying, expiry);
+            if (payload == null) {
+                json(ex, 502, "{\"error\":\"option chain unavailable and nothing cached · try again\"}");
+                return;
+            }
+            json(ex, 200, payload);
+        } catch (OptionChain.Refused r) {
+            json(ex, 400, "{\"error\":\"" + Json.esc(r.getMessage()) + "\"}");
+        }
+    }
+
+    /** The underlying's chart for the instrument screen · same allowlist,
+     *  same cache doctrine, quoted in the market's own currency. ?range= is
+     *  validated against OptionChain's own allowlist (a 400 with the list,
+     *  never forwarded); absent means the intraday default. */
+    private static void optionChart(HttpExchange ex) throws Exception {
+        String underlying = param(ex, "underlying");
+        if (underlying == null) { json(ex, 400, "{\"error\":\"need ?underlying=\"}"); return; }
+        if (OptionChain.underlying(underlying) == null) {
+            json(ex, 404, "{\"error\":\"unknown underlying: " + Json.esc(underlying) + "\"}");
+            return;
+        }
+        String payload;
+        try {
+            payload = OptionChain.chartJson(underlying, param(ex, "range"));
+        } catch (OptionChain.Refused r) {
+            json(ex, 400, "{\"error\":\"" + Json.esc(r.getMessage()) + "\"}");
+            return;
+        }
+        if (payload == null) {
+            json(ex, 502, "{\"error\":\"underlying chart unavailable and nothing cached · try again\"}");
+            return;
+        }
+        json(ex, 200, payload);
+    }
+
     // ------------------------------------------------------------------ static
 
     /**
@@ -702,6 +838,19 @@ public final class BrokerApi {
      * bank's UI on the broker's port, which is confusing at best and a
      * spoofing surface at worst. Its own prefix keeps the two apart.
      */
+    /** The instrument screen, always the one file · the query string carries
+     *  the symbol, so every /instrument path is the same page. */
+    private static void instrumentPage(HttpExchange ex) throws Exception {
+        try (InputStream in = BrokerApi.class.getResourceAsStream("/web-broker/instrument.html")) {
+            if (in == null) {
+                send(ex, 404, "application/json; charset=utf-8",
+                        "{\"error\":\"not found\"}".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            send(ex, 200, "text/html; charset=utf-8", in.readAllBytes());
+        }
+    }
+
     private static void staticFile(HttpExchange ex) throws Exception {
         String path = ex.getRequestURI().getPath();
         if (path.equals("/portfolio") || path.equals("/portfolio/")) path = "/portfolio.html";

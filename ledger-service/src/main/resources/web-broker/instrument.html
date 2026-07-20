@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" href="/portfolio/icon.svg">
+<link rel="apple-touch-icon" href="/portfolio/icon.svg">
+<title>Instrument · minibroker</title>
+<style>
+  /* ================================================================
+     THE BANK'S STYLESHEET, NOT A SECOND ONE.
+     Every rule below is copied verbatim from web/index.html, exactly as
+     portfolio.html already does · the two broker pages cannot share a
+     file with the bank (BrokerApi roots static at /web-broker, HttpApi
+     at /web), so this is a copy, and a copy of the tokens is not a
+     licence to drift from them. Nothing here is invented: no eleventh
+     colour, no third font stack, no component the bank does not have,
+     no breakpoint outside its set. theme-parity.test.js compares this
+     block against the bank's, selector by selector.
+     ================================================================ */
+  :root { --bg:#0d1117; --panel:#161b22; --line:#21262d; --text:#e6edf3; --dim:#8b949e;
+          --green:#3fb950; --red:#f85149; --amber:#d29922; --accent:#58a6ff; --violet:#bc8cff; }
+  * { box-sizing:border-box; margin:0; scrollbar-width:thin; scrollbar-color:#2a3140 transparent; }
+  *::-webkit-scrollbar { width:8px; height:8px; }
+  *::-webkit-scrollbar-thumb { background:#2a3140; border-radius:999px; }
+  *::-webkit-scrollbar-thumb:hover { background:#3a4356; }
+  *::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background:transparent; }
+  body { background:var(--bg); color:var(--text); font:14px/1.5 system-ui,'Segoe UI',sans-serif; }
+  header { display:flex; align-items:center; gap:20px; padding:14px 22px; border-bottom:1px solid var(--line); }
+  h1 { font-size:17px; font-weight:650; }
+  h1 span { color:var(--accent); }
+  nav { display:flex; gap:6px; margin-left:auto; }
+  .tab-btn { background:none; border:1px solid var(--line); color:var(--dim); padding:6px 16px;
+             border-radius:999px; font:600 13px system-ui; cursor:pointer; }
+  .tab-btn.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  main { max-width:1100px; margin:0 auto; padding:22px; }
+  .phone { max-width: 540px; margin: 0 auto; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px;
+          overflow-x:auto; }
+  .card h2 { font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; margin-bottom:10px; }
+  .muted { color:var(--dim); font-size:12px; }
+  input, select { background:var(--bg); border:1px solid var(--line); color:var(--text); padding:9px 10px;
+                  border-radius:8px; font:14px system-ui; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th { text-align:left; color:var(--dim); font-weight:600; padding:5px 8px; border-bottom:1px solid var(--line); }
+  td { padding:5px 8px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  .amount-pos { color:var(--green); } .amount-neg { color:var(--red); }
+  .hidden { display:none !important; }
+
+  .acct-card { background:radial-gradient(130% 150% at 0% 0%, rgba(188,140,255,.13), transparent 45%),
+               radial-gradient(100% 130% at 100% 0%, rgba(88,166,255,.08), transparent 40%), var(--panel); }
+  .acct-card, .tx-card { border-radius:18px; }
+  .tx-card { margin-top:14px; }
+  .acct-label { color:var(--dim); font-size:12px; font-weight:600; }
+  .balance-num { font-size:46px; font-weight:750; margin:4px 0 10px; letter-spacing:-.5px; }
+
+  .prod-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; }
+  .prod { min-width:0; position:relative; transition:border-color .15s, transform .15s; }
+  .prod { border:1px solid var(--line); border-radius:14px; padding:11px 13px; }
+  .prod-val, .prod-sub { overflow-wrap:break-word; }
+  .prod-name { color:var(--dim); font-size:11.5px; font-weight:650; }
+  .prod-val { font-size:16px; font-weight:700; margin:3px 0 1px; font-variant-numeric:tabular-nums; }
+  .prod-sub { color:var(--dim); font-size:11px; min-height:14px; }
+  .prod-btns { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+  .mini { background:none; border:1px solid var(--line); color:var(--text); padding:3px 10px;
+          border-radius:7px; font:600 11px system-ui; cursor:pointer; }
+  .mini:hover { border-color:var(--violet); color:var(--violet); }
+
+  /* the bank's segmented toggle, its labelled field, its amount row and its
+     big CTA · the Send sheet's own components, doing here exactly what they
+     do there: choose a direction, name a field, take a number, commit */
+  .seg2 { display:flex; background:var(--bg); border:1px solid var(--line); border-radius:999px;
+    padding:3px; margin-bottom:13px; }
+  .seg2 button { flex:1; border:none; background:none; color:var(--dim); font:650 12.5px system-ui;
+    padding:8px 0; border-radius:999px; cursor:pointer; transition:all .18s; }
+  .seg2 button.on { background:linear-gradient(135deg, var(--accent), var(--violet)); color:#fff; }
+  .fld { margin-bottom:13px; }
+  .fld label { display:block; font:700 10.5px system-ui; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--dim); margin-bottom:6px; }
+  .amt-row { display:flex; align-items:center; gap:8px; background:var(--bg); border:1px solid var(--line);
+    border-radius:10px; padding:2px 14px; transition:border-color .15s; }
+  .amt-eur { font:700 20px system-ui; color:var(--dim); }
+  .amt-row input { flex:1; border:none; background:none; color:var(--text); font:750 26px system-ui;
+    height:50px; min-width:0; font-variant-numeric:tabular-nums; }
+  .amt-row input:focus { outline:none; }
+  .amt-row:focus-within { border-color:var(--violet); }
+  .send-big { width:100%; height:46px; border:none; border-radius:12px;
+    background:linear-gradient(135deg, var(--accent), var(--violet)); color:#fff;
+    font:700 14.5px system-ui; cursor:pointer; transition:filter .15s, transform .1s; }
+  .send-big:hover { filter:brightness(1.12); }
+  .send-big:active { transform:scale(.985); }
+
+  .chip { font-size:10.5px; border:1px solid var(--line); border-radius:999px; padding:1.5px 8px; color:var(--dim); flex:none; }
+  .chip-btn { background:none; border:1px solid var(--line); color:var(--dim); padding:4px 10px;
+    border-radius:999px; font:600 11px system-ui; cursor:pointer; transition:all .15s; }
+  .chip-btn:hover { border-color:var(--violet); color:var(--violet); }
+  .chip-btn.on { background:var(--violet); border-color:var(--violet); color:#fff; }
+
+  .ph { margin-top:9px; }
+  .ph-row { display:flex; justify-content:space-between; font-size:11px; color:var(--dim); padding:2px 0;
+    border-top:1px solid rgba(255,255,255,.04); font-variant-numeric:tabular-nums; }
+  .dp-chart { width:100%; height:118px; display:block; }
+
+  .sk { background:linear-gradient(90deg, #161c28 25%, #202939 37%, #161c28 63%);
+    background-size:400% 100%; animation:skm 1.3s ease infinite; border-radius:7px; }
+  @keyframes skm { 0% { background-position:100% 0; } 100% { background-position:0 0; } }
+  .sk-tile { border:1px solid var(--line); border-radius:14px; padding:11px 13px; height:96px; }
+  .sk-row { display:flex; align-items:center; gap:12px; padding:9px 4px; }
+
+  /* mobile: the same page, pocket-sized · the bank's own breakpoint and its
+     own changes, nothing extra */
+  @media (max-width: 760px) {
+    header { padding:10px 12px; gap:10px; }
+    nav { overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+    nav::-webkit-scrollbar { display:none; }
+    .tab-btn { padding:5px 12px; font-size:12px; white-space:nowrap; }
+    main { padding:12px; }
+    .balance-num { font-size:38px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation:none !important; transition:none !important; }
+  }
+</style>
+</head>
+<body>
+<!-- Estate bar: cross-app tabs + the one signed-in user, served by auth. -->
+<script src="https://auth.b4rruf3t.com/eco-nav.js" defer></script>
+<header>
+  <h1>mini<span>broker</span></h1>
+  <nav>
+    <a class="tab-btn" id="pf-link" href="#" style="text-decoration:none">Portfolio</a>
+    <a class="tab-btn" id="bank-link" href="#" style="text-decoration:none">Bank</a>
+  </nav>
+</header>
+<main>
+  <div class="phone">
+
+    <div class="card acct-card">
+      <div class="acct-label" id="hd-label">Instrument</div>
+      <div class="balance-num" id="hd-price"><span class="sk" style="display:inline-block;width:190px;height:44px;border-radius:12px;vertical-align:middle"></span></div>
+      <div class="muted" id="hd-day" style="margin:-4px 0 4px; font-size:13px"></div>
+      <div class="muted" id="hd-asof"></div>
+    </div>
+
+    <!-- The mode cards hide with an inline display rather than the .hidden
+         class: card plus tx-card plus hidden is a combination the bank's
+         markup never writes, and the parity test holds this page to the
+         bank's own combinations · including this comment, which is why the
+         combination is spelled out in words here rather than as an
+         attribute. The class attribute sits LAST in the tag for the same
+         reason · the wrapper check reads it against the <h2> it wraps. -->
+    <!-- neither ?symbol= nor ?underlying= · offer the shelf instead of a blank -->
+    <div id="pick-card" style="display:none" class="card tx-card">
+      <h2>Instruments</h2>
+      <div id="pick"></div>
+    </div>
+
+    <div id="chart-card" style="display:none" class="card tx-card">
+      <h2>Chart</h2>
+      <div id="ranges" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
+      <div id="chart"><div class="sk" style="width:100%;height:118px"></div></div>
+    </div>
+
+    <!-- THE TICKET SITS DIRECTLY UNDER THE CHART, above the chain · the
+         Global Trader shape: the chart stays on screen while the ticket is
+         open, because the ticket never replaces or covers it. -->
+    <div id="ticket-card" style="display:none" class="card tx-card">
+      <h2>Ticket</h2>
+      <div id="ticket"></div>
+    </div>
+
+    <div id="chain-card" style="display:none" class="card tx-card">
+      <h2>Option chain</h2>
+      <div id="expiries" style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:8px"></div>
+      <div id="chain">
+        <div class="sk-row"><div class="sk" style="width:30%;height:24px"></div><div class="sk" style="width:20%;height:24px"></div><div class="sk" style="width:30%;height:24px;margin-left:auto"></div></div>
+        <div class="sk-row"><div class="sk" style="width:30%;height:24px"></div><div class="sk" style="width:20%;height:24px"></div><div class="sk" style="width:30%;height:24px;margin-left:auto"></div></div>
+        <div class="sk-row"><div class="sk" style="width:30%;height:24px"></div><div class="sk" style="width:20%;height:24px"></div><div class="sk" style="width:30%;height:24px;margin-left:auto"></div></div>
+      </div>
+      <div class="muted" id="chain-note" style="margin-top:8px"></div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+'use strict';
+// ===================================================================== pure
+// Everything above the fetch line is arithmetic and formatting only: no DOM,
+// no network, no globals read. instrument-render.test.js lifts this script
+// into a vm and calls these directly.
+
+/** Money and quantities cross the wire as STRINGS (or bare null) on purpose ·
+ *  the eighth decimal of a bitcoin position does not survive a double. */
+const num = s => (s === null || s === undefined || s === '') ? null : Number(s);
+const isNum = v => v !== null && v !== undefined && Number.isFinite(v);
+
+/** The screen shows two markets in their own money: the broker's book in
+ *  euros, the option market in whatever its quote states (USD observed).
+ *  A currency we were not told gets NO symbol · a bare number claims less
+ *  than a wrong sign would. */
+const ccySym = ccy => ccy === 'EUR' ? '€' : ccy === 'USD' ? '$' : ccy === 'GBP' ? '£' : '';
+
+/** en-US grouping · the house convention, matched deliberately. */
+function fmtMoney(v, ccy, dp = 2) {
+  const n = num(v);
+  if (!isNum(n)) return null;
+  const body = n.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+  const sym = ccySym(ccy);
+  return sym ? sym + body : body + (ccy ? ' ' + ccy : '');
+}
+const fmtEur = (v, dp = 2) => fmtMoney(v, 'EUR', dp);
+
+/** U+2212 MINUS, never a hyphen · the bank's rule. Exactly flat carries no
+ *  sign: '+€0.00' claims a gain that did not happen. */
+function fmtSignedMoney(v, ccy) {
+  const n = num(v);
+  if (!isNum(n)) return null;
+  const body = fmtMoney(Math.abs(n), ccy);
+  return (n === 0 ? '' : n < 0 ? '−' : '+') + body;
+}
+
+function fmtPct(v) {
+  const n = num(v);
+  if (!isNum(n)) return null;
+  const sign = n < 0 ? '−' : n > 0 ? '+' : '';
+  return sign + Math.abs(n).toFixed(2) + '%';
+}
+
+/** 'amount-pos' | 'amount-neg' | '' · zero is neither a gain nor a loss. */
+function signClass(v) {
+  const n = num(v);
+  if (!isNum(n) || n === 0) return '';
+  return n > 0 ? 'amount-pos' : 'amount-neg';
+}
+
+/** Trim a decimal string without ever rounding through a double. */
+function trimDec(s) {
+  if (s === null || s === undefined) return null;
+  const t = String(s);
+  return t.includes('.') ? t.replace(/0+$/, '').replace(/\.$/, '') : t;
+}
+
+/** A mark from /api/instruments fails SOFT TO ZERO (BrokerApi.mark), so a
+ *  literal 0 there means "no price", not "free". */
+const markUnavailable = v => { const n = num(v); return !isNum(n) || n === 0; };
+const priceStale = src => src === 'cached';
+
+/**
+ * THE DAY, from the mark and the prior close · both units, or nothing.
+ * A price with no prior close has no day: the honest render is absence,
+ * never '0.00', which would be a specific claim that it did not move.
+ */
+function dayParts(price, prevClose) {
+  const p = num(price), c = num(prevClose);
+  if (!isNum(p) || !isNum(c) || c === 0) return null;
+  return { change: p - c, pct: (p - c) / c * 100 };
+}
+
+/**
+ * THE STOCK TICKET'S ARITHMETIC · sized in euros or in units, both ways,
+ * exactly as the bank tile and the portfolio already allow.
+ *
+ * An unpriced instrument produces NO estimate: null, never €0.00. The order
+ * itself can still be placed (the venue prices at fill, the same reason the
+ * bank tile keeps its buy button with the feed down) · what this refuses to
+ * do is predict a cost from a mark that does not exist.
+ */
+function estimate(mode, amount, price) {
+  const a = num(amount), p = num(price);
+  if (!isNum(a) || a <= 0) return null;
+  if (!isNum(p) || p <= 0) return null;
+  if (mode === 'eur') return { eur: a, units: a / p };
+  return { eur: a * p, units: a };
+}
+
+/**
+ * WHOLE CONTRACTS ONLY · the UI mirror of the authoritative gate in
+ * Broker.place. A mirror, not the gate: the server still refuses whatever
+ * slips past this, this just costs the customer a sentence instead of a
+ * round trip.
+ */
+function wholeContracts(qty) {
+  const n = num(qty);
+  if (!isNum(n) || n <= 0) return null;
+  return Number.isInteger(n) ? n : null;
+}
+
+/**
+ * WHAT PRICE AN OPTION ESTIMATE STANDS ON, and it says which. Buying is
+ * done at the ask, selling at the bid; when the side's own price is absent
+ * the last trade is the only real number left, and it is LABELLED as the
+ * last so nobody mistakes a stale print for a quote. Nothing at all: null,
+ * and the ticket shows no estimate rather than a zero.
+ */
+function premiumBasis(side, row) {
+  if (!row) return null;
+  const ask = num(row.ask), bid = num(row.bid), last = num(row.last);
+  if (side === 'buy' && isNum(ask)) return { px: ask, label: 'at ask' };
+  if (side === 'sell' && isNum(bid)) return { px: bid, label: 'at bid' };
+  if (isNum(last)) return { px: last, label: 'at last' };
+  return null;
+}
+
+/** Estimated premium = qty × price × 100 · the REGULAR contract size, which
+ *  is the only size the broker will list. */
+function optionPremium(qty, px) {
+  const q = wholeContracts(qty), p = num(px);
+  if (q === null || !isNum(p)) return null;
+  return q * p * 100;
+}
+
+/**
+ * THE LADDER · calls left, strike centred, puts right, sorted by strike
+ * ascending. A strike one side quotes and the other does not still gets its
+ * row, with the silent side left as gaps.
+ */
+function mergeChain(calls, puts) {
+  const by = new Map();
+  const at = k => { if (!by.has(k)) by.set(k, { strike: k, call: null, put: null }); return by.get(k); };
+  for (const c of calls || []) at(Number(c.strike)).call = c;
+  for (const p of puts || []) at(Number(p.strike)).put = p;
+  return [...by.values()].sort((a, b) => a.strike - b.strike);
+}
+
+/**
+ * WHAT THE PHONE DROPS. Global Trader collapses its chain to fewer columns
+ * on a phone; the honest equivalent here is dropping LAST from each side
+ * and keeping bid/ask · the two prices an order actually crosses. Wide
+ * screens carry all three.
+ */
+const chainCols = compact => compact ? ['bid', 'ask'] : ['bid', 'ask', 'last'];
+
+/** Chart geometry · the bank's own price-chart math (index.html loadChart):
+ *  min-max scaled polyline points in SVG user units, no chart library. */
+function chartPath(points, W, H) {
+  if (!points || points.length < 2) return null;
+  const vs = points.map(x => x[1]);
+  const min = Math.min(...vs), max = Math.max(...vs);
+  return {
+    min, max,
+    up: vs[vs.length - 1] >= vs[0],
+    pts: points.map((x, i) =>
+      `${((i / (points.length - 1)) * W).toFixed(1)},${(H - ((x[1] - min) / (max - min || 1)) * (H - 8) - 4).toFixed(1)}`).join(' '),
+  };
+}
+
+/** Points no older than `days` · the client-side slice of an already-honest
+ *  series, for the stock ranges the history endpoint can truthfully serve. */
+function sliceDays(points, days) {
+  if (!points || !points.length) return [];
+  const cutoff = points[points.length - 1][0] - days * 86400000;
+  return points.filter(x => x[0] >= cutoff);
+}
+
+/**
+ * WHICH RANGES EXIST, per mode, and why the two lists differ.
+ * The options chart endpoint serves the venue's own 1d/1w/1mo/3mo. The
+ * stock history endpoint serves 30 days of daily closes in euros · 1W and
+ * 1M are honest slices of that, and intraday or 3M would be an invention,
+ * so those buttons simply do not exist in stock mode.
+ */
+function rangesFor(mode) {
+  return mode === 'underlying'
+    ? [{ key: '1d', label: '1D', days: null }, { key: '1w', label: '1W', days: null },
+       { key: '1mo', label: '1M', days: null }, { key: '3mo', label: '3M', days: null }]
+    : [{ key: '1w', label: '1W', days: 7 }, { key: '1mo', label: '1M', days: 31 }];
+}
+
+const rangeWord = key => key === '1d' ? 'intraday' : key === '1w' ? '5 days'
+                       : key === '1mo' ? '1 month' : key === '3mo' ? '3 months' : key;
+
+/** ISO date of an epoch-seconds expiry · the same spelling the portfolio's
+ *  'Expires' row uses. */
+const isoDay = epochSec => new Date(epochSec * 1000).toISOString().slice(0, 10);
+
+/** How old a mark is, spelled the way the bank's Investments tile spells it. */
+function ageWord(seconds) {
+  const s = num(seconds);
+  if (!isNum(s) || s < 0) return null;
+  return s < 90 ? s + 's' : Math.round(s / 60) + ' min';
+}
+
+// ===================================================================== view
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** The bank's idiom for "we do not know" is plain dim text, so that is what
+ *  this is. The reason travels in the title. */
+const NA = why => `<span class="muted" title="${esc(why)}">not available</span>`;
+
+const $ = id => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+let customer = params.get('customer') || '10';
+
+/** ?underlying=XSP is the chain screen · ?symbol=AAPL is a listed
+ *  instrument's screen. Neither: the shelf, offered rather than a blank. */
+const UNDER = params.get('underlying');
+const SYMBOL = params.get('symbol');
+const MODE = UNDER ? 'underlying' : SYMBOL ? 'symbol' : 'pick';
+
+// --------------------------------------------------------------- identity
+/* Identity, the permissive way · byte-for-byte the portfolio's ensureToken
+ * and api(). A bearer token wins server-side; with none the ?customer= param
+ * stands, exactly as it does one page over. */
+const AUTH_ORIGIN = location.hostname.startsWith('broker.')
+  ? location.protocol + '//auth.' + location.hostname.slice('broker.'.length)
+  : 'https://auth.b4rruf3t.com';
+let _tokenWait = null;
+function _tokenFresh(t) {
+  try {
+    const exp = JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).exp || 0;
+    return exp * 1000 > Date.now() + 60000;
+  } catch { return false; }
+}
+async function ensureToken() {
+  const have = localStorage.getItem('b4rruf3t_token');
+  if (have && _tokenFresh(have)) return have;
+  if (!_tokenWait) _tokenWait = (async () => {
+    try {
+      const stored = localStorage.getItem('b4rruf3t_refresh');
+      const r = await fetch(AUTH_ORIGIN + '/v1/tokens/refresh', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stored ? { refresh_token: stored } : {}),
+      });
+      if (!r.ok) return null;
+      const d = await r.json();
+      if (d.access_token) localStorage.setItem('b4rruf3t_token', d.access_token);
+      if (d.refresh_token) localStorage.setItem('b4rruf3t_refresh', d.refresh_token);
+      return d.access_token || null;
+    } catch { return null; } finally { _tokenWait = null; }
+  })();
+  return _tokenWait;
+}
+
+async function api(path, opts) {
+  opts = opts || {};
+  const token = await ensureToken();
+  if (token) {
+    const headers = new Headers(opts.headers || {});
+    if (!headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + token);
+    opts = { ...opts, headers };
+  }
+  let r;
+  try {
+    r = await fetch(path, opts);
+  } catch (e) {
+    return { error: 'cannot reach the broker service' };
+  }
+  const body = await r.json().catch(() => ({ error: 'bad response from ' + path }));
+  if (!r.ok && !body.error) body.error = 'HTTP ' + r.status;
+  return body;
+}
+
+function bankHref() {
+  const h = location.hostname;
+  const base = h.startsWith('broker.')
+    ? location.protocol + '//bank.' + h.slice('broker.'.length)
+    : location.protocol + '//' + h + ':8080';
+  return base + '/?customer=' + encodeURIComponent(customer);
+}
+
+// ------------------------------------------------------------------ state
+let inst = null;        // stock mode · this symbol's /api/instruments row
+let chainData = null;   // underlying mode · last /api/options/chain payload
+let chartPoints = null; // the series the chart is currently drawn from
+let chartMeta = null;   // { ccy, label, source, cached }
+let range = MODE === 'underlying' ? '1d' : '1mo';
+let sel = null;         // the tapped contract row + kind, or null
+let side = 'buy';
+let tikMode = 'eur';    // stock ticket sizing · 'eur' | 'units'
+let tikAmount = '50';
+let tikQty = '1';       // option ticket contracts
+let lastMsg = '';
+
+/** the phone's chain · re-rendered, not re-fetched, when the width crosses */
+const compactMq = window.matchMedia ? window.matchMedia('(max-width: 760px)') : null;
+
+// ----------------------------------------------------------------- header
+function drawHeader() {
+  if (MODE === 'pick') {
+    $('hd-label').textContent = 'Instruments';
+    $('hd-price').innerHTML = '<span class="muted" style="font-size:14px">pick an instrument below</span>';
+    return;
+  }
+  if (MODE === 'underlying') {
+    if (!chainData) return;
+    const q = chainData.quote || {};
+    const ccy = q.currency;
+    $('hd-label').textContent = chainData.underlying + ' · options · ' + chainData.yahooSymbol
+      + (ccy ? ' · quoted in ' + ccy : '');
+    const px = fmtMoney(q.price, ccy);
+    $('hd-price').innerHTML = px === null
+      ? NA('the venue stated no price for this underlying · this is not a price of zero')
+      : esc(px);
+    const chg = fmtSignedMoney(q.change, ccy), pct = fmtPct(q.changePercent);
+    $('hd-day').innerHTML = chg === null ? ''
+      : `<span class="${signClass(q.change)}">${esc(chg)}${pct === null ? '' : ' · ' + esc(pct)}</span> today`;
+    const when = q.time ? new Date(q.time * 1000)
+      .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
+    $('hd-asof').innerHTML = [
+      when ? 'priced at ' + esc(when) : '',
+      chainData.fetched === 'cached'
+        ? `<span title="the venue was unreachable · this is the last chain actually observed">last known chain</span>` : '',
+    ].filter(Boolean).join(' · ');
+    document.title = chainData.underlying + ' options · minibroker';
+    return;
+  }
+  // stock / crypto / listed contract
+  if (!inst) return;
+  // exchange and kind, deduplicated · BTC's exchange IS "CRYPTO", and a label
+  // reading "CRYPTO · crypto" states one fact twice
+  const kindSaysMore = inst.kind
+    && String(inst.kind).toLowerCase() !== String(inst.exchange || '').toLowerCase();
+  $('hd-label').textContent = [inst.symbol, inst.exchange, kindSaysMore ? inst.kind : null]
+    .filter(Boolean).join(' · ');
+  const px = markUnavailable(inst.price) ? null : fmtEur(inst.price);
+  $('hd-price').innerHTML = px === null
+    ? NA(inst.priceSource === 'expired'
+        ? 'this contract has expired · it is not valued, so no figure is claimed'
+        : 'no live mark right now · this is not a price of zero')
+    : esc(px);
+  const day = markUnavailable(inst.price) ? null : dayParts(inst.price, inst.prevClose);
+  $('hd-day').innerHTML = day === null
+    ? (markUnavailable(inst.price) ? ''
+        : `<span class="muted" title="the feed returned a price but no prior close · there is nothing to measure today&#39;s move against">no day figure</span>`)
+    : `<span class="${signClass(day.change)}">${esc(fmtSignedMoney(day.change, 'EUR'))} · ${esc(fmtPct(day.pct))}</span> today`;
+  const age = ageWord(inst.priceAgeSeconds);
+  $('hd-asof').innerHTML = [
+    inst.name ? esc(inst.name) : '',
+    age !== null ? 'price as of ' + esc(age) + ' ago' : '',
+    priceStale(inst.priceSource)
+      ? `<span title="the upstream feed is unreachable · this is the last price actually observed, and it has no age bound">last known price</span>` : '',
+    inst.expiresOn ? 'expires ' + esc(inst.expiresOn) : '',
+  ].filter(Boolean).join(' · ');
+  document.title = inst.symbol + ' · minibroker';
+}
+
+// ------------------------------------------------------------------ chart
+function drawRanges() {
+  $('ranges').innerHTML = rangesFor(MODE).map(r =>
+    `<button class="chip-btn${r.key === range ? ' on' : ''}" onclick="setRange('${r.key}')">${esc(r.label)}</button>`
+  ).join('');
+}
+
+function drawChart() {
+  drawRanges();
+  const el = $('chart');
+  if (chartPoints === null) return;   // still loading · the skeleton stands
+  const spec = rangesFor(MODE).find(r => r.key === range);
+  const ps = (MODE === 'symbol' && spec && spec.days) ? sliceDays(chartPoints, spec.days) : chartPoints;
+  const g = chartPath(ps, 400, 118);
+  if (!g) {
+    el.innerHTML = `<div class="muted">No chart · the feed returned no series for this range.</div>`;
+    return;
+  }
+  const ccy = chartMeta.ccy;
+  const cachedNote = chartMeta.cached
+    ? ` · <span title="the venue was unreachable · this is the last series actually observed">cached, not live</span>` : '';
+  el.innerHTML = `<svg viewBox="0 0 400 118" class="dp-chart" preserveAspectRatio="none">
+      <polyline points="${g.pts}" fill="none" stroke="${g.up ? 'var(--green)' : 'var(--red)'}" stroke-width="1.6"/></svg>
+    <div class="ph-row"><span>${esc(chartMeta.label)} · real ${esc(chartMeta.source)} data, in ${esc(ccy || '?')}${cachedNote}</span>
+      <b>${esc(fmtMoney(g.min, ccy))} – ${esc(fmtMoney(g.max, ccy))}</b></div>`;
+}
+
+window.setRange = async k => {
+  range = k;
+  if (MODE === 'underlying') {
+    drawRanges();
+    $('chart').innerHTML = `<div class="sk" style="width:100%;height:118px"></div>`;
+    if (await loadUnderlyingChart()) drawChart();
+    return;
+  }
+  drawChart();
+};
+
+async function loadUnderlyingChart() {
+  const c = await api('/api/options/chart?underlying=' + encodeURIComponent(UNDER)
+    + '&range=' + encodeURIComponent(range));
+  if (c.error) {
+    chartPoints = [];
+    chartMeta = { ccy: null, label: rangeWord(range), source: 'Yahoo', cached: false };
+    $('chart').innerHTML = `<div class="muted">Could not load the chart: ${esc(c.error)}</div>`;
+    return false;
+  }
+  chartPoints = c.points || [];
+  chartMeta = { ccy: c.currency, label: rangeWord(c.range || range), source: 'Yahoo',
+                cached: c.fetched === 'cached' };
+  return true;
+}
+
+async function loadStockChart() {
+  const c = await api('/api/prices/history?asset=' + encodeURIComponent(SYMBOL.toLowerCase()));
+  if (c.error) {
+    chartPoints = [];
+    chartMeta = { ccy: 'EUR', label: rangeWord(range), source: 'Yahoo × fx-service', cached: false };
+    $('chart').innerHTML = `<div class="muted">Could not load the chart: ${esc(c.error)}</div>`;
+    return false;
+  }
+  chartPoints = c.points || [];
+  chartMeta = { ccy: 'EUR', label: rangeWord(range),
+                source: SYMBOL.toLowerCase() === 'btc' ? 'CoinGecko' : 'Yahoo × fx-service',
+                cached: false };
+  return true;
+}
+
+// ------------------------------------------------------------------ chain
+function drawExpiries() {
+  if (!chainData) return;
+  const cur = chainData.expiry;
+  $('expiries').innerHTML = (chainData.expirations || []).map(e =>
+    `<button class="chip-btn${e === cur ? ' on' : ''}" style="white-space:nowrap;flex:none" onclick="setExpiry(${e})">${isoDay(e)}</button>`
+  ).join('');
+}
+
+function drawChain() {
+  if (!chainData) return;
+  drawExpiries();
+  const compact = compactMq ? compactMq.matches : false;
+  const cols = chainCols(compact);
+  const rows = mergeChain(chainData.calls, chainData.puts);
+  if (!rows.length) {
+    $('chain').innerHTML = `<div class="muted">The venue lists no contracts for this expiry.</div>`;
+    return;
+  }
+  const head1 = `<tr><th colspan="${cols.length}">Calls</th>`
+    + `<th style="text-align:center">Strike</th>`
+    + `<th colspan="${cols.length}" style="text-align:right">Puts</th></tr>`;
+  const colTh = right => cols.map(c =>
+    `<th${right ? ' style="text-align:right"' : ''}>${c[0].toUpperCase() + c.slice(1)}</th>`).join('');
+  const head2 = `<tr>${colTh(false)}<th style="text-align:center"></th>${colTh(true)}</tr>`;
+  const cell = (row, kind, right) => cols.map(c => {
+    const v = row ? fmtMoney(row[c], null) : null;
+    return `<td style="${right ? 'text-align:right;' : ''}${row ? 'cursor:pointer' : ''}"${
+      row ? ` onclick="pick('${esc(row.contractSymbol)}','${kind}')"` : ''}>${v === null ? '' : esc(v)}</td>`;
+  }).join('');
+  const body = rows.map(r =>
+    `<tr>${cell(r.call, 'call', false)}<td style="text-align:center"><b>${trimDec(String(r.strike))}</b></td>${
+      cell(r.put, 'put', true)}</tr>`).join('');
+  $('chain').innerHTML = `<table><thead>${head1}${head2}</thead><tbody>${body}</tbody></table>`;
+  const ccy = chainData.quote && chainData.quote.currency;
+  $('chain-note').textContent = [
+    ccy ? 'premiums per share, in ' + ccy : 'premiums per share',
+    'tap a bid, ask or last to build a ticket',
+    compact ? 'last prices hidden at this width' : '',
+  ].filter(Boolean).join(' · ');
+}
+
+window.setExpiry = async e => {
+  $('chain').innerHTML = `<div class="sk-row"><div class="sk" style="width:100%;height:24px"></div></div>`;
+  const c = await api('/api/options/chain?underlying=' + encodeURIComponent(UNDER)
+    + '&expiry=' + encodeURIComponent(e));
+  if (c.error) {
+    $('chain').innerHTML = `<div class="muted">Could not load that expiry: ${esc(c.error)}</div>`;
+    return;
+  }
+  chainData = c;
+  sel = null;
+  lastMsg = '';
+  drawHeader();
+  drawChain();
+  drawTicket();
+};
+
+window.pick = (contractSymbol, kind) => {
+  const pool = kind === 'call' ? (chainData.calls || []) : (chainData.puts || []);
+  const row = pool.find(r => r.contractSymbol === contractSymbol);
+  if (!row) return;
+  sel = { row, kind };
+  lastMsg = '';
+  drawTicket();
+  const card = $('ticket-card');
+  if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+};
+
+// ----------------------------------------------------------------- ticket
+function segSide() {
+  return `<div class="seg2">
+    <button class="${side === 'buy' ? 'on' : ''}" onclick="setSide('buy')">Buy</button>
+    <button class="${side === 'sell' ? 'on' : ''}" onclick="setSide('sell')">Sell</button>
+  </div>`;
+}
+
+function drawTicket() {
+  const el = $('ticket');
+  if (MODE === 'underlying') {
+    if (!sel) {
+      el.innerHTML = `<div class="muted">Tap a contract in the chain below · the ticket builds itself from the row you choose.</div>`;
+      return;
+    }
+    const r = sel.row;
+    const ccy = chainData.quote && chainData.quote.currency;
+    const basis = premiumBasis(side, r);
+    const est = basis ? optionPremium(tikQty, basis.px) : null;
+    const qtyBad = wholeContracts(tikQty) === null;
+    el.innerHTML = `
+      <div style="margin-bottom:10px"><b>${esc(chainData.underlying)} ${isoDay(r.expiration)} ${trimDec(r.strike)} ${esc(sel.kind)}</b>
+        <div class="muted">${esc(r.contractSymbol)}</div></div>
+      ${segSide()}
+      <div class="fld"><label>Contracts</label>
+        <div class="amt-row"><span class="amt-eur">×</span>
+          <button class="mini" onclick="stepQty(-1)">−</button>
+          <input id="tik-qty" inputmode="numeric" value="${esc(tikQty)}" oninput="qtyInput(this.value)" aria-label="Contracts">
+          <button class="mini" onclick="stepQty(1)">＋</button>
+        </div></div>
+      <div class="ph" style="margin:0 0 13px">
+        <div class="ph-row"><span>Contract size</span><b>1 contract = 100 × underlying</b></div>
+        <div class="ph-row"><span>Est. premium</span><b>${
+          qtyBad ? NA('contracts are whole numbers · the broker refuses fractions')
+          : est === null ? NA('no quote to estimate from · the venue stated no bid, ask or last for this side')
+          : esc(fmtMoney(est, ccy)) + ` <span class="muted">${esc(basis.label)} ${esc(fmtMoney(basis.px, ccy))}</span>`
+        }</b></div>
+      </div>
+      <button class="send-big" onclick="placeOption()">${side === 'buy' ? 'Buy' : 'Sell'} ${esc(r.contractSymbol)}</button>
+      <div class="muted" id="tk-msg" style="margin-top:8px">${lastMsg}</div>`;
+    return;
+  }
+  if (MODE !== 'symbol' || !inst) { el.innerHTML = ''; return; }
+  // stock / crypto ticket · EUR or units, both ways, no sliders
+  const priced = !markUnavailable(inst.price);
+  const est = priced ? estimate(tikMode, tikAmount, inst.price) : null;
+  const unit = inst.kind === 'crypto' ? esc(inst.symbol) : 'sh';
+  el.innerHTML = `
+    ${segSide()}
+    <div class="prod-btns" style="margin:0 0 13px">
+      <button class="chip-btn${tikMode === 'eur' ? ' on' : ''}" onclick="setTikMode('eur')">amount in €</button>
+      <button class="chip-btn${tikMode === 'units' ? ' on' : ''}" onclick="setTikMode('units')">amount in ${unit}</button>
+    </div>
+    <div class="fld"><label>${tikMode === 'eur' ? 'Amount' : 'Units'}</label>
+      <div class="amt-row"><span class="amt-eur">${tikMode === 'eur' ? '€' : unit}</span>
+        <button class="mini" onclick="stepAmt(-1)">−</button>
+        <input id="tik-amt" inputmode="decimal" value="${esc(tikAmount)}" oninput="amtInput(this.value)" aria-label="${tikMode === 'eur' ? 'Order amount in euro' : 'Order size in units'}">
+        <button class="mini" onclick="stepAmt(1)">＋</button>
+      </div></div>
+    <div class="ph" style="margin:0 0 13px">
+      <div class="ph-row"><span>${side === 'buy' ? 'Est. cost' : 'Est. proceeds'}</span><b>${
+        est === null
+          ? NA(priced ? 'enter an amount above zero' : 'no live mark to estimate from · the order is priced at the venue when it fills')
+          : esc(fmtEur(est.eur)) + ` <span class="muted">≈ ${esc(trimDec(est.units.toFixed(8)))} ${unit} at ${esc(fmtEur(inst.price))}</span>`
+      }</b></div>
+    </div>
+    <button class="send-big" onclick="placeStock()">${side === 'buy' ? 'Buy' : 'Sell'} ${esc(inst.symbol)}</button>
+    <div class="muted" id="tk-msg" style="margin-top:8px">${lastMsg}</div>`;
+}
+
+window.setSide = s => { side = s; drawTicket(); };
+window.setTikMode = m => {
+  if (m === tikMode) return;
+  tikMode = m;
+  tikAmount = m === 'eur' ? '50' : '1';
+  drawTicket();
+};
+window.amtInput = v => { tikAmount = v; refreshEstimate(); };
+window.qtyInput = v => { tikQty = v; refreshEstimate(); };
+window.stepAmt = dir => {
+  const cur = num(tikAmount) || 0;
+  const step = tikMode === 'eur' ? 10 : (inst && inst.kind === 'crypto' ? 0.01 : 1);
+  const next = Math.max(step, cur + dir * step);
+  tikAmount = trimDec(next.toFixed(8));
+  drawTicket();
+};
+window.stepQty = dir => {
+  const cur = wholeContracts(tikQty) || 0;
+  tikQty = String(Math.max(1, cur + dir));
+  drawTicket();
+};
+/** re-render WITHOUT rebuilding the input the user is typing into */
+function refreshEstimate() {
+  const focus = document.activeElement && document.activeElement.id;
+  const pos = document.activeElement && document.activeElement.selectionStart;
+  drawTicket();
+  if (focus) {
+    const el2 = $(focus);
+    if (el2) { el2.focus(); try { el2.setSelectionRange(pos, pos); } catch (e) {} }
+  }
+}
+
+// ----------------------------------------------------------------- orders
+function orderBase(symbol) {
+  return {
+    clientOrderId: (crypto.randomUUID ? crypto.randomUUID()
+                     : 'in-' + Date.now() + '-' + Math.random().toString(16).slice(2)),
+    customer: Number(customer),
+    symbol: symbol,
+    side: side,
+    type: 'market',
+  };
+}
+
+async function submit(order) {
+  const msgEl = $('tk-msg');
+  if (msgEl) msgEl.innerHTML = `<span class="muted">Placing …</span>`;
+  const out = await api('/api/orders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(order),
+  });
+  // WHAT THIS CAN HONESTLY CLAIM · the portfolio's exact sentence: the order
+  // is placed, the money moves when the fill settles, a Kafka round trip
+  // later. Never "bought".
+  lastMsg = out.error
+    ? `<span class="amount-neg">${esc(out.error)}</span>`
+    : `<span class="amount-pos">${esc(order.side)} ${esc(order.symbol)} · order placed</span>
+       <span class="muted">· your balance updates when it settles</span>`;
+  if (msgEl) msgEl.innerHTML = lastMsg;
+  return !out.error;
+}
+
+window.placeStock = async () => {
+  const order = orderBase(inst.symbol);
+  const a = num(tikAmount);
+  if (!isNum(a) || a <= 0) {
+    lastMsg = `<span class="amount-neg">enter an amount above zero</span>`;
+    drawTicket();
+    return;
+  }
+  // qty and notional are read server-side with Json.str · they must be JSON
+  // STRINGS. customer is read with Json.num and must be a bare number.
+  if (tikMode === 'eur') order.notional = a.toFixed(2); else order.qty = String(tikAmount);
+  await submit(order);
+  await loadHeaderData();
+  drawHeader();
+};
+
+window.placeOption = async () => {
+  const q = wholeContracts(tikQty);
+  if (q === null) {
+    // the UI mirror of Broker.place's gate · same rule, said before the trip
+    lastMsg = `<span class="amount-neg">${esc(sel.row.contractSymbol)} trades in whole contracts · ${esc(String(tikQty))} is not a whole number of them</span>`;
+    drawTicket();
+    return;
+  }
+  const order = orderBase(sel.row.contractSymbol);
+  order.qty = String(q);
+  // the first trade of an unlisted contract LISTS it server-side (registry on
+  // every shard, then the catalog) before any money path runs · nothing for
+  // this screen to do beyond sending the OCC symbol
+  await submit(order);
+};
+
+// ------------------------------------------------------------------- pick
+function drawPick(catalog, underlyings) {
+  const tiles = [];
+  for (const u of underlyings || []) {
+    tiles.push(`<div class="prod">
+      <div class="prod-name">${esc(u)} · option chain</div>
+      <div class="prod-val">calls &amp; puts</div>
+      <div class="prod-btns"><a class="mini" style="text-decoration:none" href="/instrument?underlying=${encodeURIComponent(u)}&customer=${encodeURIComponent(customer)}">open chain</a></div>
+    </div>`);
+  }
+  for (const i of catalog || []) {
+    tiles.push(`<div class="prod">
+      <div class="prod-name">${esc(i.symbol)}${i.name ? ' · ' + esc(i.name) : ''}</div>
+      <div class="prod-val">${markUnavailable(i.price) ? NA('no live mark right now') : esc(fmtEur(i.price))}</div>
+      <div class="prod-sub">${[i.exchange || i.kind || '',
+          priceStale(i.priceSource) ? 'last known price' : ''].filter(Boolean).map(esc).join(' · ')}</div>
+      <div class="prod-btns"><a class="mini" style="text-decoration:none" href="/instrument?symbol=${encodeURIComponent(i.symbol)}&customer=${encodeURIComponent(customer)}">open</a></div>
+    </div>`);
+  }
+  $('pick').innerHTML = `<div class="prod-grid">${tiles.join('')}</div>`;
+}
+
+// ------------------------------------------------------------------- load
+async function loadHeaderData() {
+  if (MODE !== 'symbol') return true;
+  const list = await api('/api/instruments');
+  if (list.error) { inst = null; return false; }
+  inst = (Array.isArray(list) ? list : []).find(i =>
+    i.symbol && i.symbol.toUpperCase() === SYMBOL.toUpperCase()) || null;
+  return inst !== null;
+}
+
+const show = id => { $(id).style.display = ''; };
+
+async function load() {
+  if (MODE === 'pick') {
+    show('pick-card');
+    drawHeader();
+    const [catalog, u] = await Promise.all([api('/api/instruments'), api('/api/options/underlyings')]);
+    drawPick(Array.isArray(catalog) ? catalog : [], (u && u.underlyings) || []);
+    return;
+  }
+
+  if (MODE === 'underlying') {
+    show('chart-card');
+    show('ticket-card');
+    show('chain-card');
+    drawRanges();
+    drawTicket();
+    const c = await api('/api/options/chain?underlying=' + encodeURIComponent(UNDER));
+    if (c.error) {
+      $('hd-label').textContent = UNDER.toUpperCase() + ' · options';
+      $('hd-price').innerHTML = NA('could not load');
+      $('hd-asof').innerHTML = `<span class="amount-neg">${esc(c.error)}</span>`;
+      $('chain').innerHTML = `<div class="muted">Not available · nothing is shown rather than a stale chain presented as current.</div>`;
+      $('chart').innerHTML = '';
+      return;
+    }
+    chainData = c;
+    drawHeader();
+    drawChain();
+    if (await loadUnderlyingChart()) drawChart();
+    return;
+  }
+
+  // symbol mode
+  show('chart-card');
+  show('ticket-card');
+  const ok = await loadHeaderData();
+  if (!ok) {
+    $('hd-label').textContent = SYMBOL.toUpperCase();
+    $('hd-price').innerHTML = NA(inst === null
+      ? 'not a listed instrument · the shelf at /instrument lists what is'
+      : 'could not load');
+    $('hd-day').innerHTML = '';
+    $('chart').innerHTML = '';
+    $('ticket').innerHTML = `<div class="muted">Nothing to trade here · this symbol is not in the catalog.</div>`;
+    return;
+  }
+  drawHeader();
+  drawTicket();
+  if (await loadStockChart()) drawChart();
+}
+
+/* the chain re-renders when the width crosses the breakpoint · the media
+   query is the signal, and a plain resize listener backs it up because a
+   dragged desktop window does not always deliver the change event before
+   the next paint the reader sees */
+let wasCompact = compactMq ? compactMq.matches : false;
+function onWidthChange() {
+  const now = compactMq ? compactMq.matches : false;
+  if (now === wasCompact) return;
+  wasCompact = now;
+  if (MODE === 'underlying') drawChain();
+}
+if (compactMq && compactMq.addEventListener) compactMq.addEventListener('change', onWidthChange);
+if (window.addEventListener) window.addEventListener('resize', onWidthChange);
+
+// TODO(after SSO claims #39/#41 release): give each portfolio holding row an
+// href to /instrument?symbol= (and the option rows to ?underlying=) · that
+// edit lives in portfolio.html, which is claimed, so this page is reached by
+// URL and by the nav pill until then.
+$('pf-link').href = '/portfolio?customer=' + encodeURIComponent(customer);
+$('bank-link').href = bankHref();
+load();
+</script>
+</body>
+</html>
