@@ -39,6 +39,12 @@ public final class HttpApi {
         server.createContext("/api/relocate", ex -> handle(ex, HttpApi::relocate));
         server.createContext("/api/statement", ex -> handle(ex, HttpApi::statement));
         server.createContext("/api/portfolio", ex -> handle(ex, HttpApi::portfolio));
+        // THE ONE NUMBER · main + savings + holdings at the marks - card debt
+        // - loan, summed by the server from the ledger at request time. The
+        // App tab used to assemble this in the browser from /api/portfolio's
+        // fields, which is parallel arithmetic in the one place the server
+        // cannot audit.
+        server.createContext("/api/networth", ex -> handle(ex, HttpApi::networth));
         server.createContext("/api/trade", ex -> handle(ex, HttpApi::trade));
         server.createContext("/api/mortgage", ex -> handle(ex, HttpApi::mortgageApply));
         server.createContext("/api/card", ex -> handle(ex, HttpApi::cardOps));
@@ -1244,9 +1250,9 @@ public final class HttpApi {
     // hostile client cannot mint unbounded label values (a Prometheus
     // cardinality bomb) or inject a quote into the exposition by crafting a path
     private static final java.util.Set<String> ROUTES = java.util.Set.of(
-            "accounts", "transfer", "relocate", "statement", "portfolio", "trade",
-            "mortgage", "card", "signup", "support", "prices", "explorer", "kafka",
-            "xray", "notifications");
+            "accounts", "transfer", "relocate", "statement", "portfolio", "networth",
+            "trade", "mortgage", "card", "signup", "support", "prices", "explorer",
+            "kafka", "xray", "notifications");
 
     /** Collapse a path to one of a FIXED set of labels · /api/xray/summary -> /api/xray. */
     private static String routeClass(String path) {
@@ -1357,6 +1363,80 @@ public final class HttpApi {
         }
     }
 
+    /**
+     * THE SHELF WITH ITS MARKS · every listed instrument this customer
+     * actually holds, paired with the refresh-ahead mark it is valued at.
+     * Rows are [Asset, holdingAccountId, units, Px-or-null, expired].
+     *
+     * Extracted from portfolio() so /api/networth values the same holdings by
+     * the same marks · a second walk with its own lookup rules is how two
+     * screens come to disagree about one customer at one instant, which is
+     * the exact defect BankInvestmentsHonestyLessonTest exists to keep dead.
+     *
+     * ASKED BY ACCOUNT ID, one asset at a time, rather than looked up in a
+     * product-shelf range scan. A range over id..id+600 is where the LEGACY
+     * instruments live (btc at +200, aapl at +300) and is nowhere near where
+     * a registered one does: a derived holding sits at ASSET_BASE +
+     * slot*SLOT_STRIDE + customer, a billion away. The range scan found
+     * exactly the two hardcoded instruments and silently reported every
+     * registered one as not held · the two-symbol blind spot, reintroduced by
+     * the shape of a query.
+     *
+     * EVERY MARK AT ONCE, rather than one at a time down the shelf. Serial
+     * PriceFeed.get calls cost a six-instrument shelf 546ms of upstream round
+     * trips in series (measured); the fan-out bounds a genuinely cold shelf
+     * to one round trip, and refresh-ahead makes even that rare.
+     *
+     * LOWERCASE, and it is not cosmetic. The registry stores symbols
+     * uppercase; PriceFeed keys them lowercase and routes "btc" to CoinGecko
+     * and everything else to Yahoo. Asking it for "BTC" misses the crypto
+     * branch and fetches a Yahoo equity that happens to share the ticker ·
+     * which priced bitcoin at €24.82 once. BrokerApi.quote() has done it this
+     * way all along.
+     *
+     * AN EXPIRED CONTRACT IS NOT PRICED AT ALL, and the feed is not even
+     * asked. Yahoo answers 404 for an expired option, a strike that never
+     * existed and a typo alike, and the upstream-down branch relabels the
+     * last price it saw as 'cached' with no age bound · so asking would hand
+     * back a dead contract's final premium as a current mark forever. The
+     * expiry date in the registry is the only thing that tells those 404s
+     * apart. An expired row carries a null Px and expired=true.
+     */
+    static List<Object[]> holdingsWithMarks(Connection c, long customerId) throws Exception {
+        java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneOffset.UTC);
+        List<Object[]> owned = new ArrayList<>();   // [Asset, holdingAccountId, units]
+        for (AssetRegistry.Asset a : AssetRegistry.all(c)) {
+            long assetAcct = a.holdingFor(customerId);
+            BigDecimal units = assetBalance(c, assetAcct);
+            if (units == null || units.signum() == 0) continue;
+            owned.add(new Object[]{a, assetAcct, units});
+        }
+        java.util.List<String> wanted = new ArrayList<>();
+        for (Object[] o : owned) {
+            AssetRegistry.Asset a = (AssetRegistry.Asset) o[0];
+            if (!a.expiredAsOf(today)) wanted.add(a.symbol().toLowerCase(java.util.Locale.ROOT));
+        }
+        java.util.Map<String, PriceFeed.Px> marks = PriceFeed.getAll(wanted);
+        List<Object[]> out = new ArrayList<>();
+        for (Object[] o : owned) {
+            AssetRegistry.Asset a = (AssetRegistry.Asset) o[0];
+            boolean expired = a.expiredAsOf(today);
+            PriceFeed.Px px = expired ? null
+                    : marks.get(a.symbol().toLowerCase(java.util.Locale.ROOT));
+            out.add(new Object[]{a, o[1], o[2], px, expired});
+        }
+        return out;
+    }
+
+    /** qty * price * MULTIPLIER · the one line that turns a holding into
+     *  money. The ledger holds contracts, not the shares they control, so the
+     *  contract size applies to the money and never to the units. Shared by
+     *  the portfolio rows, the portfolio total and the net worth strip ·
+     *  three copies of one multiplication is how screens start disagreeing. */
+    static BigDecimal positionValue(BigDecimal units, PriceFeed.Px px, BigDecimal multiplier) {
+        return units.multiply(px.price()).multiply(multiplier);
+    }
+
     private static Response portfolio(HttpExchange ex) throws Exception {
         String q = ex.getRequestURI().getQuery();
         String cust = null;
@@ -1413,72 +1493,13 @@ public final class HttpApi {
         int unpriced = 0, withoutPrevClose = 0, expiredCount = 0;
         java.time.Instant dayStart = java.time.LocalDate.now(java.time.ZoneOffset.UTC)
                 .atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
-        // [Asset, holdingAccountId, units] · collected first so every mark can
-        // be asked for in ONE fan-out rather than one at a time down the walk
-        List<Object[]> owned = new ArrayList<>();
         try (Connection c = home.open()) {
-            for (AssetRegistry.Asset a : AssetRegistry.all(c)) {
-                // ASKED BY ACCOUNT ID, one asset at a time, rather than looked
-                // up in the product-shelf map above. That map is filled by a
-                // range scan over id..id+600, which is where the LEGACY
-                // instruments live (btc at +200, aapl at +300) and is nowhere
-                // near where a registered one does: a derived holding sits at
-                // ASSET_BASE + slot*SLOT_STRIDE + customer, a billion away. So
-                // the range scan found exactly the two hardcoded instruments
-                // and silently reported every registered one as not held ·
-                // the same two-symbol blind spot this block exists to end,
-                // reintroduced by the shape of a query.
-                long assetAcct = a.holdingFor(id);
-                BigDecimal units = assetBalance(c, assetAcct);
-                if (units == null || units.signum() == 0) continue;
-                owned.add(new Object[]{a, assetAcct, units});
-            }
-            // EVERY MARK AT ONCE, rather than one at a time down the shelf.
-            //
-            // This loop used to call PriceFeed.get inside the walk above, so a
-            // six-instrument shelf paid its upstream calls IN SERIES: measured
-            // at 305ms across four Yahoo requests plus 145ms to CoinGecko plus
-            // 69ms to the fx-service, for a 546ms request whose database work
-            // was 15ms of it. BrokerApi.watchlist had exactly this bug and
-            // exactly this fix already; the fan-out it uses has been sitting
-            // in PriceFeed the whole time and this caller never took it.
-            //
-            // Refresh-ahead means these calls now almost always find a warm
-            // value and cost nothing at all. The fan-out is what bounds the
-            // remaining case · a genuinely cold shelf · to one round trip
-            // instead of six, and a cold shelf is precisely when it matters.
-            java.util.List<String> wanted = new ArrayList<>();
-            for (Object[] o : owned) {
-                AssetRegistry.Asset a = (AssetRegistry.Asset) o[0];
-                if (!a.expiredAsOf(java.time.LocalDate.now(java.time.ZoneOffset.UTC)))
-                    wanted.add(a.symbol().toLowerCase(java.util.Locale.ROOT));
-            }
-            java.util.Map<String, PriceFeed.Px> marks = PriceFeed.getAll(wanted);
-
-            for (Object[] o : owned) {
+            for (Object[] o : holdingsWithMarks(c, id)) {
                 AssetRegistry.Asset a = (AssetRegistry.Asset) o[0];
                 long assetAcct = (Long) o[1];
                 BigDecimal units = (BigDecimal) o[2];
-                // LOWERCASE, and it is not cosmetic. The registry stores
-                // symbols uppercase; PriceFeed keys them lowercase and routes
-                // "btc" to CoinGecko and everything else to Yahoo. Asking it
-                // for "BTC" misses the crypto branch and fetches a Yahoo
-                // equity that happens to share the ticker · which priced
-                // bitcoin at €24.82 here before this line said toLowerCase.
-                // BrokerApi.quote() has done it this way all along.
-                //
-                // AN EXPIRED CONTRACT IS NOT PRICED HERE AT ALL, and the feed
-                // is not even asked. Yahoo answers 404 for an expired option,
-                // for a strike that never existed and for a typo alike, and
-                // PriceFeed's upstream-down branch relabels the last price it
-                // saw as 'cached' with no age bound · so asking would hand
-                // back a dead contract's final premium as a current mark and
-                // this total would carry it forever. The expiry date is the
-                // only thing that tells those 404s apart, which is why it is
-                // in the registry rather than in a screen.
-                boolean expired = a.expiredAsOf(java.time.LocalDate.now(java.time.ZoneOffset.UTC));
-                PriceFeed.Px px = expired ? null
-                        : marks.get(a.symbol().toLowerCase(java.util.Locale.ROOT));
+                PriceFeed.Px px = (PriceFeed.Px) o[3];
+                boolean expired = (Boolean) o[4];
                 held.add(new Object[]{a.symbol(), a.label() == null ? a.symbol() : a.label(), units, px,
                         a.multiplier(), expired});
                 // EXPIRED IS COUNTED SEPARATELY FROM UNPRICED, because they
@@ -1491,13 +1512,10 @@ public final class HttpApi {
                 // along, in a row the tile's own headline does not read.
                 if (expired) { expiredCount++; continue; }
                 if (px == null || !px.priced()) { unpriced++; continue; }
-                // qty * price * MULTIPLIER · the ledger holds contracts, not
-                // the shares they control, so the contract size is applied to
-                // the money and never to the units. Without this the bank's
-                // own portfolio tile reports every option at a hundredth of
-                // its value, which is exactly why the multiplier is duplicated
-                // into asset_slots: this loop cannot read the broker's table.
-                invested = invested.add(units.multiply(px.price()).multiply(a.multiplier()));
+                // see positionValue for why the multiplier rides on the money
+                // · this loop cannot read the broker's table, which is exactly
+                // why the contract size is duplicated into asset_slots
+                invested = invested.add(positionValue(units, px, a.multiplier()));
                 // The day move needs BOTH ends. A holding with a mark but no
                 // prior close contributes to the value and to NEITHER end of
                 // the change · counting its current value against a missing
@@ -1566,7 +1584,7 @@ public final class HttpApi {
                // the same multiplication the total above used · a row and the
                // total it sums into must not disagree about the contract size
                .append("\",\"eur\":").append(priced
-                       ? "\"" + units.multiply(px.price()).multiply(multiplier)
+                       ? "\"" + positionValue(units, px, multiplier)
                                .setScale(2, java.math.RoundingMode.HALF_DOWN).toPlainString() + "\""
                        : "null")
                .append(",\"price\":").append(priced ? "\"" + plain(px.price()) + "\"" : "null")
@@ -1609,6 +1627,90 @@ public final class HttpApi {
                 "\",\"investments\":" + inv +
                 ",\"fxRate\":\"" + fx.rate().toPlainString() +
                 "\",\"fxSource\":\"" + Json.esc(fx.source()) + "\"}");
+    }
+
+    /**
+     * GET /api/networth?customer=N · THE WHOLE CUSTOMER IN ONE NUMBER.
+     *
+     *   total = main + savings + holdings at the marks + card debt + loan
+     *
+     * where the two debts are already negative the way the ledger holds them,
+     * so the total IS the sum of the breakdown and nothing here ever flips a
+     * sign twice. Every leg is a reading the bank already makes, reused:
+     *
+     *   main, savings, loan   the ledger's balances, read AT REQUEST TIME ·
+     *                         never cached at this layer, the same
+     *                         Ledger.cachedBalanceOn anchor the statement uses
+     *   card                  Credit.postedDebtAt · card + holds in one fold,
+     *                         so an uncaptured authorization is not yet debt
+     *                         and a release never reads as a repayment
+     *   invested              the same shelf walk and the same refresh-ahead
+     *                         marks portfolio() serves (holdingsWithMarks /
+     *                         positionValue) · only the marks are cached, and
+     *                         they carry their age
+     *
+     * The total is WITHHELD when any holding cannot be valued · the same
+     * stance as the Investments tile, for the same reason: a partial sum
+     * renders identically to a complete one, and the reader cannot tell which
+     * they got. The unpriced and expired counts say which reason it was.
+     *
+     * priceAgeSeconds is the OLDEST stale mark in the sum, null when every
+     * mark is current · the tile's own convention (priceSource 'cached'),
+     * carried through so a number rendered at balance size can say when it
+     * stopped being current.
+     */
+    private static Response networth(HttpExchange ex) throws Exception {
+        String cust = caller(qparam(ex, "customer"));
+        if (cust == null) return Response.json(400, "{\"error\":\"need ?customer=id\"}");
+        try {
+            long id = Long.parseLong(cust);
+            Shard home = Shards.forCustomer(id);
+            BigDecimal main, savings, card, loan;
+            BigDecimal invested = BigDecimal.ZERO;
+            int unpriced = 0, expired = 0;
+            long worstAge = -1;
+            try (Connection c = home.open()) {
+                main = Ledger.cachedBalanceOn(c, id);
+                savings = Ledger.cachedBalanceOn(c, id + Products.SAVINGS);
+                card = Credit.postedDebtAt(c, id, Instant.now());   // negative when the customer owes
+                loan = Ledger.cachedBalanceOn(c, id + Products.LOAN);
+                for (Object[] o : holdingsWithMarks(c, id)) {
+                    AssetRegistry.Asset a = (AssetRegistry.Asset) o[0];
+                    BigDecimal units = (BigDecimal) o[2];
+                    PriceFeed.Px px = (PriceFeed.Px) o[3];
+                    if ((Boolean) o[4]) { expired++; continue; }
+                    if (px == null || !px.priced()) { unpriced++; continue; }
+                    invested = invested.add(positionValue(units, px, a.multiplier()));
+                    if ("cached".equals(px.source()) && px.ageSeconds() >= 0)
+                        worstAge = Math.max(worstAge, px.ageSeconds());
+                }
+            }
+            boolean valueKnown = unpriced == 0 && expired == 0;
+            BigDecimal inv = valueKnown ? invested.setScale(2, java.math.RoundingMode.HALF_DOWN) : null;
+            BigDecimal total = valueKnown ? main.add(savings).add(inv).add(card).add(loan) : null;
+            StringBuilder b = new StringBuilder("{\"total\":")
+                    .append(total == null ? "null" : "\"" + plain(total) + "\"")
+                    .append(",\"breakdown\":[");
+            appendLeg(b, "main", main, "asset").append(',');
+            appendLeg(b, "savings", savings, "asset").append(',');
+            appendLeg(b, "invested", inv, "asset").append(',');
+            appendLeg(b, "card", card, "liability").append(',');
+            appendLeg(b, "loan", loan, "liability");
+            b.append("],\"unpriced\":").append(unpriced)
+             .append(",\"expired\":").append(expired)
+             .append(",\"priceAgeSeconds\":").append(worstAge < 0 ? "null" : String.valueOf(worstAge));
+            return Response.json(200, b.append('}').toString());
+        } catch (IllegalArgumentException e) {
+            return Response.json(400, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");
+        }
+    }
+
+    /** one breakdown row · kind is DECLARED so the screen colors liabilities
+     *  because the server said liability, not because it noticed a minus */
+    private static StringBuilder appendLeg(StringBuilder b, String label, BigDecimal amount, String kind) {
+        return b.append("{\"label\":\"").append(label)
+                .append("\",\"amount\":").append(amount == null ? "null" : "\"" + plain(amount) + "\"")
+                .append(",\"kind\":\"").append(kind).append("\"}");
     }
 
     /**

@@ -26,6 +26,18 @@
   .tab-btn { background:none; border:1px solid var(--line); color:var(--dim); padding:6px 16px;
              border-radius:999px; font:600 13px system-ui; cursor:pointer; }
   .tab-btn.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  /* ONE tab row for the whole shell · keyed on the BANK's own nav id, not on
+     the shared nav/.tab-btn selectors, because the portfolio page carries a
+     copy of those and theme-parity holds the copies identical. min-width:0
+     plus overflow lets the row scroll inside the header instead of
+     stretching the page the day it no longer fits · which is exactly the
+     phone behaviour, promoted to every width. */
+  #topnav { min-width:0; overflow-x:auto; scrollbar-width:none; }
+  #topnav::-webkit-scrollbar { display:none; }
+  #topnav .tab-btn { flex:none; white-space:nowrap; }
+  /* the seam between this service's tabs and the rest of the estate ·
+     one product, one row, a hairline where the process boundary is */
+  .nav-sep { flex:none; width:1px; align-self:stretch; background:var(--line); margin:0 4px; }
   main { max-width:1100px; margin:0 auto; padding:22px; }
   main:has(#tab-xray:not(.hidden)), main:has(#tab-console:not(.hidden)) { max-width:1520px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px; }
@@ -164,6 +176,15 @@
   .who .on { background:var(--violet); border-color:var(--violet); color:#fff; }
   .acct-card, .tx-card { border-radius:18px; }
   .acct-label { color:var(--dim); font-size:12px; font-weight:600; }
+  /* the net worth strip · the whole customer in one server-summed number,
+     wearing the same tokens as the balance it generalizes */
+  .nw-card { border-radius:18px; margin-bottom:16px; }
+  .nw-num { font-size:32px; font-weight:750; margin-top:2px; letter-spacing:-.4px;
+            font-variant-numeric:tabular-nums; line-height:1.2; }
+  .nw-break { display:flex; gap:14px; flex-wrap:wrap; margin-top:5px; color:var(--dim);
+              font-size:12px; font-variant-numeric:tabular-nums; }
+  .nw-break b { color:var(--text); font-weight:650; }
+  .nw-break b.amount-neg { color:var(--red); }
   .balance-num { font-size:46px; font-weight:750; margin:4px 0 10px; letter-spacing:-.5px; }
   .actions { display:flex; gap:22px; margin:6px 0 4px; }
   .action { background:none; border:none; color:var(--text); display:flex; flex-direction:column; align-items:center;
@@ -668,6 +689,7 @@
     #scalesvg { min-width:780px; }
     main { padding:12px; }
     .balance-num { font-size:38px; }
+    .nw-num { font-size:27px; }
     .actions { gap:14px; }
     .action-ic { width:42px; height:42px; }
     .hero-title { font-size:42px; }
@@ -686,7 +708,7 @@
 <script src="https://auth.b4rruf3t.com/eco-nav.js" defer></script>
 <header>
   <h1 id="homelink">mini<span>bank</span></h1>
-  <nav>
+  <nav id="topnav">
     <button class="tab-btn on" data-tab="app">App</button>
     <!-- Invest sits beside App, not inside it. Until now the only door to the
          broker was a button inside the Investments tile, which you had to know
@@ -700,6 +722,17 @@
     <button class="tab-btn" data-tab="console">Console</button>
     <button class="tab-btn" data-tab="quiz">Quiz</button>
     <button class="tab-btn" id="nav-show" title="a 60-second guided, self-driving demo">▶ Show</button>
+    <span class="nav-sep" aria-hidden="true"></span>
+    <!-- THE ESTATE, first-class. The other services wear the same pills as
+         this bank's own tabs because to the customer they are one product ·
+         which is also why they open in the SAME window: a tab bar that
+         spawns windows is a link list wearing a tab bar's clothes. The
+         wordmark on the left is what names the service you are in. -->
+    <a class="tab-btn" href="https://mart.b4rruf3t.com" style="text-decoration:none">Mart</a>
+    <a class="tab-btn" href="https://pay.b4rruf3t.com" style="text-decoration:none">Pay</a>
+    <a class="tab-btn" href="https://desk.b4rruf3t.com" style="text-decoration:none">Trade</a>
+    <a class="tab-btn" href="https://b4rruf3t.com" style="text-decoration:none">Portal</a>
+    <span class="nav-sep" aria-hidden="true"></span>
     <a class="tab-btn" href="https://github.com/igorfyago/minibank" target="_blank" style="text-decoration:none">GitHub</a>
   </nav>
 </header>
@@ -709,6 +742,17 @@
   <section id="tab-app">
     <div class="phone">
       <div class="who" id="who"></div>
+      <!-- NET WORTH · the Revolut moment. One number for the whole customer,
+           summed by the SERVER from the ledger at request time
+           (/api/networth): main + savings + holdings at the marks + card
+           debt + loan, debts already negative. The browser only formats ·
+           the sum lives where it can be audited, and the stale-mark age
+           rides along exactly as it does on the Investments tile. -->
+      <div class="card nw-card" id="nw-card">
+        <div class="acct-label">Net worth</div>
+        <div class="nw-num" id="nw-total"><span class="sk" style="display:inline-block;width:170px;height:32px;border-radius:10px;vertical-align:middle"></span></div>
+        <div class="nw-break" id="nw-break"></div>
+      </div>
       <div class="card acct-card hidden" id="signup-panel" style="margin-bottom:16px">
         <h2>New customer</h2>
         <div class="send-row" style="margin-top:8px">
@@ -724,7 +768,6 @@
       <div class="card acct-card">
         <div class="acct-label" id="acct-label">Main · EUR</div>
         <div class="balance-num" id="balance"><span class="sk" style="display:inline-block;width:190px;height:44px;border-radius:12px;vertical-align:middle"></span></div>
-        <div class="muted" id="networth" style="margin:-4px 0 6px; font-size:13px"></div>
         <div class="actions">
           <button class="action" id="act-add"><span class="action-ic">+</span>Add money</button>
           <button class="action" id="act-send"><span class="action-ic">↑</span>Send</button>
@@ -1317,7 +1360,7 @@ async function loadAccounts() {
     if (keep) $('#send-to').value = keep;
   }
 }
-window.switchUser = id => { me = id; lastTx = null; prevStmtSig = ''; prevPortSig = ''; chatLog = []; if (!$('#chat-panel').classList.contains('hidden')) chatHello(); loadAccounts(); loadStatement(); loadPortfolio(); };
+window.switchUser = id => { me = id; lastTx = null; prevStmtSig = ''; prevPortSig = ''; prevNwSig = ''; chatLog = []; if (!$('#chat-panel').classList.contains('hidden')) chatHello(); loadAccounts(); loadStatement(); loadPortfolio(); loadNetworth(); };
 
 function uuid() { return crypto.randomUUID(); }
 
@@ -1665,9 +1708,6 @@ async function loadPortfolio() {
   const tile = (k, head, body) => `<div class="prod expandable${openProd === k ? ' open' : ''}" onclick="prodOpen('${k}')">
     <span class="prod-chev">›</span>${head}
     ${openProd === k ? `<div class="prod-x" onclick="event.stopPropagation()">${body}</div>` : ''}</div>`;
-  const nwEl = document.querySelector('#networth');
-  if (nwEl) nwEl.textContent = total === null ? 'net worth not available · a holding has no live price'
-    : 'net worth ' + fmt(total) + (Number(pf.loan) < 0 || Number(pf.card) < 0 ? ' (after debts)' : '');
   $('#prods').innerHTML =
     `<div class="prod"><div class="prod-name">💠 Total wealth</div>
       <div class="prod-val">${total === null ? '<span class="prod-sub">not available</span>' : fmt(total)}</div>
@@ -1722,6 +1762,45 @@ async function loadPortfolio() {
   if (openProd === 'iv' && ivAsset) loadChart('iv', ivAsset);
   // the credit lifecycle block fills in behind the paint, like the history
   if (openProd === 'cd') loadCreditTile();
+}
+
+/* THE NET WORTH STRIP · /api/networth is the server's own sum over the
+   ledger at request time; this function only formats it. Liabilities arrive
+   negative and DECLARED (kind:'liability'), so the red is the server's
+   claim, not a minus-sign heuristic here. It rides the same 2s cadence as
+   every other loader and the refreshAll tail, so it moves when the money
+   does · and "prices as of Ns ago" appears only when the marks are stale,
+   the exact convention the Investments tile uses. */
+let prevNwSig = '';
+async function loadNetworth() {
+  if (me === null) return;
+  const nw = await api('/api/networth?customer=' + me);
+  const sig = JSON.stringify(nw);
+  if (sig === prevNwSig) return;
+  prevNwSig = sig;
+  if (nw.total === null || nw.total === undefined) {
+    // the same honesty as the tile: a partial sum renders identically to a
+    // complete one, so the server withheld it and said which reason
+    const exp = Number(nw.expired || 0), un = Number(nw.unpriced || 0);
+    $('#nw-total').innerHTML = '<span class="prod-sub">not available</span>';
+    $('#nw-break').textContent = exp > 0 && un > 0
+        ? `${exp} expired and ${un} unpriced holding${un === 1 ? '' : 's'} · total withheld`
+      : exp > 0
+        ? `${exp} expired contract${exp === 1 ? '' : 's'} cannot be valued · total withheld`
+        : 'a holding has no live price right now · total withheld';
+    return;
+  }
+  const money = v => (Number(v) < 0 ? '−' : '') + fmt(Math.abs(v));
+  $('#nw-total').textContent = money(nw.total);
+  const legs = (nw.breakdown || []).map(l => l.amount === null ? '' :
+    `<span>${l.label} <b${l.kind === 'liability' && Number(l.amount) < 0 ? ' class="amount-neg"' : ''}>${money(l.amount)}</b></span>`)
+    .join('');
+  let stale = '';
+  if (nw.priceAgeSeconds !== null && nw.priceAgeSeconds !== undefined) {
+    const worst = Number(nw.priceAgeSeconds);
+    stale = `<span>prices as of ${worst < 90 ? worst + 's' : Math.round(worst / 60) + ' min'} ago</span>`;
+  }
+  $('#nw-break').innerHTML = legs + stale;
 }
 
 /* MINICREDIT · the cycle, the statement and the accruing interest, drawn
@@ -1823,6 +1902,7 @@ function refreshAll() {
   refreshTimers.forEach(clearTimeout); refreshTimers = [];
   REFRESH_TAIL_MS.forEach(delay => refreshTimers.push(setTimeout(() => {
     loadAccounts(); prevStmtSig = ''; loadStatement(); prevPortSig = ''; loadPortfolio();
+    prevNwSig = ''; loadNetworth();   // the strip is a view of the same money
     // the map and the feed are views of the same money · refresh them whether
     // or not their tab happens to be the one in front
     try { xrayTick(); } catch (e) { console.error('refreshAll: xrayTick', e); }
@@ -4429,7 +4509,7 @@ dashTick();
 const tick = fn => { try { const p = fn(); if (p && p.catch) p.catch(() => {}); } catch (e) {} };
 
 setReplayable(false);   // nothing is selected yet, and the buttons must say so
-tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); renderQuiz(); gShow('welcome');
+tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); tick(loadNetworth); renderQuiz(); gShow('welcome');
 $('#homelink').onclick = () => switchTab('app');
 /* DEEP LINKS.
  *
@@ -4461,7 +4541,7 @@ function applyHash() {
 applyHash();
 window.addEventListener('hashchange', applyHash);
 if (location.hash === '#send') { $('#send-panel').classList.remove('hidden'); segPaint(); }
-setInterval(() => { tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); tick(renderExt); if (!$('#tab-xray').classList.contains('hidden')) tick(xrayTick); if (!$('#tab-console').classList.contains('hidden')) tick(kafkaTick); }, 2000);
+setInterval(() => { tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); tick(loadNetworth); tick(renderExt); if (!$('#tab-xray').classList.contains('hidden')) tick(xrayTick); if (!$('#tab-console').classList.contains('hidden')) tick(kafkaTick); }, 2000);
 </script>
 </body>
 </html>
