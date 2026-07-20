@@ -70,6 +70,28 @@ class ConsumerThreadLessonTest {
         }
     }
 
+    @Test
+    void everyPollLoopOwnsItsOffsets() {
+        // enable.auto.commit defaults to TRUE, and true means the offset
+        // advances on the next poll whether or not the handler succeeded · a
+        // transient failure (a DB blip, an exhausted pool) becomes a
+        // permanently lost event, silently. For the shard applier that
+        // strands a cross-region transfer's arrival in IN_TRANSIT forever.
+        // The broker-side consumers learned this first; every poll loop in
+        // this service follows the same doctrine: commit only after the
+        // batch has been dealt with, and what will not go through is parked,
+        // not dropped.
+        for (String file : POLL_LOOPS) {
+            String src = read(file);
+            assertTrue(src.contains("p.put(\"enable.auto.commit\", \"false\")"),
+                    file + " must own its offsets · the auto-commit default silently discards "
+                            + "any event whose handler failed");
+            assertTrue(src.contains("consumer.commitSync()"),
+                    file + " must commit only after the batch has been handled, so a crash "
+                            + "mid-batch redelivers rather than skips");
+        }
+    }
+
     private static String read(String simpleName) {
         Path p = Path.of("src/main/java/dev/minibank/ledger", simpleName);
         try {

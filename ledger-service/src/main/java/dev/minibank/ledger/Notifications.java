@@ -23,7 +23,10 @@ public final class Notifications {
 
     private Notifications() {}
 
-    private static Connection openOwnDb() throws SQLException {
+    /** Package-visible for one caller: the consumer's park path writes its
+     *  dead letters here too · same database, same fate as the rows it
+     *  could not write. */
+    static Connection openOwnDb() throws SQLException {
         String base = System.getenv().getOrDefault("MINIBANK_DB_URL", "jdbc:postgresql://localhost:5433/minibank");
         String url = base.substring(0, base.lastIndexOf('/') + 1) + DB;
         return DriverManager.getConnection(url, "minibank", "minibank");
@@ -44,6 +47,12 @@ public final class Notifications {
         String base = System.getenv().getOrDefault("MINIBANK_DB_URL", "jdbc:postgresql://localhost:5433/minibank");
         String url = base.substring(0, base.lastIndexOf('/') + 1) + DB;
         Migrate.run(url, "minibank", "minibank", "classpath:db/notifications");
+        // the consumer's dead letters live in this database too · the same
+        // idempotent DDL the shards use (Ledger.createSchemaOn does exactly
+        // this), so the park path always has somewhere durable to land
+        try (Connection c = openOwnDb()) {
+            DeadLetter.createTableOn(c);
+        }
     }
 
     /** Handle one event. Safe to call any number of times with the same event. */

@@ -12,6 +12,8 @@ package dev.minibank.ledger;
  *   outbox relays ................. one virtual thread PER SHARD -> Kafka
  *   shard applier ................. Kafka -> destination shard (arrivals)
  *   notifications consumer ........ Kafka -> its own database
+ *   sweeper ....................... re-publishes departures whose arrival
+ *                                   never happened (stranded IN_TRANSIT)
  *
  * Requires: docker compose up -d   (shards :5434/:5435, kafka :9092,
  *                                   postgres :5433 hosts notifications)
@@ -74,6 +76,10 @@ public final class Main {
         ShardApplier.start(kafka);
         Settlement.start(kafka);        // settles the broker service's fills
         NotificationsConsumer.start(kafka);
+        // the reconciler for stranded sagas: departures past a threshold with
+        // no arrival and no bounce are re-published through the outbox, and
+        // the applier's idempotent gate makes the redelivery land exactly once
+        Sweeper.start();
 
         // metrics sampler · keeps the Prometheus gauges fresh on their own
         // interval, so a scrape is accurate whether or not anyone is looking

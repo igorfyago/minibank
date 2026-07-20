@@ -5,6 +5,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 
 import java.math.BigDecimal;
+import java.sql.Connection;
 import java.time.Duration;
 import java.util.List;
 import java.util.Properties;
@@ -26,7 +27,63 @@ import java.util.UUID;
  */
 public final class ShardApplier {
 
+    public static final String TOPIC_PAYMENTS = "payments";
+    private static final String GROUP = "shard-applier";
+
     private ShardApplier() {}
+
+    /** How many times an arrival is re-attempted before it is recorded as stuck. */
+    static final int ATTEMPTS = 3;
+
+    /**
+     * Apply one record, retrying, and record it as stuck if it will not go.
+     *
+     * Same shape as Settlement.deliver, deliberately: this consumer MOVES THE
+     * MONEY, so the doctrine that protects the broker's settlements protects
+     * it too. arrive() and refund() are both gated on ids claimed inside their
+     * own effect transaction, so a re-attempt after a partial failure either
+     * finds the claim taken (AlreadyProcessed, nothing moves) or starts clean
+     * · which is what makes retrying safe here rather than a second way to
+     * pay someone twice.
+     */
+    static void deliver(String payload) {
+        Exception last = null;
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            try {
+                handle(payload);
+                return;
+            } catch (Exception e) {
+                last = e;
+                if (attempt < ATTEMPTS) {
+                    try {
+                        Thread.sleep(200L * attempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+        park(payload, last);
+    }
+
+    /** The durable admission, on the DESTINATION customer's shard · the shard
+     *  whose arrival would not go through. If even THIS fails the process is
+     *  in no state to hide it, so it goes to stderr as a last resort rather
+     *  than silently. */
+    static void park(String payload, Exception cause) {
+        String key = Json.str(payload, "type") + ":" + Json.str(payload, "txId");
+        try {
+            long to = Long.parseLong(Json.num(payload, "to"));
+            try (Connection c = Shards.forCustomer(to).open()) {
+                DeadLetter.record(c, GROUP, key, TOPIC_PAYMENTS, payload,
+                        cause == null ? "unknown" : cause.toString(), ATTEMPTS);
+            }
+        } catch (Exception e) {
+            System.err.println("applier: could not record dead letter for " + key + ": " + e);
+        }
+        System.err.println("applier STUCK · " + key + " · " + cause);
+    }
 
     /** Handle one event. Deterministic and safe to call repeatedly · the
      *  tests feed it the exact payloads the outbox wrote. */
@@ -60,21 +117,25 @@ public final class ShardApplier {
         return Thread.ofPlatform().name("shardapplier").daemon().start(() -> {
             Properties p = new Properties();
             p.put("bootstrap.servers", bootstrapServers);
-            p.put("group.id", "shard-applier");           // its own offsets, its own pace
+            p.put("group.id", GROUP);                     // its own offsets, its own pace
             p.put("auto.offset.reset", "earliest");
+            // See SettlementConsumer: auto-commit defaulted to true, so an
+            // arrival that threw was dropped with its offset already past it.
+            // For THIS consumer that is not a stuck order · it is money that
+            // departed one region and will never land in the other, sitting
+            // in IN_TRANSIT with nothing left to move it. The arrival is
+            // idempotent (arrive claims the txId inside its own transaction),
+            // which is exactly why NOT committing on failure is correct: a
+            // redelivery of work already done settles into the gate.
+            p.put("enable.auto.commit", "false");
             p.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
             p.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
             try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(p)) {
-                consumer.subscribe(List.of("payments"));
+                consumer.subscribe(List.of(TOPIC_PAYMENTS));
                 while (!Thread.currentThread().isInterrupted()) {
                     ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
-                    for (ConsumerRecord<String, String> r : records) {
-                        try {
-                            handle(r.value());
-                        } catch (Exception e) {
-                            System.err.println("applier: " + e.getMessage());
-                        }
-                    }
+                    for (ConsumerRecord<String, String> r : records) deliver(r.value());
+                    if (!records.isEmpty()) consumer.commitSync();
                 }
             } catch (org.apache.kafka.common.errors.InterruptException ignored) {
             }
