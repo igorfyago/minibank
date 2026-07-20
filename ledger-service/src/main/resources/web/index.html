@@ -541,6 +541,17 @@
      reads the whole thing: violet is still to come, green has happened. */
   .edge.planned { stroke:var(--violet); stroke-width:2; opacity:.5; }
   .edge.visited { stroke:var(--green); stroke-width:2.2; opacity:.95; }
+  /* A PIPE YOU CAN ACTUALLY CLICK. The audit found the boxes clickable and the
+     lines inert · a hairline is an impossible target even with a handler. Each
+     mapped edge gets an invisible 12px-wide twin (generated at load from the
+     drawn line, so the coordinates cannot drift), and hovering it lights the
+     real line so the affordance announces itself. The drawn lines themselves
+     stop catching the pointer, so the fat twin is the one surface a click
+     lands on. */
+  .edge[data-edge] { pointer-events:none; }
+  .edge-hit { stroke:transparent; stroke-width:12; fill:none;
+    pointer-events:stroke; cursor:pointer; animation:none; }
+  .edge-hit:hover + .edge[data-edge] { stroke:var(--accent); opacity:1; }
   .xlegend { display:flex; flex-wrap:wrap; justify-content:center; gap:6px 18px;
     margin-top:9px; font-size:11px; color:var(--dim); line-height:1.5; }
   .xlg { display:inline-flex; align-items:flex-start; gap:8px; max-width:340px; text-align:left; }
@@ -2430,15 +2441,66 @@ document.querySelectorAll('.node').forEach(n => n.onclick = () => {
   const plan = MB.mapClickPlan({ node: k, txs: txsTouching(k) });
   if (plan.mode === 'play') { traceTx(plan.tx, true).catch(() => {}); return; }
   if (plan.mode === 'filter') {
-    // emphasise, list, and leave whatever is running alone
+    // emphasise, list, and leave whatever is running alone · the filter is
+    // STATE (dimTxs), so it survives the feed repainting under it
+    dimTxs = plan.txs;
     document.querySelectorAll('#ticker .tick-item').forEach(el =>
       el.classList.toggle('dim', plan.txs.indexOf(el.dataset.tx) < 0));
     inspect(k);
     return;
   }
+  dimTxs = null;
   document.querySelectorAll('#ticker .tick-item.dim').forEach(el => el.classList.remove('dim'));
   inspect(k);
 });
+
+/* CLICKING A LINE ON THE MAP.
+ *
+ * The boxes had handlers and the pipes between them had none (the audit's
+ * finding), and a hairline could not have caught a click anyway. armEdgeClicks
+ * lays an invisible 12px twin over every drawn edge · cloned from the visible
+ * line at load, so the coordinates cannot drift · and the click runs the SAME
+ * plan machinery a node click runs: MB.edgeTxs asks whose journeys traverse
+ * this pipe, MB.mapClickPlan says what that means. One traveller is plainly
+ * the one meant and is traced; several are a filter on the ticker, as state;
+ * none means explaining the component the pipe feeds, which is the closest
+ * thing a line has to an inspector. */
+function edgeItems() {
+  /* eventToStep is the one place that knows the settlements-topic wrinkle ·
+     the lib question is asked in the vocabulary journeys actually use. */
+  return (latestEvents || []).map(e => ({ tx: e.tx, step: eventToStep(e) }));
+}
+
+function edgeClick(name) {
+  const txs = MB.edgeTxs(name, edgeItems(), MAP);
+  const plan = MB.mapClickPlan({ node: name, txs });
+  if (plan.mode === 'play') { traceTx(plan.tx, true).catch(() => {}); return; }
+  if (plan.mode === 'filter') {
+    dimTxs = plan.txs;
+    document.querySelectorAll('#ticker .tick-item').forEach(el =>
+      el.classList.toggle('dim', plan.txs.indexOf(el.dataset.tx) < 0));
+    return;
+  }
+  dimTxs = null;
+  document.querySelectorAll('#ticker .tick-item.dim').forEach(el => el.classList.remove('dim'));
+  const to = String(name).split('_')[1];
+  if (to) gShow(to);
+}
+
+function armEdgeClicks() {
+  document.querySelectorAll('line.edge[data-edge]').forEach(line => {
+    const hit = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    ['x1', 'y1', 'x2', 'y2'].forEach(a => hit.setAttribute(a, line.getAttribute(a)));
+    hit.setAttribute('class', 'edge-hit');
+    hit.dataset.edgeHit = line.dataset.edge;    // never data-edge · the route
+    // marking and the geometry guards must keep seeing exactly one line each
+    hit.onclick = () => edgeClick(line.dataset.edge);
+    // BEFORE the drawn line: invisible anyway, and the adjacent-sibling hover
+    // rule (.edge-hit:hover + .edge) is what lights the real line up
+    line.parentNode.insertBefore(hit, line);
+  });
+}
+armEdgeClicks();
 
 /* ---- the inspector: click a component, see ITS real rows ---- */
 let inspectNode = null, prevInspSig = '';
@@ -2670,6 +2732,15 @@ function openConcept(k) {
 const seen = new Set(), tickIds = new Set();
 let firstPoll = true, activeTrace = null, latestEvents = [];
 let prevTickSig = '', prevEntSig = '';
+/* The map-click filter, AS STATE. It used to live only in the .dim classes on
+   the rows, so the first feed change rebuilt the list and the filter silently
+   evaporated · and a new row arriving while it stood was never dimmed at all.
+   The classes are derived from this on every paint; null means no filter. */
+let dimTxs = null;
+/* The selected trace's refresh bookkeeping · which tx is being watched, how
+   many consecutive re-reads grew nothing, and whether the watch has concluded.
+   The verdict itself is MB.traceRefreshPlan; this is only the memory it needs. */
+let traceWatch = null;
 /* THE ICONS COVER EVERY SPELLING, because the feed uses the live vocabulary and
    this table only knew the trace one. 'bounced' and 'notified' fell through to
    the '·' fallback beside their own aliases, and the rare kinds · trades,
@@ -2689,6 +2760,80 @@ function iconFor(type) {
   if (/^settle:/.test(t)) return '🧾';
   if (/^trade:/.test(t)) return '📈';
   return '·';
+}
+
+/** A row's identity in the feed. Type + tx + ts, the same triple `seen` and
+ *  `tickIds` already key on · one event, one row, however often it repaints. */
+function tickKey(e) {
+  return e.type + e.tx + e.ts;
+}
+
+/** One fresh row. The click handler is a property, not a serialized attribute,
+ *  so the payload needs no HTML escaping and survives any reconcile. */
+function buildTickRow(e) {
+  const el = document.createElement('div');
+  el.className = 'tick-item';
+  el.dataset.key = tickKey(e);
+  el.dataset.tx = e.tx;
+  el.onclick = () => tickClick(JSON.stringify(e));
+  el.innerHTML = `<div class="tick-ic">${iconFor(e.type)}</div>
+    <div class="tick-main">${evLine(e)}<div class="tick-sub">${new Date(e.ts).toLocaleTimeString()} · tx ${e.tx.slice(0, 8)}…</div></div>
+    <span class="chip ${e.region}">${e.region}</span>`;
+  return el;
+}
+
+/* THE LIST IS RECONCILED, NEVER REBUILT.
+ *
+ * This used to assign #ticker's innerHTML whenever the top-N signature
+ * changed, which on a busy bank is every other tick. Every row the reader was
+ * hovering, scrolling past or mid-click on was destroyed and replaced by a
+ * lookalike: the click landed on nothing, the scroll position snapped back,
+ * and the dim filter evaporated with the old markup. The audit called it out
+ * twice and it was deferred as "means diffing rows rather than replacing
+ * wholesale". This is that diff.
+ *
+ * The DECISION lives in lib.js: MB.reconcileRows says, from the keys alone,
+ * which rows are inserted, kept and removed and in what order, and it is unit
+ * tested over every shape of feed change. This function only executes the
+ * plan: kept rows are the SAME nodes, inserts are built fresh and slide in,
+ * removals leave, and the scroll position is put back if the reader was away
+ * from the top. `picked` and `dim` are DERIVED from state on every paint ·
+ * activeTrace and dimTxs · never inherited from what the old HTML carried,
+ * which is also what finally dims a new row arriving inside a standing filter. */
+function renderTicker(top) {
+  const tk = $('#ticker');
+  if (!tk) return;
+  if (!top.length) {
+    tk.innerHTML = '<span class="muted">quiet · send some money on the App tab</span>';
+    return;
+  }
+  const scroll = tk.scrollTop;
+  const oldRows = Array.from(tk.querySelectorAll('.tick-item[data-key]'));
+  if (!oldRows.length) tk.innerHTML = '';       // the placeholder or the stall notice
+  const byKey = {};
+  oldRows.forEach(el => { byKey[el.dataset.key] = el; });
+  const evByKey = {};
+  top.forEach(e => { const k = tickKey(e); if (!(k in evByKey)) evByKey[k] = e; });
+  const plan = MB.reconcileRows(oldRows.map(el => el.dataset.key), top.map(tickKey));
+  if (plan.changed) {
+    plan.removed.forEach(k => byKey[k].remove());
+    plan.rows.forEach((r, i) => {
+      let el = byKey[r.key];
+      if (r.act === 'insert') {
+        el = buildTickRow(evByKey[r.key]);
+        if (!tickIds.has(r.key) && !firstPoll) el.classList.add('new');
+      } else {
+        // re-inserting a node re-runs its entry animation · a kept row is not news
+        el.classList.remove('new');
+      }
+      if (tk.children[i] !== el) tk.insertBefore(el, tk.children[i] || null);
+    });
+  }
+  Array.from(tk.children).forEach(el => {
+    el.classList.toggle('picked', !!activeTrace && el.dataset.tx === activeTrace.tx);
+    el.classList.toggle('dim', !!dimTxs && dimTxs.indexOf(el.dataset.tx) < 0);
+  });
+  if (scroll > 0 && tk.scrollTop !== scroll) tk.scrollTop = scroll;
 }
 
 async function xrayTick() {
@@ -2751,19 +2896,14 @@ async function xrayTick() {
   // twice the history · the feed is the main way into a transaction, and seven
   // rows covered barely a minute of a busy bank
   const top = evs.slice(0, 14);
-  const sig = top.map(e => e.type + e.tx + e.ts).join('|');
+  const sig = top.map(tickKey).join('|');
   if (sig !== prevTickSig) {
     prevTickSig = sig;
     if ($('#ticker')) delete $('#ticker').dataset.stale;   // a repaint means the feed is live again
-    $('#ticker').innerHTML = top.map(e => {
-      const id = e.type + e.tx + e.ts, isNew = !tickIds.has(id) && !firstPoll;
-      const picked = activeTrace && activeTrace.tx === e.tx;
-      return `<div class="tick-item${isNew ? ' new' : ''}${picked ? ' picked' : ''}" data-tx="${e.tx}" onclick='tickClick(${JSON.stringify(JSON.stringify(e))})'>
-        <div class="tick-ic">${iconFor(e.type)}</div>
-        <div class="tick-main">${evLine(e)}<div class="tick-sub">${new Date(e.ts).toLocaleTimeString()} · tx ${e.tx.slice(0, 8)}…</div></div>
-        <span class="chip ${e.region}">${e.region}</span></div>`;
-    }).join('') || '<span class="muted">quiet · send some money on the App tab</span>';
-    top.forEach(e => tickIds.add(e.type + e.tx + e.ts));
+    /* Reconciled by row identity, not rebuilt · see renderTicker. The keys go
+       into tickIds AFTER the paint, because `new` means "not seen before it". */
+    renderTicker(top);
+    top.forEach(e => tickIds.add(tickKey(e)));
   }
 
   firstPoll = false;
@@ -2905,8 +3045,36 @@ window.tickClick = evJson => { const e = JSON.parse(evJson);
      consumed or a 429 is an unhandled promise rejection in the console. */
   traceTx(e.tx, true).catch(() => {}); };
 
+/** The panel itself · head, tx id, step list · shared by selection and by the
+ *  refresher that keeps an open panel honest while its saga finishes. Pulled
+ *  out of renderTrace so the refresh path cannot drift into a second template,
+ *  and so it can repaint WITHOUT renderTrace's side effects (killing the
+ *  pending loop lap, ending the dim filter, resetting the watch). */
+function paintTracePanel(tr, tx) {
+  const t0 = new Date(tr.steps[0].ts).getTime();
+  const total = new Date(tr.steps[tr.steps.length - 1].ts).getTime() - t0;
+  $('#trace-card').hidden = false;
+  $('#trace-tx').textContent = tx.slice(0, 13) + '…';
+  $('#trace-head').textContent = `${who(tr.payer)} → ${who(tr.payee || 'the pipe')}${tr.amount ? ' · ' + eur(tr.amount) : ''} · ${total}ms end to end`;
+  $('#trace-steps').innerHTML = tr.steps.map((st, i) => {
+    const dt = i === 0 ? 0 : new Date(st.ts).getTime() - new Date(tr.steps[i - 1].ts).getTime();
+    /* The fallback the ticker already had. Without it, clicking a trace step
+       for a kind the guide has no entry for reached gShow with a dead key. */
+    const want = st.step === 'transfer' ? 'ev:transfer_local' : 'ev:' + st.step;
+    const subj = GUIDE[want] ? want : 'entry';
+    return `<div class="trace-step" onclick='gShow("${subj}",{ev:{type:"${st.step === 'transfer' ? 'transfer_local' : st.step}",region:"${st.region}",payer:"${tr.payer || ''}",payee:"${tr.payee || ''}",amount:"${tr.amount || ''}",tx:"${tx}"}})'>
+      <b style="flex:none">${st.region}</b><span class="muted">${st.detail}</span>
+      <span class="lat">${i === 0 ? new Date(st.ts).toLocaleTimeString() : '+' + dt + 'ms'}</span></div>`;
+  }).join('');
+  return total;
+}
+
 function renderTrace(tr, tx) {
   activeTrace = tr;
+  /* A fresh selection is a fresh watch. The refresher (traceRefreshTick) keeps
+     this panel honest while the saga is still landing; its bookkeeping must
+     not leak from the previous transaction into this one. */
+  traceWatch = { tx: tx, unchanged: 0, done: false };
   clearTimeout(loopTimer); loopTimer = null;   // never loop the journey you just left
   /* Decide whether this journey CAN be drawn at selection time, not at play
      time. setReplayable used to be called only inside playTrace, so choosing an
@@ -2933,25 +3101,12 @@ function renderTrace(tr, tx) {
      dimmest, hardest-to-read row in the list, and on an idle bank it stayed
      that way indefinitely. Choosing a transaction ends the filter it was
      excluded by. */
+  dimTxs = null;
   document.querySelectorAll('#ticker .tick-item').forEach(el => {
     el.classList.remove('dim');
     el.classList.toggle('picked', el.dataset.tx === tr.tx);
   });
-  const t0 = new Date(tr.steps[0].ts).getTime();
-  const total = new Date(tr.steps[tr.steps.length - 1].ts).getTime() - t0;
-  $('#trace-card').hidden = false;
-  $('#trace-tx').textContent = tx.slice(0, 13) + '…';
-  $('#trace-head').textContent = `${who(tr.payer)} → ${who(tr.payee || 'the pipe')}${tr.amount ? ' · ' + eur(tr.amount) : ''} · ${total}ms end to end`;
-  $('#trace-steps').innerHTML = tr.steps.map((st, i) => {
-    const dt = i === 0 ? 0 : new Date(st.ts).getTime() - new Date(tr.steps[i - 1].ts).getTime();
-    /* The fallback the ticker already had. Without it, clicking a trace step
-       for a kind the guide has no entry for reached gShow with a dead key. */
-    const want = st.step === 'transfer' ? 'ev:transfer_local' : 'ev:' + st.step;
-    const subj = GUIDE[want] ? want : 'entry';
-    return `<div class="trace-step" onclick='gShow("${subj}",{ev:{type:"${st.step === 'transfer' ? 'transfer_local' : st.step}",region:"${st.region}",payer:"${tr.payer || ''}",payee:"${tr.payee || ''}",amount:"${tr.amount || ''}",tx:"${tx}"}})'>
-      <b style="flex:none">${st.region}</b><span class="muted">${st.detail}</span>
-      <span class="lat">${i === 0 ? new Date(st.ts).toLocaleTimeString() : '+' + dt + 'ms'}</span></div>`;
-  }).join('');
+  const total = paintTracePanel(tr, tx);
   /* THE WHOLE ROUTE, MARKED THE MOMENT IT IS SELECTED.
    *
    * What stood here was a hand written guess at the path:
@@ -3052,6 +3207,57 @@ async function traceTx(tx, auto = false) {
   gShow('trace', { tr, total });
   if (d.play) playTrace(tr);
   else if (!d.canDraw && looping) setLooping(false);
+}
+
+/* THE OPEN PANEL FOLLOWS ITS TRANSACTION.
+ *
+ * Once a trace was selected, no code path ever re-read /api/xray/trace for it
+ * (audit trigger 15): a payment clicked mid-flight · commit landed, publish
+ * and arrival still coming · kept showing its half-finished step list for as
+ * long as the panel stayed open. The 2s cadence now asks MB.traceRefreshPlan,
+ * which reuses followPlan's completeness reading (traceOwing plus "stopped
+ * growing"), whether this tick should look again. Terminal traces stop the
+ * watch outright, so a replayed old payment costs nothing, and a quiet kind
+ * is confirmed exactly once.
+ *
+ * When the step list GREW, the panel is re-rendered and the violet route
+ * extended · and NOTHING else. No playTrace, no stopPlay, no playingUntil:
+ * the running animation is never restarted and the map is never stolen. The
+ * markPlanned rule (already-reached marks are left alone) is what makes the
+ * extension honest: history stays green, only the new tail is a plan. */
+async function traceRefreshTick() {
+  if (!activeTrace || following || !traceWatch || traceWatch.done) return;
+  const tx = traceWatch.tx;
+  const plan = MB.traceRefreshPlan({
+    steps: activeTrace.steps,
+    tabVisible: xrayVisible(),
+    playing: Date.now() < playingUntil,
+    unchanged: traceWatch.unchanged,
+    following: !!following,
+  });
+  if (plan.stop) { traceWatch.done = true; return; }
+  if (!plan.fetch) return;
+  let tr = null;
+  try {
+    tr = await api('/api/xray/trace?tx=' + encodeURIComponent(tx));
+  } catch (e) {
+    return;   // a 429 or a 5xx answers nothing about this transaction · next tick retries
+  }
+  // the answer must still describe the open panel · selections move mid-fetch
+  if (!activeTrace || following || !traceWatch || traceWatch.tx !== tx || activeTrace.tx !== tx) return;
+  const steps = (tr && tr.steps) || [];
+  if (steps.length > activeTrace.steps.length) {
+    traceWatch.unchanged = 0;
+    activeTrace = tr;
+    paintTracePanel(tr, tx);
+    markPlanned(MB.journey(tr.steps, MAP));
+    // growth can change drawability · a one-step commit that could not animate
+    // becomes a full journey that can, and the controls must notice
+    const d = MB.playDecision({ steps: tr.steps, graph: MAP, auto: false });
+    setReplayable(d.canDraw);
+  } else {
+    traceWatch.unchanged++;
+  }
 }
 
 /* ---- the player: a 3-second museum replay of a payment's real journey ---- */
@@ -3407,7 +3613,12 @@ function playTrace(tr) {
     if (at === undefined) return;
     playTimers.push(setTimeout(() => {
       markStep(i);
-      $('#play-caption').textContent = `step ${i + 1}/${steps.length} · ${s2.detail} · ${s2.region}`;
+      /* The wording is MB.playCaption, tested: it counts panel rows without
+         claiming the word "step" · the pacing underneath walks HOPS, and a
+         one-step settle animates nine of them, so "step 1/1" was a number
+         contradicting what the eye saw. */
+      $('#play-caption').textContent = MB.playCaption({
+        index: i, count: steps.length, detail: s2.detail, region: s2.region });
     }, at));
   });
 
@@ -3604,9 +3815,11 @@ $('#eco-kafka').onclick = () => { gShow('kafka'); inspect('kafka'); };
 $('#eco-k8s').onclick = () => gShow('deploy');
 
 $('#trace-clear').onclick = () => { setLooping(false); loopArmed = false; stopPlay(); activeTrace = null; selectionExplicit = false;
+  traceWatch = null;                       // closing the panel ends its watch
   // the queued live journeys belonged to a map that had a selection · they are
   // not a backlog to be released the moment the panel closes
   liveQueue.length = 0; clearTimeout(drainTimer); drainTimer = null;
+  dimTxs = null;
   document.querySelectorAll('#ticker .tick-item.dim').forEach(el => el.classList.remove('dim'));
   setReplayable(false);
   // closing is a deliberate act · do not immediately undo it, but re-arm so
@@ -4563,7 +4776,7 @@ function applyHash() {
 applyHash();
 window.addEventListener('hashchange', applyHash);
 if (location.hash === '#send') { $('#send-panel').classList.remove('hidden'); segPaint(); }
-setInterval(() => { tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); tick(loadNetworth); tick(renderExt); if (!$('#tab-xray').classList.contains('hidden')) tick(xrayTick); if (!$('#tab-console').classList.contains('hidden')) tick(kafkaTick); }, 2000);
+setInterval(() => { tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); tick(loadNetworth); tick(renderExt); if (!$('#tab-xray').classList.contains('hidden')) { tick(xrayTick); tick(traceRefreshTick); } if (!$('#tab-console').classList.contains('hidden')) tick(kafkaTick); }, 2000);
 </script>
 </body>
 </html>

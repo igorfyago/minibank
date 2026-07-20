@@ -1074,6 +1074,122 @@
              reason: 'no trace for this one yet · the bank committed it, the read model has not caught up' };
   }
 
+  // ==================================== the open panel follows its transaction
+
+  /* How many consecutive identical answers a trace that still DECLARES an
+     owing step gets before the watch calls it parked. A live trade publishes
+     to settlements and never notifies, so traceOwing calls it owed for good ·
+     without a budget the 2s cadence would poll a finished trade for as long
+     as it stayed selected. Same shape as FOLLOW_TRIES bounding followPlan. */
+  var TRACE_REFRESH_TRIES = 5;
+
+  /**
+   * SHOULD THIS TICK RE-READ THE SELECTED TRACE?
+   *
+   * Once a transaction was selected, nothing ever re-read its trace: a payment
+   * clicked mid-flight kept showing its half-finished step list for as long as
+   * the panel stayed open. The page's 2s cadence now asks this on every tick,
+   * and the completeness reading is followPlan's, reused · traceOwing's
+   * owed/settled from the steps themselves, plus "it stopped growing" for the
+   * kinds that write no outbox row and are never notified.
+   *
+   * Three verdicts:
+   *   stop   terminal. Settled, refused, confirmed quiet, or parked past the
+   *          budget. A replayed old payment stops before a single fetch, and
+   *          a replayed quiet trace is confirmed exactly once (`unchanged` is
+   *          the caller's count of consecutive fetches that grew nothing).
+   *   skip   not now, but keep the watch: a hidden tab is not looked at, a
+   *          running replay owns the panel until it ends, and a follow in
+   *          flight is already polling this very panel.
+   *   fetch  the trace may still be moving · look again.
+   *
+   * Terminal is decided BEFORE visibility, deliberately: a settled trace on a
+   * hidden tab is still settled, and must not wake up fetching later.
+   */
+  function traceRefreshPlan(opts) {
+    var o = opts || {};
+    var steps = o.steps || [];
+    if (!steps.length) {
+      return { fetch: false, stop: true, reason: 'nothing selected · nothing to watch' };
+    }
+    var has = {};
+    for (var i = 0; i < steps.length; i++) has[stepName(steps[i].step)] = true;
+    var st = traceOwing(steps);
+    var unchanged = o.unchanged || 0;
+    var max = o.maxUnchanged == null ? TRACE_REFRESH_TRIES : o.maxUnchanged;
+    if (has['settle-refused']) {
+      return { fetch: false, stop: true,
+               reason: 'refused · the compensation is the end of this journey' };
+    }
+    if (st.settled) {
+      return { fetch: false, stop: true,
+               reason: 'notified and landed · nothing more is coming' };
+    }
+    if (unchanged >= 1 && !st.owed) {
+      return { fetch: false, stop: true,
+               reason: 'a second identical answer · it owes nothing and stopped growing' };
+    }
+    if (unchanged >= max) {
+      return { fetch: false, stop: true,
+               reason: 'parked · ' + max + ' looks found nothing new' };
+    }
+    if (o.following) {
+      return { fetch: false, stop: false, reason: 'a follow already polls this panel' };
+    }
+    if (!o.tabVisible) {
+      return { fetch: false, stop: false, reason: 'hidden tab · resume when it is looked at' };
+    }
+    if (o.playing) {
+      return { fetch: false, stop: false, reason: 'a replay owns the panel until it ends' };
+    }
+    return { fetch: true, stop: false, reason: '' };
+  }
+
+  // ================================================ the live feed, reconciled
+
+  /**
+   * WHAT A CHANGED FEED MEANS FOR THE ROWS ALREADY ON SCREEN.
+   *
+   * The live activity list used to be REBUILT · innerHTML assigned wholesale
+   * whenever the top-N signature changed, which on a busy bank is every other
+   * tick. Every row the reader was hovering, scrolling past or about to click
+   * was destroyed and replaced by a lookalike: the click landed on nothing,
+   * the scroll snapped back, and the dim filter evaporated because it lived
+   * only in the old markup.
+   *
+   * This is the reconciliation DECISION, kept pure: given the row keys on
+   * screen (in DOM order) and the keys the feed now claims (in feed order),
+   * say which rows are inserted, which are kept, which are removed, and what
+   * the final order is. The DOM code just executes the plan: kept rows are the
+   * SAME nodes, inserts are built fresh, removals leave, and nothing else is
+   * touched. Duplicate keys collapse to their first appearance · a key is an
+   * identity, and one identity gets one row.
+   *
+   * Returns { rows, removed, changed }: `rows` is the full new order as
+   * { key, act: 'keep' | 'insert' }, `removed` lists the keys that left (in
+   * their old order), and `changed` is false exactly when old and new agree,
+   * so an unchanged feed costs no DOM work at all.
+   */
+  function reconcileRows(oldKeys, newKeys) {
+    var oldSeen = {}, oldOrder = [];
+    (oldKeys || []).forEach(function (k) {
+      k = String(k);
+      if (!oldSeen[k]) { oldSeen[k] = true; oldOrder.push(k); }
+    });
+    var newSeen = {}, rows = [];
+    (newKeys || []).forEach(function (k) {
+      k = String(k);
+      if (newSeen[k]) return;
+      newSeen[k] = true;
+      rows.push({ key: k, act: oldSeen[k] ? 'keep' : 'insert' });
+    });
+    var removed = oldOrder.filter(function (k) { return !newSeen[k]; });
+    var changed = !(removed.length === 0 &&
+                    rows.length === oldOrder.length &&
+                    rows.every(function (r, i) { return r.act === 'keep' && r.key === oldOrder[i]; }));
+    return { rows: rows, removed: removed, changed: changed };
+  }
+
   /**
    * THE TRANSACTION A TRADE CREATES IS NOT THE ONE THE BROWSER MINTED.
    *
@@ -1163,6 +1279,54 @@
     return { tab: HASH_TABS.indexOf(h) >= 0 ? h : null, tx: tx };
   }
 
+  /**
+   * WHICH TRANSACTIONS TRAVELLED THIS PIPE.
+   *
+   * The boxes were clickable and the lines between them were not · no handler
+   * on any edge, and a hairline is an impossible target anyway. The page lays
+   * a wide invisible hit-line over each edge and asks this: for every recent
+   * event (already converted to a step by the page's eventToStep, so the
+   * settlements-topic wrinkle is decided in the one place that knows it),
+   * does its journey traverse the named edge? The answer feeds the SAME
+   * mapClickPlan a node click uses · one match plays, several filter, none
+   * inspects · so a line and a box cannot disagree about what a click means.
+   *
+   * `items` is [{ tx, step }], newest first as the feed delivers it, and the
+   * answer keeps that order, one entry per tx.
+   */
+  function edgeTxs(edge, items, graph) {
+    var out = [];
+    (items || []).forEach(function (it) {
+      if (!it || !it.tx || out.indexOf(it.tx) >= 0) return;
+      var hops = journey([it.step], graph).hops;
+      for (var i = 0; i < hops.length; i++) {
+        if (hops[i].edge === edge) { out.push(it.tx); return; }
+      }
+    });
+    return out;
+  }
+
+  /**
+   * THE REPLAY CAPTION NAMES THE ROW, NOT A PACE.
+   *
+   * It used to read "step 1/1" under a securities settle whose one step
+   * animates nine hops over several seconds · a number flatly contradicting
+   * what the eye saw crossing the map. The counting unit stays the STEP,
+   * because steps are what the panel rows show and highlight, but the word is
+   * dropped · the fraction reads as list position, which is what it is · and
+   * a one-step trace gets no counter at all: "1/1" beside nine moving balls
+   * was the lie.
+   */
+  function playCaption(opts) {
+    var o = opts || {};
+    var count = o.count || 0;
+    var body = [o.detail, o.region].filter(function (x) {
+      return x != null && x !== '';
+    }).join(' · ');
+    if (count > 1) return ((o.index || 0) + 1) + '/' + count + ' · ' + body;
+    return body;
+  }
+
   /* Clicking a box on the map is an INSPECT gesture that becomes a play only
      when it is unambiguous. One transaction touching the node is a journey the
      visitor plainly means; several is a filter, and filtering must never stop
@@ -1208,6 +1372,10 @@
     liveEventPolicy: liveEventPolicy,
     autoPickPlan: autoPickPlan,
     followPlan: followPlan,
+    traceRefreshPlan: traceRefreshPlan,
+    reconcileRows: reconcileRows,
+    edgeTxs: edgeTxs,
+    playCaption: playCaption,
     discoverTx: discoverTx,
     parseXrayHash: parseXrayHash,
     mapClickPlan: mapClickPlan,

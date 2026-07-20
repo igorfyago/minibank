@@ -2762,3 +2762,675 @@ test('replay and loop are dead while a follow is still looking for its transacti
   assert.equal(st.loop, false);
   assert.match(st.reason, /waiting for the transaction you just caused/);
 });
+
+/* ==========================================================================
+ * THE LIVE FEED IS RECONCILED, NOT REBUILT.
+ *
+ * xrayTick used to assign #ticker's innerHTML whenever the top-N signature
+ * changed. Every two seconds, on a busy bank, every row the reader was looking
+ * at was destroyed and replaced: hover died under the cursor, a click that
+ * straddled the repaint landed on nothing, the scroll position snapped back,
+ * and the dim filter a map click had applied evaporated because it lived only
+ * in the old HTML. The audit called it out and it was deferred as "means
+ * diffing rows rather than replacing wholesale". This is that diff.
+ *
+ * The DECISION · given the keys on screen and the keys the feed now claims,
+ * which rows are inserted, kept and removed, and in what order · is
+ * MB.reconcileRows, pure and tested here over every shape of feed change. The
+ * page's renderTicker just executes the plan, and it is lifted and driven
+ * below so that reintroducing the wholesale rebuild fails on behaviour, not on
+ * a source grep.
+ * ======================================================================== */
+const RECON = [
+  { name: 'identical feed · nothing moves',
+    old: ['a', 'b', 'c'], now: ['a', 'b', 'c'],
+    rows: [['a', 'keep'], ['b', 'keep'], ['c', 'keep']], removed: [], changed: false },
+  { name: 'first paint · an empty list fills up',
+    old: [], now: ['a', 'b'],
+    rows: [['a', 'insert'], ['b', 'insert']], removed: [], changed: true },
+  { name: 'one event lands on top',
+    old: ['a', 'b', 'c'], now: ['x', 'a', 'b', 'c'],
+    rows: [['x', 'insert'], ['a', 'keep'], ['b', 'keep'], ['c', 'keep']], removed: [], changed: true },
+  { name: 'the window slides · newest in on top, oldest out at the bottom',
+    old: ['a', 'b', 'c'], now: ['x', 'a', 'b'],
+    rows: [['x', 'insert'], ['a', 'keep'], ['b', 'keep']], removed: ['c'], changed: true },
+  { name: 'a burst · three in, three out, one survivor',
+    old: ['a', 'b', 'c', 'd'], now: ['x', 'y', 'z', 'a'],
+    rows: [['x', 'insert'], ['y', 'insert'], ['z', 'insert'], ['a', 'keep']],
+    removed: ['b', 'c', 'd'], changed: true },
+  { name: 'complete turnover · a reader away long enough gets a fresh list',
+    old: ['a', 'b'], now: ['x', 'y'],
+    rows: [['x', 'insert'], ['y', 'insert']], removed: ['a', 'b'], changed: true },
+  { name: 'the feed empties',
+    old: ['a', 'b'], now: [],
+    rows: [], removed: ['a', 'b'], changed: true },
+  { name: 'both empty · nothing owes anybody a repaint',
+    old: [], now: [], rows: [], removed: [], changed: false },
+  { name: 'reorder only · every row survives, in the order the feed now claims',
+    old: ['a', 'b', 'c'], now: ['c', 'a', 'b'],
+    rows: [['c', 'keep'], ['a', 'keep'], ['b', 'keep']], removed: [], changed: true },
+];
+
+test('reconcileRows decides insert, keep and remove for every shape of feed change', () => {
+  for (const c of RECON) {
+    const p = MB.reconcileRows(c.old, c.now);
+    assert.deepEqual(p.rows.map(r => [r.key, r.act]), c.rows, c.name);
+    assert.deepEqual(p.removed, c.removed, c.name + ': removed');
+    assert.equal(p.changed, c.changed, c.name + ': changed');
+  }
+});
+
+test('reconcileRows accounts for every key exactly once, across the whole table', () => {
+  for (const c of RECON) {
+    const p = MB.reconcileRows(c.old, c.now);
+    assert.deepEqual(p.rows.map(r => r.key), c.now,
+      c.name + ': the plan IS the new order · nothing more, nothing less');
+    const kept = p.rows.filter(r => r.act === 'keep').map(r => r.key);
+    assert.deepEqual(kept.concat(p.removed).sort(), c.old.slice().sort(),
+      c.name + ': every old row is either kept or removed, never both, never neither');
+    for (const k of p.removed) assert.ok(!c.now.includes(k),
+      c.name + ': a removed key must not be in the new feed');
+    for (const r of p.rows) assert.equal(r.act === 'keep', c.old.includes(r.key),
+      c.name + ': keep means it was on screen, insert means it was not');
+  }
+});
+
+test('reconcileRows collapses duplicate keys to their first appearance, both sides', () => {
+  const p = MB.reconcileRows(['a', 'a', 'b'], ['b', 'b', 'x', 'x']);
+  assert.deepEqual(p.rows.map(r => [r.key, r.act]), [['b', 'keep'], ['x', 'insert']]);
+  assert.deepEqual(p.removed, ['a']);
+});
+
+test('reconcileRows treats null and undefined as empty lists, not a crash', () => {
+  assert.deepEqual(MB.reconcileRows(null, undefined), { rows: [], removed: [], changed: false });
+  const p = MB.reconcileRows(undefined, ['a']);
+  assert.deepEqual(p.rows, [{ key: 'a', act: 'insert' }]);
+  assert.equal(p.changed, true);
+});
+
+// ------------------------------------ the page's renderTicker, lifted and run
+/** A DOM small enough to fake honestly: children, classes, datasets, and a
+ *  scrollTop that a wholesale innerHTML rebuild ZEROES · which is exactly the
+ *  behaviour of a real scroll container when its content is destroyed. */
+class FakeEl {
+  constructor(tag) {
+    this.tagName = String(tag || 'div').toUpperCase();
+    this.nodeType = 1;
+    this.children = [];
+    this.dataset = {};
+    this.parentNode = null;
+    this.onclick = null;
+    this.scrollTop = 0;
+    this._cls = new Set();
+    this._html = '';
+    const self = this;
+    this.classList = {
+      add: c => self._cls.add(c),
+      remove: c => self._cls.delete(c),
+      contains: c => self._cls.has(c),
+      toggle: (c, on) => { if (on) self._cls.add(c); else self._cls.delete(c); return self._cls.has(c); },
+    };
+  }
+  get className() { return [...this._cls].join(' '); }
+  set className(v) { this._cls = new Set(String(v).split(/\s+/).filter(Boolean)); }
+  get innerHTML() { return this._html; }
+  set innerHTML(v) {
+    this._html = String(v);
+    this.children.forEach(c => { c.parentNode = null; });
+    this.children.length = 0;
+    this.scrollTop = 0;             // the reader's place, gone with the rebuild
+  }
+  insertBefore(node, ref) {
+    if (node.parentNode) node.remove();
+    const i = ref ? this.children.indexOf(ref) : this.children.length;
+    this.children.splice(i < 0 ? this.children.length : i, 0, node);
+    node.parentNode = this;
+    return node;
+  }
+  remove() {
+    if (!this.parentNode) return;
+    const p = this.parentNode;
+    p.children.splice(p.children.indexOf(this), 1);
+    this.parentNode = null;
+  }
+  querySelectorAll(sel) {
+    if (sel === '.tick-item[data-key]')
+      return this.children.filter(c => c.classList.contains('tick-item') && 'key' in c.dataset);
+    return [];
+  }
+}
+
+function liftTicker() {
+  const vm = require('node:vm');
+  const ticker = new FakeEl('div');
+  const ctx = {
+    MB, Date, JSON, console, String, Number,
+    document: { createElement: tag => new FakeEl(tag) },
+    $: sel => (sel === '#ticker' ? ticker : null),
+    tickIds: new Set(), firstPoll: true,
+    activeTrace: null, dimTxs: null,
+    clicked: [],
+    tickClick: j => ctx.clicked.push(JSON.parse(j)),
+    iconFor: () => 'ic',
+    evLine: e => 'ev ' + e.tx,
+  };
+  vm.createContext(ctx);
+  for (const name of ['tickKey', 'buildTickRow', 'renderTicker']) {
+    const start = INDEX.indexOf('function ' + name + '(');
+    assert.ok(start > 0, name + ' must exist as a top level function in the page');
+    const close = /\r?\n\}\r?\n/.exec(INDEX.slice(start));
+    assert.ok(close, name + ' must be top level to be liftable');
+    vm.runInContext(INDEX.slice(start, start + close.index + close[0].length), ctx);
+  }
+  ctx.ticker = ticker;
+  /* Exactly what xrayTick does around the call: paint first, THEN remember the
+     keys as seen and drop the first-poll flag. The order matters · `new` is
+     "not seen before this paint". */
+  ctx.paint = top => {
+    ctx.top = top;
+    vm.runInContext('renderTicker(top)', ctx);
+    top.forEach(e => ctx.tickIds.add(e.type + e.tx + e.ts));
+    ctx.firstPoll = false;
+  };
+  return ctx;
+}
+
+const tev = (tx, ts) => ({ type: 'transfer_local', tx, ts: ts || '2026-07-20T10:00:00Z',
+                           region: 'eu', payer: 'igor', payee: 'oscar', amount: '5.00' });
+
+test('the ticker KEEPS the reader\'s rows · same nodes, same scroll, new rows on top', () => {
+  const ctx = liftTicker();
+  ctx.paint([tev('a'), tev('b'), tev('c')]);
+  assert.equal(ctx.ticker.children.length, 3, 'three rows drawn');
+  const [rowA, rowB, rowC] = ctx.ticker.children;
+  assert.ok(!rowA.classList.contains('new'), 'the first paint animates nothing · it is history, not news');
+
+  ctx.ticker.scrollTop = 120;                       // the reader is mid-list
+  ctx.paint([tev('x'), tev('a'), tev('b')]);        // one in on top, one out at the bottom
+
+  assert.deepEqual(ctx.ticker.children.map(el => el.dataset.tx), ['x', 'a', 'b']);
+  assert.equal(ctx.ticker.children[1], rowA,
+    'the row the reader was looking at is the SAME node, not a lookalike · ' +
+    'a wholesale innerHTML rebuild fails exactly here');
+  assert.equal(ctx.ticker.children[2], rowB, 'and so is its neighbour');
+  assert.equal(rowC.parentNode, null, 'the row that left the window is gone');
+  assert.equal(ctx.ticker.scrollTop, 120,
+    'and the scroll position survives the repaint · the rebuild zeroed it');
+  assert.ok(ctx.ticker.children[0].classList.contains('new'),
+    'only the genuinely new row gets the entry animation');
+  assert.ok(!rowA.classList.contains('new'), 'a kept row must not slide in again');
+
+  // an unchanged feed leaves everything exactly where it is
+  const before = ctx.ticker.children.slice();
+  ctx.paint([tev('x'), tev('a'), tev('b')]);
+  assert.deepEqual(ctx.ticker.children, before, 'no change means no DOM churn at all');
+});
+
+test('picked and dim are DERIVED from state on every paint, never inherited from old HTML', () => {
+  const ctx = liftTicker();
+  ctx.paint([tev('a'), tev('b'), tev('c')]);
+
+  // a map click filtered to b and c, and a trace of b is open
+  ctx.activeTrace = { tx: 'b' };
+  ctx.dimTxs = ['b', 'c'];
+  ctx.paint([tev('x'), tev('a'), tev('b'), tev('c')]);
+  const cls = Object.fromEntries(ctx.ticker.children.map(el =>
+    [el.dataset.tx, { picked: el.classList.contains('picked'), dim: el.classList.contains('dim') }]));
+  assert.deepEqual(cls, {
+    x: { picked: false, dim: true },   // NEW row outside the filter dims too ·
+    a: { picked: false, dim: true },   // the old rebuild forgot the filter here
+    b: { picked: true, dim: false },
+    c: { picked: false, dim: false },
+  });
+
+  // the filter ends and the selection moves · same feed, classes follow STATE
+  ctx.dimTxs = null;
+  ctx.activeTrace = { tx: 'a' };
+  ctx.paint([tev('x'), tev('a'), tev('b'), tev('c')]);
+  for (const el of ctx.ticker.children) {
+    assert.equal(el.classList.contains('dim'), false, el.dataset.tx + ' must shed the dim');
+    assert.equal(el.classList.contains('picked'), el.dataset.tx === 'a');
+  }
+});
+
+test('a reconciled row still opens the transaction it describes', () => {
+  const ctx = liftTicker();
+  const a = tev('a');
+  ctx.paint([a, tev('b')]);
+  ctx.paint([tev('x'), a, tev('b')]);       // survive one reconcile first
+  ctx.ticker.children[1].onclick();
+  assert.equal(ctx.clicked.length, 1);
+  assert.deepEqual(ctx.clicked[0], a,
+    'the kept node must hand tickClick the event it was built for');
+});
+
+test('an emptied feed states the quiet rather than stranding stale rows', () => {
+  const ctx = liftTicker();
+  ctx.paint([tev('a')]);
+  ctx.paint([]);
+  assert.equal(ctx.ticker.children.length, 0);
+  assert.match(ctx.ticker.innerHTML, /quiet/, 'the placeholder names the state');
+});
+
+test('the live poller reconciles the ticker rather than rebuilding it', () => {
+  /* The structural half, narrow on purpose, like the drainLiveQueue wiring
+     check above: the behaviour tests drive renderTicker itself, and the one
+     thing they cannot see is whether xrayTick still CALLS it. */
+  const i = INDEX.indexOf('async function xrayTick()');
+  const j = INDEX.indexOf('window.tickClick', i);
+  assert.ok(i > 0 && j > i, 'xrayTick must still be findable in the page');
+  const tick = INDEX.slice(i, j);
+  assert.ok(/renderTicker\(/.test(tick), 'xrayTick must hand the feed to the reconciler');
+  assert.ok(!/\$\('#ticker'\)\.innerHTML\s*=/.test(tick),
+    'and must not assign the list wholesale · that is the rebuild that dropped the reader');
+});
+
+/* ==========================================================================
+ * THE SELECTED TRANSACTION'S PANEL FOLLOWS ITS TRANSACTION.
+ *
+ * Once a trace was selected, nothing ever re-read /api/xray/trace for it: a
+ * payment selected mid-flight kept showing its half-finished step list
+ * forever (audit trigger 15, "no code path re-reads"). The decision of
+ * whether this tick should re-fetch is MB.traceRefreshPlan, and it reuses
+ * followPlan's completeness reading · traceOwing's owed/settled, plus the
+ * "stopped growing" confirmation · rather than inventing a second one.
+ *
+ *   fetch  { fetch: true,  stop: false }  the trace may still be moving, look
+ *   skip   { fetch: false, stop: false }  not now: hidden tab, running replay,
+ *                                         or a follow already owns the polling
+ *   stop   { fetch: false, stop: true }   terminal · nothing more is coming
+ * ======================================================================== */
+const trp = o => MB.traceRefreshPlan(o);
+const MIDFLIGHT = [
+  { step: 'depart', region: 'eu', ts: '2026-07-20T10:00:00.000Z' },
+  { step: 'published', region: 'eu', ts: '2026-07-20T10:00:00.050Z' },
+  { step: 'notify', region: 'notifications', ts: '2026-07-20T10:00:00.120Z' },
+];
+
+test('a half-arrived selection keeps being fetched · mid-flight means look again', () => {
+  const p = trp({ steps: [LOCAL_DONE[0]], tabVisible: true, playing: false, unchanged: 0 });
+  assert.equal(p.fetch, true, 'one step on a fresh selection is not evidence that nothing more is coming');
+  assert.equal(p.stop, false);
+});
+
+test('notify alone is not settlement · money still in the pipe keeps the panel live', () => {
+  // the departed notification arrived, the money has not · the naive reading
+  // "notify present means done" would freeze the panel exactly mid-flight
+  const p = trp({ steps: MIDFLIGHT, tabVisible: true, playing: false, unchanged: 0 });
+  assert.equal(p.fetch, true, 'depart without arrive is a saga still moving');
+  assert.equal(p.stop, false);
+});
+
+test('a settled trace stops the refresh before a single fetch', () => {
+  const p = trp({ steps: LOCAL_DONE, tabVisible: true, playing: false, unchanged: 0 });
+  assert.equal(p.stop, true, 'notified and landed · a replayed old payment is never re-fetched at all');
+  assert.equal(p.fetch, false);
+  const bounce = CASES.find(c => c.name === 'bounced saga, the refund path');
+  assert.equal(trp({ steps: bounce.steps, tabVisible: true, playing: false, unchanged: 0 }).stop, true,
+    'the refund landing IS the arrival · a completed bounce owes nothing');
+});
+
+test('a refused settlement is the end of its journey', () => {
+  const p = trp({ steps: [{ step: 'settle-refused', region: 'eu' }],
+                  tabVisible: true, playing: false, unchanged: 0 });
+  assert.equal(p.stop, true, 'the compensation is terminal · there is nothing left to wait for');
+  assert.equal(p.fetch, false);
+});
+
+test('a hidden tab skips without abandoning the watch', () => {
+  const p = trp({ steps: [LOCAL_DONE[0]], tabVisible: false, playing: false, unchanged: 0 });
+  assert.equal(p.fetch, false, 'nobody is looking · fetching for a hidden panel is waste');
+  assert.equal(p.stop, false, 'but the trace is still mid-flight · resume when the tab returns');
+});
+
+test('a running replay owns the panel · the refresh waits its turn', () => {
+  const p = trp({ steps: [LOCAL_DONE[0]], tabVisible: true, playing: true, unchanged: 0 });
+  assert.equal(p.fetch, false, 'repainting the step list mid-narration steals the replay');
+  assert.equal(p.stop, false, 'the next tick after it finishes catches up');
+});
+
+test('a pending follow owns the polling · the refresher stands down entirely', () => {
+  const p = trp({ steps: [LOCAL_DONE[0]], tabVisible: true, playing: false,
+                  unchanged: 0, following: true });
+  assert.equal(p.fetch, false, 'followPoll is already watching this panel · two pollers race');
+  assert.equal(p.stop, false);
+});
+
+test('a quiet trace is confirmed exactly once, then left alone', () => {
+  // the card hold and the savings move write no outbox row, so they are never
+  // "settled" in the notified sense · followPlan's stable rule, reused
+  const one = [{ step: 'transfer', region: 'eu' }];
+  assert.equal(trp({ steps: one, tabVisible: true, playing: false, unchanged: 0 }).fetch, true,
+    'the first look is owed · the selection may have raced the outbox');
+  const p = trp({ steps: one, tabVisible: true, playing: false, unchanged: 1 });
+  assert.equal(p.stop, true, 'a second identical answer · it owes nothing and stopped growing');
+  assert.equal(p.fetch, false);
+});
+
+test('a trace that owes a step is watched past one identical answer, but not forever', () => {
+  // a live trade publishes to settlements and never notifies, so traceOwing
+  // calls it owed for good · the budget is what stops the polling, exactly as
+  // maxAttempts is what stops followPlan
+  const trade = [{ step: 'settle:aapl:buy', region: 'eu' },
+                 { step: 'published:settlements', region: 'eu' }];
+  for (const n of [1, 2, 3, 4]) {
+    assert.equal(trp({ steps: trade, tabVisible: true, playing: false, unchanged: n }).fetch, true,
+      'unchanged x' + n + ': a declared owing outranks "it stopped growing"');
+  }
+  const p = trp({ steps: trade, tabVisible: true, playing: false, unchanged: 5 });
+  assert.equal(p.stop, true, 'five identical answers is parked, not pending · stop politely');
+  assert.equal(trp({ steps: trade, tabVisible: true, playing: false,
+                     unchanged: 2, maxUnchanged: 2 }).stop, true, 'and the budget is a parameter');
+});
+
+test('an empty or absent selection has nothing to watch', () => {
+  assert.equal(trp({ steps: [], tabVisible: true, playing: false, unchanged: 0 }).stop, true);
+  assert.equal(trp({}).stop, true);
+});
+
+test('PROPERTY · the refresh plan is coherent over the whole cartesian table', () => {
+  for (const c of CASES) {
+    // what the plan says on a visible, idle tab is its verdict on the TRACE ·
+    // visibility and animation may only delay it, never reverse it
+    const base = trp({ steps: c.steps, tabVisible: true, playing: false, unchanged: 0 });
+    for (const tabVisible of [true, false]) {
+      for (const playing of [true, false]) {
+        for (const unchanged of [0, 1, 5]) {
+          const p = trp({ steps: c.steps, tabVisible, playing, unchanged });
+          const label = c.name + ' · ' + JSON.stringify({ tabVisible, playing, unchanged });
+          assert.ok(!(p.fetch && p.stop), label + ': fetch and stop are opposite verdicts');
+          if (p.fetch) assert.ok(tabVisible && !playing,
+            label + ': a fetch is only owed to a visible, unclaimed panel');
+          if (base.stop) assert.equal(p.stop, true,
+            label + ': terminal on an idle tab is terminal everywhere');
+        }
+      }
+    }
+  }
+});
+
+// -------------------------------- the page's refresher tick, lifted and run
+function liftRefresh(replies) {
+  const vm = require('node:vm');
+  const ctx = {
+    MB, Date, JSON, console, encodeURIComponent, String, Number, Math,
+    MAP: MB.mapGraph(MB.MAP_PAIRS),
+    activeTrace: null, following: null, traceWatch: null, playingUntil: 0,
+    visible: true,
+    polled: [], painted: [], planned: [], replayable: [], played: [], stopped: 0,
+    xrayVisible: () => ctx.visible,
+    paintTracePanel: (tr, tx) => { ctx.painted.push(tx); return 0; },
+    markPlanned: j => ctx.planned.push(j.hops.length),
+    setReplayable: can => ctx.replayable.push(can),
+    playTrace: tr => ctx.played.push(tr.tx),
+    stopPlay: () => { ctx.stopped++; },
+    api: async path => {
+      const tx = decodeURIComponent(path.slice(path.indexOf('tx=') + 3));
+      ctx.polled.push(tx);
+      const r = replies[tx];
+      if (typeof r === 'function') return r();
+      const nth = ctx.polled.filter(t => t === tx).length - 1;
+      return { tx, steps: r[Math.min(nth, r.length - 1)] };
+    },
+  };
+  vm.createContext(ctx);
+  const start = INDEX.indexOf('async function traceRefreshTick()');
+  assert.ok(start > 0, 'traceRefreshTick must exist as a top level function in the page');
+  const close = /\r?\n\}\r?\n/.exec(INDEX.slice(start));
+  assert.ok(close, 'traceRefreshTick must be top level to be liftable');
+  vm.runInContext(INDEX.slice(start, start + close.index + close[0].length), ctx);
+  ctx.tick = () => vm.runInContext('traceRefreshTick()', ctx);
+  return ctx;
+}
+
+test('the refresher completes a mid-flight panel without restarting the animation', async () => {
+  const ctx = liftRefresh({ t1: [LOCAL_DONE] });
+  ctx.activeTrace = { tx: 't1', steps: [LOCAL_DONE[0]] };   // selected on the commit alone
+  ctx.traceWatch = { tx: 't1', unchanged: 0 };
+
+  await ctx.tick();
+  assert.deepEqual(ctx.polled, ['t1'], 'the panel is re-read on the tick');
+  assert.deepEqual(ctx.painted, ['t1'], 'the grown step list is re-rendered');
+  assert.equal(ctx.activeTrace.steps.length, 3, 'the selection now holds the full trace');
+  assert.equal(ctx.planned.length, 1, 'the route is extended for the new steps');
+  assert.ok(ctx.planned[0] > 0, 'and the extension is a real journey, not an empty one');
+  assert.deepEqual(ctx.replayable, [true], 'the controls re-evaluate against the grown trace');
+  assert.deepEqual(ctx.played, [], 'the animation is NOT restarted · the map is not stolen');
+  assert.equal(ctx.stopped, 0, 'and nothing running is torn down');
+  assert.equal(ctx.playingUntil, 0, 'the refresher never claims the map for itself');
+
+  await ctx.tick();
+  assert.deepEqual(ctx.polled, ['t1'], 'settled now · the very next tick stops fetching');
+  await ctx.tick();
+  assert.deepEqual(ctx.polled, ['t1'], 'and it stays stopped');
+});
+
+test('a replayed quiet trace is confirmed once at page level, then never again', async () => {
+  const one = [{ step: 'transfer', region: 'eu', ts: '2026-07-20T10:00:00.000Z', detail: 'x' }];
+  const ctx = liftRefresh({ old: [one] });
+  ctx.activeTrace = { tx: 'old', steps: one };
+  ctx.traceWatch = { tx: 'old', unchanged: 0 };
+
+  await ctx.tick();
+  assert.deepEqual(ctx.polled, ['old'], 'one confirming look');
+  assert.deepEqual(ctx.painted, [], 'nothing grew, so nothing repaints');
+  await ctx.tick();
+  await ctx.tick();
+  assert.deepEqual(ctx.polled, ['old'], 'confirmed terminal · never re-fetched again');
+});
+
+test('the refresher yields: hidden tab, running replay, pending follow', async () => {
+  const ctx = liftRefresh({ t: [LOCAL_DONE] });
+  ctx.activeTrace = { tx: 't', steps: [LOCAL_DONE[0]] };
+  ctx.traceWatch = { tx: 't', unchanged: 0 };
+
+  ctx.visible = false;
+  await ctx.tick();
+  assert.deepEqual(ctx.polled, [], 'a hidden tab is not watched · nothing is fetched');
+
+  ctx.visible = true;
+  ctx.playingUntil = Date.now() + 60000;
+  await ctx.tick();
+  assert.deepEqual(ctx.polled, [], 'a running replay owns the panel · the refresh waits');
+
+  ctx.playingUntil = 0;
+  ctx.following = 'something';
+  await ctx.tick();
+  assert.deepEqual(ctx.polled, [], 'a follow in flight already polls this panel');
+
+  ctx.following = null;
+  await ctx.tick();
+  assert.deepEqual(ctx.polled, ['t'], 'and the moment nothing outranks it, it looks');
+});
+
+test('a selection made mid-fetch discards the stale answer', async () => {
+  const ctx = liftRefresh({
+    t: () => { ctx.activeTrace = { tx: 'other', steps: [LOCAL_DONE[0]] };
+               return { tx: 't', steps: LOCAL_DONE }; },
+  });
+  ctx.activeTrace = { tx: 't', steps: [LOCAL_DONE[0]] };
+  ctx.traceWatch = { tx: 't', unchanged: 0 };
+  await ctx.tick();
+  assert.deepEqual(ctx.painted, [], 'the answer describes a panel that is no longer open');
+  assert.equal(ctx.activeTrace.tx, 'other', 'the newer selection is untouched');
+  assert.equal(ctx.activeTrace.steps.length, 1, 'and its steps are not overwritten by the stale trace');
+});
+
+test('the 2s cadence drives the refresher', () => {
+  /* Structural and narrow, like the xrayTick wiring check: the behaviour tests
+     drive traceRefreshTick itself, and the one thing they cannot see is
+     whether the page's interval still calls it. */
+  const line = INDEX.split(/\r?\n/).find(l => l.includes('setInterval') && l.includes('xrayTick'));
+  assert.ok(line, 'the 2s interval must still be findable in the page');
+  assert.ok(line.includes('traceRefreshTick'),
+    'the interval must tick the selected panel refresher alongside the feed poller');
+});
+
+/* ==========================================================================
+ * CLICKING A LINE ON THE MAP.
+ *
+ * The audit found the boxes clickable and the pipes between them inert: no
+ * handler on any .edge element, and a hairline is an impossible click target
+ * anyway. The page now lays an invisible wide hit-line over every mapped edge
+ * and routes the click through the SAME machinery a node click uses: the
+ * transactions whose journeys traverse that edge, then MB.mapClickPlan · one
+ * match traces it, several filter the ticker, none explains the component the
+ * pipe feeds. The traversal question is MB.edgeTxs, pure and tested here.
+ * ======================================================================== */
+const EDGE_GRAPH = MB.mapGraph(MB.MAP_PAIRS);
+const eit = (tx, step, region) => ({ tx, step: { step, region: region || 'eu' } });
+
+test('edgeTxs: one transaction traversing the pipe is found by its journey', () => {
+  const items = [eit('t1', 'transfer', 'eu'), eit('t2', 'transfer', 'uk')];
+  assert.deepEqual(MB.edgeTxs('api_shard0', items, EDGE_GRAPH), ['t1'],
+    'the eu commit walks api -> shard0 · the uk one walks the other pillar');
+  assert.deepEqual(MB.edgeTxs('api_shard1', items, EDGE_GRAPH), ['t2']);
+});
+
+test('edgeTxs: several traversing transactions all answer, once each', () => {
+  const items = [eit('t1', 'transfer', 'eu'), eit('t2', 'transfer', 'uk'),
+                 eit('t3', 'settle:aapl:buy', 'eu'), eit('t1', 'transfer', 'eu')];
+  assert.deepEqual(MB.edgeTxs('api_shard0', items, EDGE_GRAPH), ['t1', 't3'],
+    'the settle loop crosses api_shard0 too, and the duplicate t1 collapses');
+  assert.deepEqual(MB.edgeTxs('ksettle_brokercons', items, EDGE_GRAPH), ['t3'],
+    'the broker leg belongs to the trade alone');
+});
+
+test('edgeTxs: a pipe nothing recent travelled answers empty, and junk answers empty', () => {
+  const items = [eit('t1', 'transfer', 'eu')];
+  assert.deepEqual(MB.edgeTxs('kafka_notif', items, EDGE_GRAPH), [],
+    'a bare commit never reaches the notification pipe');
+  assert.deepEqual(MB.edgeTxs('no_such_edge', items, EDGE_GRAPH), []);
+  assert.deepEqual(MB.edgeTxs('api_shard0', [], EDGE_GRAPH), []);
+  assert.deepEqual(MB.edgeTxs('api_shard0', null, EDGE_GRAPH), []);
+});
+
+test('edgeTxs feeds mapClickPlan the same way a node click does', () => {
+  // the whole point of reuse: one tx is a play, several are a filter, none inspects
+  const one = MB.mapClickPlan({ txs: MB.edgeTxs('api_shard1', [eit('t2', 'transfer', 'uk')], EDGE_GRAPH) });
+  assert.equal(one.mode, 'play');
+  assert.equal(one.tx, 't2');
+  const many = MB.mapClickPlan({ txs: MB.edgeTxs('browser_caddy',
+    [eit('a', 'transfer', 'eu'), eit('b', 'transfer', 'uk')], EDGE_GRAPH) });
+  assert.equal(many.mode, 'filter');
+  assert.deepEqual(many.txs, ['a', 'b']);
+  const none = MB.mapClickPlan({ txs: MB.edgeTxs('kafka_notif', [], EDGE_GRAPH) });
+  assert.equal(none.mode, 'inspect');
+});
+
+// ------------------------------------- the page's edge click, lifted and run
+function liftEdgeClick(events) {
+  const vm = require('node:vm');
+  const rows = events.map(e => { const r = new FakeEl('div'); r.classList.add('tick-item'); r.dataset.tx = e.tx; return r; });
+  const ctx = {
+    MB, JSON, String, console,
+    MAP: MB.mapGraph(MB.MAP_PAIRS),
+    latestEvents: events, dimTxs: ['leftover'],   // a stale filter, to prove clearing
+    traced: [], shown: [],
+    traceTx: tx => { ctx.traced.push(tx); return { catch: () => {} }; },
+    gShow: k => ctx.shown.push(k),
+    document: {
+      querySelectorAll: sel => {
+        if (sel === '#ticker .tick-item') return rows;
+        if (sel === '#ticker .tick-item.dim') return rows.filter(r => r.classList.contains('dim'));
+        return [];
+      },
+    },
+  };
+  vm.createContext(ctx);
+  for (const name of ['eventToStep', 'edgeItems', 'edgeClick']) {
+    const start = INDEX.indexOf('function ' + name + '(');
+    assert.ok(start > 0, name + ' must exist as a top level function in the page');
+    const close = /\r?\n\}\r?\n/.exec(INDEX.slice(start));
+    assert.ok(close, name + ' must be top level to be liftable');
+    vm.runInContext(INDEX.slice(start, start + close.index + close[0].length), ctx);
+  }
+  ctx.rows = rows;
+  ctx.click = name => { ctx.name = name; vm.runInContext('edgeClick(name)', ctx); };
+  return ctx;
+}
+
+const FEED3 = [
+  { type: 'transfer_local', tx: 't1', shard: 0, ts: '2026-07-20T10:00:02Z', region: 'eu' },
+  { type: 'transfer_local', tx: 't2', shard: 1, ts: '2026-07-20T10:00:01Z', region: 'uk' },
+  { type: 'transfer_local', tx: 't3', shard: 0, ts: '2026-07-20T10:00:00Z', region: 'eu' },
+];
+
+test('clicking a pipe one transaction travelled traces that transaction', () => {
+  const ctx = liftEdgeClick(FEED3);
+  ctx.click('api_shard1');
+  assert.deepEqual(ctx.traced, ['t2'], 'exactly the uk commit crossed api -> shard1');
+});
+
+test('clicking a pipe several transactions travelled filters the ticker, as STATE', () => {
+  const ctx = liftEdgeClick(FEED3);
+  ctx.click('api_shard0');
+  assert.deepEqual(ctx.traced, [], 'two candidates is a filter, never a guess at one');
+  assert.deepEqual(ctx.dimTxs, ['t1', 't3'], 'the filter survives repaints because it is state');
+  assert.deepEqual(ctx.rows.map(r => [r.dataset.tx, r.classList.contains('dim')]),
+    [['t1', false], ['t2', true], ['t3', false]],
+    'the rows outside the pipe recede, the travellers stay');
+});
+
+test('clicking a quiet pipe explains the component it feeds and ends any stale filter', () => {
+  const ctx = liftEdgeClick(FEED3);
+  ctx.rows[1].classList.add('dim');            // residue of an earlier filter
+  ctx.click('kafka_notif');
+  assert.deepEqual(ctx.traced, []);
+  assert.deepEqual(ctx.shown, ['notif'], 'the pipe feeds notifications · that is what gets explained');
+  assert.equal(ctx.dimTxs, null);
+  assert.ok(!ctx.rows[1].classList.contains('dim'), 'the stale dim goes with the stale filter');
+});
+
+test('the hit layer is generated at runtime · the drawn map markup is untouched', () => {
+  /* The geometry guards above parse the static SVG for data-edge lines. The
+     click affordance must not become new markup they would have to be taught
+     about, so it is cloned from the visible lines at load. */
+  const svg = INDEX.slice(INDEX.indexOf('<svg viewBox="0 0 720 '),
+                          INDEX.indexOf('<g id="pulse-layer">'));
+  assert.ok(!svg.includes('edge-hit'), 'no hit lines in the source markup');
+  assert.ok(INDEX.includes('function armEdgeClicks('),
+    'the page must arm the pipes · that is the audit finding');
+  assert.ok(/armEdgeClicks\(\);/.test(INDEX), 'and must actually call it');
+});
+
+/* ==========================================================================
+ * THE CAPTION NAMES THE ROW, NOT A PACE.
+ *
+ * The replay caption read "step 1/1" under a securities settle whose single
+ * step animates nine hops over seconds: the number contradicted what the eye
+ * saw crossing the map. The counting unit stays the STEP · it is the unit the
+ * panel rows show and highlight · but the caption no longer claims the word,
+ * and a one-step trace gets no counter at all, because "1/1" beside nine
+ * moving balls is the lie the audit flagged.
+ * ======================================================================== */
+test('the caption counts panel rows plainly when there are rows to count', () => {
+  assert.equal(MB.playCaption({ index: 1, count: 4, detail: 'relayed', region: 'eu' }),
+    '2/4 · relayed · eu');
+  assert.equal(MB.playCaption({ index: 0, count: 3, detail: 'committed', region: 'uk' }),
+    '1/3 · committed · uk');
+});
+
+test('a one-step trace gets no counter · "1/1" under nine hops was the lie', () => {
+  const c = MB.playCaption({ index: 0, count: 1, detail: 'settled aapl buy', region: 'eu' });
+  assert.equal(c, 'settled aapl buy · eu');
+  assert.ok(!/1\/1/.test(c), 'no fraction with nothing to count');
+  assert.ok(!/step/i.test(c), 'and no claim to be a "step" of the animation');
+});
+
+test('the caption never says "step" · the pacing walks hops, not steps', () => {
+  for (const o of [{ index: 0, count: 1, detail: 'd', region: 'eu' },
+                   { index: 2, count: 6, detail: 'd', region: 'uk' }]) {
+    assert.ok(!/step/i.test(MB.playCaption(o)), JSON.stringify(o));
+  }
+});
+
+test('the player narrates through the shared caption, not an inline template', () => {
+  // narrow wiring, same doctrine as the other structural checks
+  const i = INDEX.indexOf('function playTrace(');
+  const j = INDEX.indexOf('function cancelFollow(');
+  assert.ok(i > 0 && j > i, 'playTrace must still be findable in the page');
+  const src = INDEX.slice(i, j);
+  assert.ok(/MB\.playCaption\(/.test(src), 'the caption text must come from the tested function');
+  assert.ok(!src.includes('`step ${'), 'the inline "step i/n" template is the bug · it must be gone');
+});
