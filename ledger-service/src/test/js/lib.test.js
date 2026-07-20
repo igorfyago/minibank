@@ -551,22 +551,33 @@ test('the page actually USES the payee guard · the wiring, not just the helpers
  * of nodes and hops are consecutive pairs, so contiguity holds by construction:
  * a ball can only start where a ball has already arrived.
  */
-const GRAPH_PAIRS = [
-  ['browser', 'caddy'], ['caddy', 'api'], ['api', 'directory'],
-  ['api', 'shard0'], ['api', 'shard1'],
-  ['shard0', 'kafka'], ['shard1', 'kafka'],
-  ['kafka', 'applier'], ['kafka', 'notif'],
-  ['applier', 'shard0'], ['applier', 'shard1'],
-  // the securities loop and the SSO boundary. No FLOW step walks these yet, so
-  // they change no journey · they are here so this fixture keeps saying the
-  // same thing as the map it is a copy of.
-  ['api', 'issuer'], ['issuer', 'directory'],
-  ['shard0', 'ksettle'], ['shard1', 'ksettle'],
-  ['ksettle', 'brokercons'], ['brokercons', 'brokerdb'],
-  ['broker', 'brokerdb'], ['brokerdb', 'korders'],
-  ['korders', 'settle'], ['settle', 'shard0'], ['settle', 'shard1'],
-  ['api', 'jwks'], ['sso', 'directory'], ['api', 'notif'],
-];
+/**
+ * THE FIXTURE IS THE MAP, not a copy of it.
+ *
+ * This used to be a hand-transcribed duplicate of MAP_PAIRS in index.html,
+ * carrying a comment that hoped it "keeps saying the same thing as the map it
+ * is a copy of". Hope is not a mechanism. A test that asserts against its own
+ * copy of the declaration under test asserts nothing about the shipped page:
+ * add an edge to the page and the suite stays green while the map is wrong, and
+ * remove one and the suite stays green while the map is wrong the other way.
+ * The declaration moved into lib.js and both readers now read it.
+ *
+ * The three extra pairs are NOT part of the map. They are here so the tests
+ * that check what happens on an edge the graph does not know about have
+ * something to work with, and they are asserted below to be absent from the
+ * real map · otherwise they would quietly become part of it.
+ */
+const EXTRA_PAIRS = [['api', 'jwks'], ['sso', 'directory'], ['api', 'notif']];
+const GRAPH_PAIRS = MB.MAP_PAIRS.concat(EXTRA_PAIRS);
+
+test('the test fixture IS the shipped map, not a transcription of it', () => {
+  assert.ok(MB.MAP_PAIRS.length >= 20, 'the map is declared in lib.js');
+  const real = new Set(MB.MAP_PAIRS.map(p => p[0] + '>' + p[1]));
+  for (const [a, b] of EXTRA_PAIRS) {
+    assert.equal(real.has(a + '>' + b), false,
+      `${a}->${b} is a fixture-only pair and must not be in the shipped map`);
+  }
+});
 
 test('mapGraph derives an edge name from its endpoints, so the name cannot lie', () => {
   const g = MB.mapGraph(GRAPH_PAIRS);
@@ -1198,7 +1209,14 @@ function fakeMap(nodeIds, edgeIds) {
 /** Run the page's own top level functions in a vm, over a fake map. */
 function liftMapMarking(dom) {
   const vm = require('node:vm');
-  const ctx = { MB, document: dom.document, setTimeout: () => 0, console };
+  /* playTimers is the page's cancellation registry, and it is part of the
+     contract these functions are being tested against: a timer an animation
+     creates that is NOT in here cannot be cancelled by stopPlay, which is how
+     an abandoned journey's un-glow fired into the journey that replaced it. The
+     fake is an array so the tests can count what was registered. */
+  let nextTimer = 0;
+  const ctx = { MB, document: dom.document, playTimers: [],
+                setTimeout: () => ++nextTimer, console };
   vm.createContext(ctx);
   for (const name of ['clearRoute', 'markPlanned', 'glow', 'reach', 'reachEdge']) {
     const start = INDEX.indexOf('function ' + name + '(');
@@ -1212,6 +1230,7 @@ function liftMapMarking(dom) {
     reach: n => { ctx.n = n; vm.runInContext('reach(n)', ctx); },
     reachEdge: e => { ctx.e = e; vm.runInContext('reachEdge(e)', ctx); },
     clear: () => vm.runInContext('clearRoute()', ctx),
+    timers: () => ctx.playTimers,
   };
 }
 
@@ -1222,10 +1241,9 @@ function pageMap() {
    rather than on the fixture copy of it. The two are already policed against
    each other by the three-copies tests above. */
 function MAP_GRAPH_FROM_PAGE() {
-  const block = INDEX.slice(INDEX.indexOf('const MAP_PAIRS'), INDEX.indexOf('const MAP ='));
-  const pairs = [...block.matchAll(/\['([a-z0-9]+)', '([a-z0-9]+)'\]/g)].map(m => [m[1], m[2]]);
-  assert.ok(pairs.length > 10, 'MAP_PAIRS must be parseable, or this test proves nothing');
-  return MB.mapGraph(pairs);
+  /* The page builds MAP = MB.mapGraph(MB.MAP_PAIRS). So does this. There is no
+     longer a "page copy" to read back out of the source. */
+  return MB.mapGraph(MB.MAP_PAIRS);
 }
 
 test('selecting marks the WHOLE route planned, before a single ball moves', () => {
@@ -1434,14 +1452,23 @@ function drawnEdges() {
                           INDEX.indexOf('<g id="pulse-layer">'));
   return new Set([...svg.matchAll(/data-edge="([a-z0-9_]+)"/g)].map(m => m[1]));
 }
+/* NOT PARSED OUT OF THE PAGE ANY MORE. These two used to regex index.html for
+   `const MAP_PAIRS` and `const EDGES = {`, which made every one of these guards
+   a test about source text: reformat the declaration and the guard silently
+   stops checking anything while staying green. Both declarations live in lib.js
+   now and the page reads them, so the test reads the same object the browser
+   does. What still comes out of the markup is the MARKUP · the <line> and
+   <rect> elements · because that genuinely exists nowhere else. */
 function declaredEdges() {
-  const block = INDEX.slice(INDEX.indexOf('const MAP_PAIRS'), INDEX.indexOf('const MAP ='));
-  return new Set([...block.matchAll(/\['([a-z0-9]+)', '([a-z0-9]+)'\]/g)].map(m => m[1] + '_' + m[2]));
+  return new Set(MB.MAP_PAIRS.map(p => p[0] + '_' + p[1]));
 }
 function pulsePaths() {
-  const i = INDEX.indexOf('const EDGES = {');
-  const block = INDEX.slice(i, INDEX.indexOf('};', i));
-  return new Set([...block.matchAll(/(\w+):\[/g)].map(m => m[1]));
+  return new Set(Object.keys(MB.EDGE_XY));
+}
+function declaredNodes() {
+  const n = new Set();
+  for (const [a, b] of MB.MAP_PAIRS) { n.add(a); n.add(b); }
+  return n;
 }
 
 test('every edge drawn on the map is declared in the graph', () => {
@@ -1508,18 +1535,14 @@ function drawnNodes() {
 
 test('every node the graph names is actually drawn, or its ball lands on nothing', () => {
   const drawn = drawnNodes();
-  const named = new Set();
-  const block = INDEX.slice(INDEX.indexOf('const MAP_PAIRS'), INDEX.indexOf('const MAP ='));
-  for (const m of block.matchAll(/\['([a-z0-9]+)', '([a-z0-9]+)'\]/g)) { named.add(m[1]); named.add(m[2]); }
-  assert.ok(named.size > 0, 'MAP_PAIRS must be parseable, or this test proves nothing');
+  const named = declaredNodes();
+  assert.ok(named.size > 0, 'the graph must name nodes, or this test proves nothing');
   assert.deepEqual([...named].filter(n => !drawn.has(n)), [],
     'declared in MAP_PAIRS but no such data-node: the animation would silently draw nothing');
 });
 
 test('every node drawn is either wired into the graph or a declared unwired one', () => {
-  const block = INDEX.slice(INDEX.indexOf('const MAP_PAIRS'), INDEX.indexOf('const MAP ='));
-  const named = new Set();
-  for (const m of block.matchAll(/\['([a-z0-9]+)', '([a-z0-9]+)'\]/g)) { named.add(m[1]); named.add(m[2]); }
+  const named = declaredNodes();
   const orphans = [...drawnNodes()].filter(n => !named.has(n) && !UNWIRED_NODES.includes(n));
   assert.deepEqual(orphans, [], 'drawn with no edges and not on the unwired list · add the edge, or the node to the list');
 });
@@ -2292,4 +2315,450 @@ test('running a tool follows what it created, and a failed tool follows nothing'
 
   vm.runInContext('followed("a success with nothing pending")', ctx);
   assert.deepEqual(started, ['made'], 'and a stale target is never followed twice');
+});
+
+/* ==========================================================================
+ * PROPERTIES, OVER THE WHOLE MATRIX.
+ *
+ * Everything above this line is a case: one trace, one expectation, written
+ * after somebody found the bug by using the site. That is how all of this
+ * week's defects were found · one at a time, by the owner, in the browser · and
+ * it does not scale, because the matrix is triggers x kinds x states and a case
+ * covers one cell of it.
+ *
+ * What follows is the other kind. Each one states a rule that must hold for
+ * EVERY transaction kind the server can emit, in EVERY region, and then checks
+ * it exhaustively. The point is not to cover today's kinds. It is that adding a
+ * kind server-side and forgetting the map turns the suite RED instead of
+ * turning the animation silent, which is the only failure mode this view has:
+ * it does not crash, it does not warn, it just quietly draws nothing while
+ * looking entirely healthy.
+ *
+ * MB.SERVER_KINDS is the registry that makes that possible. It is a declaration
+ * of what the wire can carry, and the properties below are quantified over it.
+ * ======================================================================== */
+
+const PROP_GRAPH = MB.mapGraph(MB.MAP_PAIRS);
+const PROP_REGIONS = MB.REGIONS;
+const propStep = (kind, region) => [{ step: kind, region, ts: '2024-01-01T00:00:00.000Z' }];
+
+/* PROPERTY 1 · the one that would have caught the most of them.
+ *
+ * Every kind the server can put on the wire either draws, or is on the
+ * explicitly declared unwired list with a reason. "mortgage" was neither: it
+ * had no FLOW key, journey() dropped it into unknown[], and because the same
+ * trace carried a `published` step that DID draw, the honest "happens off this
+ * diagram" caption never fired either. A loan animated as a ball leaving a
+ * shard box that nothing had ever arrived at. This property fails on that. */
+test('PROPERTY · every kind the server can emit either draws or is declared unwired', () => {
+  const gaps = [];
+  for (const k of MB.SERVER_KINDS) {
+    const cov = MB.kindCoverage(k.probe, PROP_GRAPH, PROP_REGIONS);
+    if (!cov.ok) {
+      gaps.push(k.probe + ' (' + k.source + '): ' + (cov.declaredUnwired
+        ? 'declared unwired but it DOES draw'
+        : 'draws in ' + cov.perRegion.filter(r => r.hops > 0).length + '/' + PROP_REGIONS.length +
+          ' regions · unknown=' + JSON.stringify(cov.perRegion[0].unknown)));
+    }
+  }
+  assert.deepEqual(gaps, [],
+    'a kind that draws nothing and is not declared to draw nothing is a silent map · ' +
+    'wire it into FLOW, or add it to MB.UNWIRED_KINDS with the reason why not');
+});
+
+test('PROPERTY · a kind draws in EVERY region or in none · shard1 customers are not second class', () => {
+  for (const k of MB.SERVER_KINDS) {
+    const cov = MB.kindCoverage(k.probe, PROP_GRAPH, PROP_REGIONS);
+    assert.ok(cov.drawsEverywhere || cov.drawsNowhere,
+      k.probe + ' draws in some regions and not others: ' + JSON.stringify(cov.perRegion));
+  }
+});
+
+test('PROPERTY · nothing is on the unwired list without a reason', () => {
+  for (const k of Object.keys(MB.UNWIRED_KINDS)) {
+    assert.equal(typeof MB.UNWIRED_KINDS[k], 'string');
+    assert.ok(MB.UNWIRED_KINDS[k].length > 30,
+      k + ' is excused from the map with no explanation · say why, or wire it');
+  }
+});
+
+test('PROPERTY · every FLOW key is reachable from something the server emits', () => {
+  // The reverse gap: a route declared, maintained, and walked by nothing. It is
+  // dead code that looks like coverage, which is worse than an obvious hole.
+  const reachable = new Set(MB.SERVER_KINDS.map(k => MB.stepName(k.probe)));
+  const orphans = MB.FLOW_KINDS.filter(f => !reachable.has(f));
+  assert.deepEqual(orphans, [],
+    'a FLOW route no server kind resolves to · either the registry is stale or the route is');
+});
+
+/* PROPERTY 2 · INV-07 and INV-08 together, quantified over kinds rather than
+ * over the handful of paths somebody remembered to check.
+ *
+ * A hop whose edge is not in the graph is dropped into unknown[] and draws
+ * nothing. A hop whose edge IS in the graph but has no coordinate entry makes
+ * pulse() return silently · no ball, no warning, and journey() still reports the
+ * hop as drawable, so every other check says the map is fine. */
+test('PROPERTY · every hop any kind can produce travels a declared edge with real coordinates', () => {
+  for (const k of MB.SERVER_KINDS) {
+    for (const region of PROP_REGIONS) {
+      const j = MB.journey(propStep(k.probe, region), PROP_GRAPH);
+      for (const h of j.hops) {
+        assert.ok(PROP_GRAPH.has(h.from, h.to),
+          k.probe + '/' + region + ': hop ' + h.from + '->' + h.to + ' is not an edge of the map');
+        assert.ok(MB.EDGE_XY[h.edge],
+          k.probe + '/' + region + ': edge ' + h.edge +
+          ' has no coordinates · pulse() would draw nothing, silently');
+      }
+    }
+  }
+});
+
+test('PROPERTY · a wired kind reports no unknowns at all', () => {
+  for (const k of MB.SERVER_KINDS) {
+    if (MB.UNWIRED_KINDS[MB.stepName(k.probe)]) continue;
+    for (const region of PROP_REGIONS) {
+      assert.deepEqual(MB.journey(propStep(k.probe, region), PROP_GRAPH).unknown, [],
+        k.probe + '/' + region + ' draws, but reports something it did not understand');
+    }
+  }
+});
+
+test('PROPERTY · every coordinate belongs to an edge the graph declares', () => {
+  // The other direction. A coordinate for an edge nobody can walk is a line on
+  // the diagram that claims a connection the model does not have.
+  const declared = new Set(MB.MAP_PAIRS.map(p => p[0] + '_' + p[1]));
+  for (const e of Object.keys(MB.EDGE_XY)) {
+    assert.ok(declared.has(e), e + ' has coordinates but is not an edge of the graph');
+  }
+});
+
+/* PROPERTY 3 · INV-02, for every kind.
+ *
+ * The predicted route and the animated route are the same list read twice, and
+ * this checks that they still are for every kind, not for the two that had
+ * tests. A kind whose plan and animation disagree shows violet boxes the money
+ * never reaches, or turns boxes green that were never announced. */
+test('PROPERTY · for every kind, the planned route IS the animated route', () => {
+  for (const k of MB.SERVER_KINDS) {
+    for (const region of PROP_REGIONS) {
+      const j = MB.journey(propStep(k.probe, region), PROP_GRAPH);
+      const p = MB.plannedPath(j);
+      const label = k.probe + '/' + region;
+      assert.deepEqual(new Set(p.edges), new Set(j.hops.map(h => h.edge)),
+        label + ': planned edges are not the edges walked');
+      assert.deepEqual(new Set(p.nodes), new Set(j.lights.map(l => l.node)),
+        label + ': planned nodes are not the nodes lit');
+      // and never the walk's origin, which nothing arrives at, so nothing ever
+      // turns it green · a node left violet forever after the journey finished
+      for (const h of j.hops) {
+        if (!j.hops.some(x => x.to === h.from)) {
+          assert.equal(p.nodes.includes(h.from), false,
+            label + ': ' + h.from + ' is planned but nothing ever arrives there');
+        }
+      }
+    }
+  }
+});
+
+/* PROPERTY 4 · INV-24, for every kind.
+ *
+ * Contiguity is meant to be a property of the SHAPE · FLOW declares a path, not
+ * an edge list · so this is checking that the shape is still what it claims to
+ * be. A ball must land before the next one leaves, or the map shows three hops
+ * happening at once, which is the specific lie a replay must not tell because a
+ * replay is a claim about ORDER. */
+test('PROPERTY · for every kind, hops are contiguous and land before the next leaves', () => {
+  for (const k of MB.SERVER_KINDS) {
+    for (const region of PROP_REGIONS) {
+      const j = MB.journey(propStep(k.probe, region), PROP_GRAPH);
+      const label = k.probe + '/' + region;
+      for (let i = 1; i < j.hops.length; i++) {
+        const prev = j.hops[i - 1], cur = j.hops[i];
+        assert.equal(prev.to, cur.from,
+          label + ': hop ' + i + ' starts at ' + cur.from + ', but the previous one landed at ' + prev.to);
+        assert.ok(prev.end <= cur.start,
+          label + ': hop ' + i + ' leaves at ' + cur.start + ' before hop ' + (i - 1) + ' lands at ' + prev.end);
+        assert.ok(cur.start >= prev.start, label + ': hops must be ordered in time');
+      }
+      for (const h of j.hops) {
+        assert.ok(h.end > h.start, label + ': a hop must take time');
+        assert.ok(h.start >= 0, label + ': a hop cannot leave before the journey starts');
+        assert.ok(h.end <= j.total + 1, label + ': a hop cannot land after the journey ends');
+      }
+    }
+  }
+});
+
+test('PROPERTY · for every kind, every node lit is a node some hop actually reaches', () => {
+  for (const k of MB.SERVER_KINDS) {
+    for (const region of PROP_REGIONS) {
+      const j = MB.journey(propStep(k.probe, region), PROP_GRAPH);
+      const arrivals = new Set(j.hops.map(h => h.to));
+      for (const l of j.lights) {
+        if (l.reason === 'state') continue;      // state is not a destination
+        assert.ok(arrivals.has(l.node),
+          k.probe + '/' + region + ': ' + l.node + ' lights up as an arrival nothing arrives at');
+      }
+    }
+  }
+});
+
+/* PROPERTY 5 · INV-25, and it needs pairs of steps rather than one.
+ *
+ * Two consumer groups reading one message leave Kafka at the same instant.
+ * Drawing them in series made the ball look like it jumped back to fetch the
+ * notification. Quantified over every pair of kinds that can share an origin. */
+test('PROPERTY · any two steps leaving the same node leave together', () => {
+  const kinds = MB.SERVER_KINDS.map(k => k.probe);
+  for (const a of kinds) {
+    for (const b of kinds) {
+      for (const region of PROP_REGIONS) {
+        const j = MB.journey(
+          [{ step: a, region, ts: '2024-01-01T00:00:00.000Z' },
+           { step: b, region, ts: '2024-01-01T00:00:00.100Z' }], PROP_GRAPH);
+        const byWave = {};
+        for (const h of j.hops) (byWave[h.wave] = byWave[h.wave] || []).push(h);
+        for (const w of Object.keys(byWave)) {
+          const firsts = byWave[w].filter(h => !byWave[w].some(x => x.to === h.from));
+          const starts = new Set(firsts.map(h => h.start));
+          assert.ok(starts.size <= 1,
+            a + ' then ' + b + ' in ' + region + ': wave ' + w + ' leaves at ' + [...starts].join(' and '));
+        }
+      }
+    }
+  }
+});
+
+/* PROPERTY 6 · INV-26. stepName is the single normaliser, so it has to be total
+ * and idempotent over everything that can reach it · which now includes every
+ * registered kind, both alias vocabularies, and the junk a malformed feed row
+ * can produce. A second application must be a no-op or the caller and the
+ * journey can disagree about what a step is called. */
+test('PROPERTY · stepName is total and idempotent over every kind and every junk input', () => {
+  const junk = [null, undefined, '', 0, false, [], {}, 'teleport', 'SETTLE:AAPL:BUY',
+                'settle:aapl:', 'settle::buy', 'settle-refused', 'trade:a.b-c_d:sell'];
+  const all = MB.SERVER_KINDS.map(k => k.probe).concat(junk);
+  for (const x of all) {
+    const once = MB.stepName(x);
+    assert.equal(typeof once, 'string', String(x) + ' must normalise to a string');
+    assert.equal(MB.stepName(once), once, String(x) + ' is not idempotent under stepName');
+  }
+  assert.equal(MB.stepName(null), '');
+  assert.equal(MB.stepName(undefined), '');
+});
+
+/* PROPERTY 7 · INV-12 and INV-19, over every kind AND over the degenerate
+ * traces. stopFirst unconditional is what keeps the previous journey's balls
+ * from flying under a panel describing a different transaction, and a decision
+ * not to play must always carry a reason a visitor can read. */
+test('PROPERTY · every play decision tears down first, and every refusal says why', () => {
+  const traces = MB.SERVER_KINDS.map(k => propStep(k.probe, 'eu'))
+    .concat([[], [{ step: 'teleport', region: 'eu' }], [{ step: 'transfer', region: 'mars' }]]);
+  for (const steps of traces) {
+    for (const auto of [true, false]) {
+      const d = MB.playDecision({ steps, graph: PROP_GRAPH, auto });
+      assert.equal(d.stopFirst, true, 'teardown is unconditional, always');
+      if (!d.canDraw) {
+        assert.ok(d.reason && d.reason.length > 10,
+          'an undrawable transaction must state a reason, never be silent');
+        assert.equal(d.play, false);
+      } else {
+        assert.equal(d.reason, '', 'a drawable transaction has nothing to apologise for');
+        assert.equal(d.play, auto);
+      }
+    }
+  }
+});
+
+/* PROPERTY 8 · INV-13, over the whole truth table rather than the three
+ * combinations somebody thought of. A control is enabled exactly when it can
+ * act, and a disabled one always carries the reason in its title. */
+test('PROPERTY · a control is enabled iff it can act, and disabled always says why', () => {
+  for (const hasSelection of [true, false]) {
+    for (const canDraw of [true, false]) {
+      for (const following of [true, false]) {
+        const st = MB.controlState({ hasSelection, canDraw, following });
+        const should = !following && hasSelection && canDraw;
+        assert.equal(st.replay, should, JSON.stringify({ hasSelection, canDraw, following }));
+        assert.equal(st.loop, st.replay, 'replay and loop are enabled together');
+        if (!st.replay) assert.ok(st.reason.length > 10, 'a dead control must say why it is dead');
+        else assert.equal(st.reason, '');
+      }
+    }
+  }
+});
+
+/* PROPERTY 9 · INV-04 and INV-09, as truth tables. A background poll must never
+ * outrank a chosen transaction, and a tab nobody is looking at must never be
+ * animated onto nor owed a backlog. */
+test('PROPERTY · a hidden tab is never animated onto and is never owed a backlog', () => {
+  for (const running of [true, false]) {
+    for (const hasSelection of [true, false]) {
+      const p = MB.liveEventPolicy({ tabVisible: false, running, hasSelection });
+      assert.deepEqual(p, { animate: false, select: false, keep: false },
+        'hidden means nothing animates and nothing is queued for later');
+    }
+  }
+});
+
+test('PROPERTY · only the idle, visible, unselected map auto-plays live traffic', () => {
+  for (const tabVisible of [true, false]) {
+    for (const running of [true, false]) {
+      for (const hasSelection of [true, false]) {
+        const p = MB.liveEventPolicy({ tabVisible, running, hasSelection });
+        assert.equal(p.animate, tabVisible && !running && !hasSelection,
+          JSON.stringify({ tabVisible, running, hasSelection }));
+        assert.equal(p.select, p.animate, 'what it animates is what it selects');
+        if (p.animate) assert.equal(p.keep, true, 'what it may animate it may also queue');
+      }
+    }
+  }
+});
+
+test('PROPERTY · auto-pick yields to every explicit intent, over the whole table', () => {
+  for (const autoPicked of [true, false]) {
+    for (const hasSelection of [true, false]) {
+      for (const deepLinkTx of [null, 'abc']) {
+        for (const following of [null, 'abc']) {
+          const p = MB.autoPickPlan({ autoPicked, hasSelection, deepLinkTx, following, rows: 3 });
+          const shouldStandDown = autoPicked || hasSelection || !!deepLinkTx || !!following;
+          assert.equal(p.pick, !shouldStandDown,
+            JSON.stringify({ autoPicked, hasSelection, deepLinkTx, following }));
+          if (!p.pick) assert.equal(p.retry, false, 'standing down is not retrying');
+        }
+      }
+    }
+  }
+});
+
+/* PROPERTY 10 · a follow is the most explicit intent this page has, so nothing
+ * automatic may take the tab, the controls or the map away from it. This is the
+ * whole shape of the worst bug of the week, stated as a rule rather than as the
+ * one sequence that reproduced it. */
+test('PROPERTY · a follow in flight outranks a standing loop and auto-pick, in every state', () => {
+  for (const hasSelection of [true, false]) {
+    for (const loopArmed of [true, false]) {
+      const p = MB.tabEnterPlan({ hasSelection, loopArmed, following: true });
+      assert.deepEqual(p, { play: false, autoPick: false },
+        JSON.stringify({ hasSelection, loopArmed }) +
+        ': entering the tab a follow just opened must not replay the PREVIOUS transaction');
+      const c = MB.controlState({ hasSelection, canDraw: true, following: true });
+      assert.equal(c.replay, false, 'and replay must not be armed on a panel with nothing in it yet');
+    }
+  }
+});
+
+/* PROPERTY 11 · a REALISTIC trace, per kind, rather than a single step. This is
+ * what the follow and the replay actually receive: the product write plus
+ * whatever the outbox and the notifier added to it. The mortgage bug lived
+ * exactly here · one step drew nothing while its siblings drew fine. */
+test('PROPERTY · a kind travelling with its outbox siblings still draws its own origin', () => {
+  const siblings = [{ step: 'published', region: 'eu', ts: '2024-01-01T00:00:00.200Z' },
+                    { step: 'notify', region: 'eu', ts: '2024-01-01T00:00:00.300Z' }];
+  for (const k of MB.SERVER_KINDS) {
+    if (MB.UNWIRED_KINDS[MB.stepName(k.probe)]) continue;
+    if (/^(published|notify|notified)/.test(MB.stepName(k.probe))) continue;
+    const j = MB.journey(propStep(k.probe, 'eu').concat(siblings), PROP_GRAPH);
+    const own = j.hops.filter(h => h.step === MB.stepName(k.probe));
+    assert.ok(own.length > 0,
+      k.probe + ' contributes no hop of its own while its siblings do · the map would ' +
+      'animate a publish leaving a box the money was never shown reaching');
+    // and every box a later hop departs from is a box some earlier hop reached
+    const reached = new Set([j.hops[0].from]);
+    for (const h of j.hops) {
+      assert.ok(reached.has(h.from),
+        k.probe + ': a ball departs ' + h.from + ', which nothing in this journey ever reached');
+      reached.add(h.to);
+    }
+  }
+});
+
+/* ==========================================================================
+ * REGRESSIONS · one per confirmed violation, each stating the specific lie.
+ * ======================================================================== */
+
+test('a loan disbursement draws the walk it actually made', () => {
+  // It had no FLOW key, so journey() dropped it into unknown[] and drew nothing
+  // · while the outbox row Products.mortgage writes under the SAME txId gave the
+  // trace a `published` step that DID draw. The visitor saw money springing out
+  // of a Postgres box on a journey in which nothing had arrived there.
+  const j = MB.journey([{ step: 'mortgage', region: 'eu', ts: '2024-01-01T00:00:00.000Z' },
+                        { step: 'published', region: 'eu', ts: '2024-01-01T00:00:00.100Z' }],
+                       PROP_GRAPH);
+  assert.deepEqual(j.unknown, [], 'mortgage is a kind this map understands');
+  assert.deepEqual(j.hops.filter(h => h.step === 'mortgage').map(h => h.edge),
+    ['browser_caddy', 'caddy_api', 'api_shard0'],
+    'the loan walks the local route, like every other single-commit product write');
+  assert.equal(j.hops[0].from, 'browser', 'and the journey starts where the click did');
+});
+
+test('a relocation leg is discoverable, even though no entry carries the customer name', () => {
+  // Every relocate leg's two entries are (shelf account, in_transit), and shelf
+  // accounts are owned by their LABEL · "savings", "card" · never by the
+  // customer. So the owner gate rejected all of them, discoverTx returned null
+  // on every poll, and the visitor was told the read model had not caught up
+  // about a read model that was perfectly current.
+  const feed = [
+    { tx: 'leg1', type: 'relocate:depart', payer: 'savings', payee: 'in_transit', ts: '2024-01-01T00:00:01Z' },
+    { tx: 'leg2', type: 'relocate:arrive', payer: 'in_transit', payee: 'card', ts: '2024-01-01T00:00:02Z' },
+  ];
+  assert.equal(MB.discoverTx(feed, { kinds: ['relocate'], owner: 'anna', known: [] }), null,
+    'the premise: the plain owner gate can never match a relocation leg');
+  assert.equal(
+    MB.discoverTx(feed, { kinds: ['relocate'], owner: 'anna', known: [],
+                          ownerOptional: ['relocate'] }),
+    'leg2', 'declared unattributable, so the newest new leg is the one to watch');
+});
+
+test('a settlement is discoverable by a customer whose name sorts below "broker"', () => {
+  /* settleFill writes four entries and the feed reduces each side with max(),
+     so the payee is always "broker" and the payer is max(customer, "broker").
+     Signup accepts a plain lowercase name, so anna, alice and bob are all
+     silently unfollowable · invisible only because the seeded cast (igor, coco,
+     oscar) happens to sort above "broker". */
+  const feed = [{ tx: 'fill1', type: 'settle:aapl:buy', payer: 'broker', payee: 'broker',
+                  ts: '2024-01-01T00:00:01Z' }];
+  assert.equal(MB.discoverTx(feed, { kinds: ['settle'], owner: 'anna', known: [] }), null,
+    'the premise: max() over the entries erased the customer');
+  assert.equal(MB.discoverTx(feed, { kinds: ['settle'], owner: 'anna', known: [],
+                                     ownerOptional: ['settle'] }), 'fill1');
+  // and the gate is not simply gone: an event that WAS in the feed before the
+  // visitor acted is still never followed
+  assert.equal(MB.discoverTx(feed, { kinds: ['settle'], owner: 'anna', known: ['fill1'],
+                                     ownerOptional: ['settle'] }), null);
+});
+
+test("another customer's payment is still never followed", () => {
+  // The relaxation is per-kind and must not leak into the kinds the server CAN
+  // attribute · a plain transfer between two other people stays invisible.
+  const feed = [{ tx: 't1', type: 'transfer_local', payer: 'coco', payee: 'oscar',
+                  ts: '2024-01-01T00:00:01Z' }];
+  assert.equal(MB.discoverTx(feed, { kinds: ['transfer'], owner: 'anna', known: [],
+                                     ownerOptional: ['relocate', 'settle'] }), null);
+});
+
+test('entering the x-ray tab a follow just opened replays nothing', () => {
+  /* followStart clicks the tab button, which runs tabEnterPlan. stopPlay does
+     not clear activeTrace, so with loop left armed the plan said "play" and
+     replayed the PREVIOUS transaction · whose playTrace called stopPlay ->
+     cancelFollow, killing the follow the visitor was waiting on. The panel then
+     read "your payment, live" over a map looping a stranger, permanently. */
+  assert.deepEqual(MB.tabEnterPlan({ hasSelection: true, loopArmed: true, following: 'abc' }),
+    { play: false, autoPick: false });
+  // and with no follow the standing loop request still works exactly as before
+  assert.deepEqual(MB.tabEnterPlan({ hasSelection: true, loopArmed: true }),
+    { play: true, autoPick: false });
+});
+
+test('replay and loop are dead while a follow is still looking for its transaction', () => {
+  /* followStart repaints the card to describe a transaction that does not exist
+     yet while activeTrace still holds the previous one, so for ~9 seconds of
+     widening polls the buttons kept the enabled state that selection left them
+     in. Pressing replay then animated the old journey under a panel captioned
+     "watching it happen…" and, through playTrace -> stopPlay -> cancelFollow,
+     permanently killed the wait for the visitor's own transaction. */
+  const st = MB.controlState({ hasSelection: true, canDraw: true, following: true });
+  assert.equal(st.replay, false);
+  assert.equal(st.loop, false);
+  assert.match(st.reason, /waiting for the transaction you just caused/);
 });

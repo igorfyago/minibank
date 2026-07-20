@@ -356,6 +356,55 @@
    * to caddy, so every reader that split the name lit the wrong node. A derived
    * name cannot contradict its own endpoints.
    */
+  /**
+   * THE MAP ITSELF, declared HERE rather than in the page.
+   *
+   * It used to live in index.html, and the test file kept a hand-copied
+   * GRAPH_PAIRS fixture beside it "so this fixture keeps saying the same thing
+   * as the map it is a copy of". It did not. A copy of a declaration is a
+   * second declaration, and the whole disease this file exists to cure is two
+   * declarations of one fact drifting apart. The page now reads MB.MAP_PAIRS
+   * and the tests read MB.MAP_PAIRS, so there is nothing left to drift.
+   */
+  var MAP_PAIRS = [
+    ['browser', 'caddy'], ['caddy', 'api'], ['api', 'directory'],
+    ['api', 'shard0'], ['api', 'shard1'],
+    ['shard0', 'kafka'], ['shard1', 'kafka'],
+    ['kafka', 'applier'], ['kafka', 'notif'],
+    ['applier', 'shard0'], ['applier', 'shard1'],
+    ['api', 'issuer'], ['issuer', 'directory'],
+    ['shard0', 'ksettle'], ['shard1', 'ksettle'],
+    ['ksettle', 'brokercons'], ['brokercons', 'brokerdb'],
+    ['broker', 'brokerdb'], ['brokerdb', 'korders'],
+    ['korders', 'settle'], ['settle', 'shard0'], ['settle', 'shard1'],
+  ];
+
+  /**
+   * WHERE EACH EDGE IS, in SVG user units: [x1, y1, x2, y2].
+   *
+   * pulse() returns silently when it is handed an edge with no entry here, so a
+   * missing coordinate is an invisible hop with no console warning: journey()
+   * reports the hop as drawable and nothing moves. That failure is only
+   * catchable by comparing this table against every edge every FLOW path can
+   * produce, which is a test, which means this table has to be reachable from
+   * node. So it lives here with the graph it belongs to.
+   */
+  var EDGE_XY = {
+    browser_caddy: [96, 40, 128, 40], caddy_api: [232, 40, 271, 40],
+    api_directory: [293, 62, 186, 100],
+    api_shard0: [336, 62, 265, 192], api_shard1: [384, 62, 455, 192],
+    shard0_kafka: [265, 268, 305, 328], shard1_kafka: [455, 268, 415, 328],
+    kafka_applier: [265, 356, 213, 356],
+    applier_shard0: [140, 328, 222, 266], applier_shard1: [178, 328, 396, 268],
+    kafka_notif: [455, 356, 507, 356],
+    api_issuer: [361, 62, 361, 148], issuer_directory: [295, 180, 216, 140],
+    shard0_ksettle: [258, 266, 258, 400], shard1_ksettle: [462, 266, 462, 400],
+    ksettle_brokercons: [470, 423, 530, 423], brokercons_brokerdb: [535, 446, 558, 579],
+    broker_brokerdb: [640, 526, 640, 570], brokerdb_korders: [600, 638, 600, 660],
+    korders_settle: [490, 660, 490, 526],
+    settle_shard0: [235, 480, 235, 265], settle_shard1: [500, 480, 500, 263],
+  };
+
   function mapGraph(pairs) {
     var out = {}, nodes = {};
     for (var i = 0; i < pairs.length; i++) {
@@ -473,6 +522,18 @@
     'trade:buy':  { path: function (r) { return ['browser', 'caddy', 'api', r]; } },
     'trade:sell': { path: function (r) { return ['browser', 'caddy', 'api', r]; } },
 
+    /* A LOAN DISBURSEMENT, and the reason it is here is worse than it having
+       been forgotten. Products.mortgage claims kind "mortgage" and ALSO appends
+       an outbox row keyed by the raw txId, so the trace carries `published` and
+       `notify` alongside it. Those two have FLOW keys; "mortgage" did not. The
+       map therefore drew a ball departing the shard for Kafka on a journey in
+       which nothing had ever arrived at that shard, and playTrace's honest
+       "happens off this diagram" fallback never fired because the orphan hops
+       made j.hops non-empty. Money appearing to leave a node nothing reached is
+       the single worst thing this diagram can say. It is one local commit, like
+       every other product write, so it walks the local route. */
+    mortgage: { path: function (r) { return ['browser', 'caddy', 'api', r]; } },
+
     /* A publish onto topic SETTLEMENTS. The events feed calls every relay
        publish "published" regardless of topic, and the plain `published` step
        above draws shard -> kafka, which is topic payments. A trade settlement
@@ -516,6 +577,89 @@
     if (STEP_ALIAS[k]) return STEP_ALIAS[k];
     var m = k.match(ASSET_KIND);
     return m ? m[1].toLowerCase() + ':' + m[2].toLowerCase() : k;
+  }
+
+  /**
+   * EVERY KIND THE SERVER CAN PUT ON THE WIRE, declared once, on purpose.
+   *
+   * This is the list the owner has been reconstructing by hand, one bug at a
+   * time, by using the site: a kind is added server-side, no FLOW key matches
+   * it, journey() drops it into unknown[] and the map draws NOTHING while
+   * looking entirely healthy. There is no console message a visitor sees, and
+   * the "happens off this diagram" caption does not fire whenever the same
+   * transaction carries a sibling step that does draw. So the failure is
+   * silence, and silence is what a test has to convert into noise.
+   *
+   * The rule the test enforces: every entry here either produces at least one
+   * hop on the real graph, or is listed as UNWIRED with a reason. A kind that
+   * is neither fails the suite. Adding a kind server-side and forgetting the
+   * map is now a red test rather than a report from a visitor.
+   *
+   * `probe` is a concrete instance, because the asset-bearing kinds have a
+   * variable middle segment and only an instance can be fed to stepName().
+   */
+  var SERVER_KINDS = [
+    { probe: 'transfer',            source: 'Ledger.claimTx · the catch-all product write' },
+    { probe: 'transfer_local',      source: 'xrayEvents rename of transfer, live feed only' },
+    { probe: 'depart',              source: 'Shard.depart' },
+    { probe: 'arrive',              source: 'Shard.arrive' },
+    { probe: 'refund',              source: 'Shard.refund' },
+    { probe: 'bounced',             source: 'live-feed outbox key for a refund' },
+    { probe: 'published',           source: 'synthesised from outbox.published_at' },
+    { probe: 'notify',              source: 'xrayTrace / xrayEvents' },
+    { probe: 'notified',            source: 'live-feed spelling of notify' },
+    { probe: 'published:settlements', source: 'eventToStep, by payload topic' },
+    { probe: 'relocate:depart',     source: 'Shard.departBalance, one leg per shelf account' },
+    { probe: 'relocate:arrive',     source: 'Shard.arriveBalance, called directly by Relocation' },
+    { probe: 'trade:aapl:buy',      source: 'Products.tradeWithoutBroker, deprecated' },
+    { probe: 'trade:aapl:sell',     source: 'Products.tradeWithoutBroker, deprecated' },
+    { probe: 'settle:aapl:buy',     source: 'Products.settleFill, id = fillId' },
+    { probe: 'settle:aapl:sell',    source: 'Products.settleFill, id = fillId' },
+    { probe: 'settle-refused',      source: 'Products.recordSettlementRefusal' },
+    { probe: 'mortgage',            source: 'Products.mortgage' },
+  ];
+
+  /**
+   * Kinds that are deliberately NOT on the map, each with the reason.
+   *
+   * An explicit list, not an implicit one. "It draws nothing" and "we decided
+   * it draws nothing" look identical on screen and must not look identical in
+   * the source. Nothing may be added here without a sentence saying why.
+   */
+  var UNWIRED_KINDS = {
+    compensation: 'lives in the broker database, never in the ledger transactions ' +
+                  'table, so it reaches neither /api/xray/trace nor /api/xray/events',
+    card_authorized: 'a metrics label, never a transactions.kind · the card rail ' +
+                     'writes plain transfers',
+    card_declined: 'a metrics label, never a transactions.kind',
+    card_captured: 'a metrics label, never a transactions.kind',
+    card_released: 'a metrics label, never a transactions.kind',
+  };
+
+  /**
+   * Does this kind draw, and if not, is that on purpose?
+   *
+   * Answers for ONE kind against the real graph, in every region the bank has.
+   * A kind that resolves to a FLOW path in one region and not the other is a
+   * gap too: shard1 customers are not a smaller class of customer.
+   */
+  function kindCoverage(kind, graph, regions) {
+    var regs = regions || Object.keys(REGION_NODE);
+    var name = stepName(kind);
+    var declared = Object.prototype.hasOwnProperty.call(UNWIRED_KINDS, name);
+    var perRegion = regs.map(function (r) {
+      var j = journey([{ step: kind, region: r, ts: '2024-01-01T00:00:00Z' }], graph);
+      return { region: r, hops: j.hops.length, unknown: j.unknown.slice() };
+    });
+    var drawn = perRegion.filter(function (x) { return x.hops > 0; }).length;
+    return {
+      kind: kind, name: name, declaredUnwired: declared,
+      reason: declared ? UNWIRED_KINDS[name] : '',
+      perRegion: perRegion,
+      drawsEverywhere: drawn === regs.length,
+      drawsNowhere: drawn === 0,
+      ok: declared ? drawn === 0 : drawn === regs.length,
+    };
   }
 
   function journey(steps, graph, opts) {
@@ -677,6 +821,22 @@
   /** A control that cannot act says so, rather than being a silent no-op. */
   function controlState(opts) {
     var o = opts || {};
+    /* A FOLLOW IN FLIGHT HAS ALREADY REPAINTED THE PANEL.
+     *
+     * followStart writes the new transaction's id and head into the card and
+     * empties the step list, but the previous trace is still in activeTrace,
+     * because the new one does not exist yet. For the ~9 seconds of widening
+     * polls that follow, replay and loop kept whatever enabled state the
+     * PREVIOUS selection left them in, sitting on a panel captioned "watching
+     * it happen…". Pressing either one replayed a stranger's journey and,
+     * through playTrace -> stopPlay -> cancelFollow, permanently killed the
+     * wait for the visitor's own transaction. Drawability is a property of what
+     * the panel CLAIMS to be showing, so a panel showing a pending follow has
+     * nothing to replay yet. */
+    if (o.following) {
+      return { replay: false, loop: false,
+               reason: 'waiting for the transaction you just caused' };
+    }
     if (!o.hasSelection) {
       return { replay: false, loop: false, reason: 'select a transaction first' };
     }
@@ -868,8 +1028,40 @@
       if (!hit) return;
       /* Whose transaction it is. The feed names the two sides by OWNER, and a
          customer's product accounts carry their owner's name, so a savings move
-         or a settlement is matched by the same test as a payment. */
-      if (owner && String(e.payer) !== owner && String(e.payee) !== owner) return;
+         or a settlement is matched by the same test as a payment.
+         ------------------------------------------------------------------
+         EXCEPT WHERE THE SERVER CANNOT NAME THE CUSTOMER AT ALL, and that was
+         a silent, total failure rather than a near miss:
+
+           relocate:*  both entries of every shelf leg are (shelf account,
+                       in_transit). Shelf accounts are created with owner =
+                       the account LABEL · "savings", "card", "loan", the asset
+                       name · never the customer's. So no leg could ever match,
+                       every relocation animated nothing, and the visitor was
+                       told "the read model has not caught up" about a read
+                       model that was perfectly current.
+
+           settle:*    four entries, two of them owned by "broker", and the
+                       customer's holding account owned by the ASSET label. The
+                       feed reduces each side with max(), so payee is always
+                       "broker" and payer is max(customer, "broker") · which is
+                       "broker" for every customer whose name sorts below it.
+                       Signup accepts /^[a-z]{3,12}$/, so anna, alice, bob and
+                       abby are all silently unfollowable. It went unnoticed
+                       only because the seeded cast (igor, coco, oscar) all sort
+                       above "broker".
+
+         So the caller declares which kinds are unattributable and those skip
+         the owner gate. That is not a hole: `known` already excludes everything
+         that was in the feed before the visitor acted, so the candidates are
+         only events that came into existence after their click. Weakening the
+         gate for kinds it cannot answer is honest; leaving it to reject
+         everything was not. */
+      var unattributable = (o.ownerOptional || []).some(function (k) {
+        return type === k || type.indexOf(k + ':') === 0;
+      });
+      if (owner && !unattributable &&
+          String(e.payer) !== owner && String(e.payee) !== owner) return;
       var at = new Date(e.ts).getTime();
       if (!isFinite(at)) at = 0;
       if (best === null || at > bestAt) { bestAt = at; best = e.tx; }
@@ -918,6 +1110,18 @@
 
   function tabEnterPlan(opts) {
     var o = opts || {};
+    /* A FOLLOW IN FLIGHT OWNS THE TAB IT JUST OPENED.
+     *
+     * followStart clicks the x-ray tab button to bring the visitor to their own
+     * transaction, and that click runs this plan. stopPlay() does not clear
+     * activeTrace, so with loop left armed the plan said "play" and replayed the
+     * PREVIOUS, unrelated transaction · whose playTrace called stopPlay ->
+     * cancelFollow, bumping the follow token, so the poll the visitor was
+     * waiting on returned silently at its token check and never came back. The
+     * panel then read "your payment, live" over a map looping a stranger,
+     * forever. A follow is the most explicit intent this page has; it outranks a
+     * standing loop request and it outranks auto-pick. */
+    if (o.following) return { play: false, autoPick: false };
     if (o.hasSelection) return { play: !!o.loopArmed, autoPick: false };
     return { play: false, autoPick: true };
   }
@@ -935,6 +1139,13 @@
     tabEnterPlan: tabEnterPlan,
     makeApi: makeApi,
     mapGraph: mapGraph,
+    MAP_PAIRS: MAP_PAIRS,
+    EDGE_XY: EDGE_XY,
+    FLOW_KINDS: Object.keys(FLOW),
+    SERVER_KINDS: SERVER_KINDS,
+    UNWIRED_KINDS: UNWIRED_KINDS,
+    kindCoverage: kindCoverage,
+    REGIONS: Object.keys(REGION_NODE),
     journey: journey,
     plannedPath: plannedPath,
     stepName: stepName,

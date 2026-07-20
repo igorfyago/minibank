@@ -1241,10 +1241,20 @@ document.querySelectorAll('.tab-btn[data-tab]').forEach(b => b.onclick = () => {
   }
   document.querySelectorAll('.tab-btn').forEach(x => x.classList.toggle('on', x === b));
   ['app','xray','console','quiz'].forEach(t => $('#tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
-  history.replaceState(null, '', '#' + b.dataset.tab);
+  /* A DEEP LINK IS NOT A TAB NAME. This wrote '#xray' unconditionally, so
+     opening a shared #xray?tx=abc123 rewrote the address bar to a bare '#xray'
+     before the trace had even been fetched: reloading lost the transaction and
+     auto-picked the newest instead, and copying the URL back out re-shared
+     nothing. Nothing anywhere wrote the id back, so the UI could not produce a
+     shareable per-transaction link at all. The tx survives the tab switch it
+     caused. */
+  {
+    const keep = b.dataset.tab === 'xray' ? (MB.parseXrayHash(location.hash).tx || deepLinkTx) : null;
+    history.replaceState(null, '', '#' + b.dataset.tab + (keep ? '?tx=' + encodeURIComponent(keep) : ''));
+  }
   if (b.dataset.tab === 'xray') {
     xrayTick();
-    const plan = MB.tabEnterPlan({ hasSelection: !!activeTrace, loopArmed });
+    const plan = MB.tabEnterPlan({ hasSelection: !!activeTrace, loopArmed, following: !!following });
     if (plan.autoPick) autoPickLatest();
     else if (plan.play && activeTrace) playTrace(activeTrace);
   }
@@ -1411,7 +1421,7 @@ $('#act-move').onclick = async () => {
   else say('✗ ' + (r.error || r.result), 'var(--amber)');
   loadAccounts(); loadStatement();
   // no leg id comes back · the newest relocation leg is discovered from the feed
-  if (r.result === 'ok') followStart({ find: { kinds: ['relocate'], owner, known }, head: 'your relocation, live' });
+  if (r.result === 'ok') followStart({ find: { kinds: ['relocate'], owner, known, ownerOptional: ['relocate', 'settle', 'settle-refused'] }, head: 'your relocation, live' });
 };
 
 /* the product shelf · every product is accounts + transfers, valued live */
@@ -1771,27 +1781,16 @@ async function loadStatement() {
    markup above, and they have to stay that way: the lines are what you see, and
    this is what the travelling dots follow. Move one without the other and the
    dots fly through empty space. Kept in the order the money moves. */
-const EDGES = {
-  browser_caddy:[96,40,128,40], caddy_api:[232,40,271,40],
-  api_directory:[293,62,186,100],
-  api_shard0:[336,62,265,192], api_shard1:[384,62,455,192],
-  shard0_kafka:[265,268,305,328], shard1_kafka:[455,268,415,328],
-  kafka_applier:[265,356,213,356],
-  applier_shard0:[140,328,222,266], applier_shard1:[178,328,396,268],
-  kafka_notif:[455,356,507,356],
-  // the issuer, and the securities loop the broker has been running unmapped
-  api_issuer:[361,62,361,148], issuer_directory:[295,180,216,140],
-  shard0_ksettle:[258,266,258,400], shard1_ksettle:[462,266,462,400],
-  ksettle_brokercons:[470,423,530,423], brokercons_brokerdb:[535,446,558,579],
-  broker_brokerdb:[640,526,640,570], brokerdb_korders:[600,638,600,660],
-  korders_settle:[490,660,490,526],
-  settle_shard0:[235,480,235,265], settle_shard1:[500,480,500,263],
-  /* The two hazards are ordinary links geometrically · they carry real traffic
-     and a ball may travel them. api_jwks is here for the coordinate invariant
-     ONLY: no FLOW step names it, nothing calls pulse() on it, and the line is
-     drawn with the animation switched off. A ball on that edge would be the
-     map telling the same lie the missing check already tells. */
-};
+/* THE COORDINATES LIVE IN lib.js, WITH THE GRAPH THEY BELONG TO.
+   pulse() returns silently when EDGES has no entry for an edge, so a missing
+   coordinate is an invisible hop with no warning: the journey reports it as
+   drawable and nothing moves. That is only catchable by comparing this table
+   against every edge every FLOW path can produce, which is a test, which means
+   the table has to be reachable from node. It is MB.EDGE_XY now, and this page
+   reads it rather than keeping a second copy. The <line> elements in the markup
+   above still have to agree with it: the lines are what you see, and this is
+   what the travelling dots follow. */
+const EDGES = MB.EDGE_XY;
 /* dur matters. It used to be hardcoded at 700ms while playTrace gives most
    steps 450, so a step's bullets were still in the air two steps later and the
    map showed three hops happening at once. A replay is a claim about ORDER, so
@@ -1817,9 +1816,17 @@ function pulse(edge, color = 'var(--accent)', delay = 0, dur = 700) {
     })(t0);
   }, delay));
 }
+/* THE UN-GLOW IS PART OF THE JOURNEY THAT LIT IT, so it is registered.
+   This used to be a bare setTimeout, invisible to stopPlay. reach() glows every
+   node a journey lands on, so an abandoned journey's removal timers went on
+   firing up to a second into the NEXT one and stripped .hot from nodes the new
+   journey had only just reached · on exactly the nodes two journeys share, api
+   and shard0 and kafka. The current-step ring vanished early, nondeterministically,
+   and only ever on a re-selection, which is why it read as a rendering glitch. */
 function glow(node, cls = 'hot', ms = 1000) {
   const n = document.querySelector(`.node[data-node="${node}"]`); if (!n) return;
-  n.classList.add(cls); setTimeout(() => n.classList.remove(cls), ms);
+  n.classList.add(cls);
+  playTimers.push(setTimeout(() => n.classList.remove(cls), ms));
 }
 /* ONE MODEL FOR THE MAP.
  *
@@ -1834,25 +1841,12 @@ function glow(node, cls = 'hot', ms = 1000) {
  * unit tested across every case this bank can produce: local and cross-region,
  * both directions, refunds, single steps, and the live vocabulary. The renderer
  * below just draws what it is given. */
-const MAP_PAIRS = [
-  ['browser', 'caddy'], ['caddy', 'api'], ['api', 'directory'],
-  ['api', 'shard0'], ['api', 'shard1'],
-  ['shard0', 'kafka'], ['shard1', 'kafka'],
-  ['kafka', 'applier'], ['kafka', 'notif'],
-  ['applier', 'shard0'], ['applier', 'shard1'],
-  /* Everything below here was already running and was drawn nowhere. It is
-     declared because the map draws it, and an edge the graph does not know
-     about is an edge the animation will one day be asked to travel and silently
-     will not · which is exactly what then happened. These sat here with the
-     comment "no FLOW step walks these paths yet" while every securities trade
-     the bank settled animated as nothing at all. The securities loop below is
-     now walked by the settle steps in FLOW; the issuer pair still is not. */
-  ['api', 'issuer'], ['issuer', 'directory'],
-  ['shard0', 'ksettle'], ['shard1', 'ksettle'],
-  ['ksettle', 'brokercons'], ['brokercons', 'brokerdb'],
-  ['broker', 'brokerdb'], ['brokerdb', 'korders'],
-  ['korders', 'settle'], ['settle', 'shard0'], ['settle', 'shard1'],
-];
+/* ONE DECLARATION OF THE MAP, and it is not in this file.
+   The pairs used to be declared here and hand-copied into the test fixture,
+   with a comment hoping the copy would keep saying the same thing as the
+   original. A copy of a declaration is a second declaration. It lives in
+   lib.js now, where the tests read the SAME array this page draws from. */
+const MAP_PAIRS = MB.MAP_PAIRS;
 const MAP = MB.mapGraph(MAP_PAIRS);
 
 /** Every mark a journey leaves on the map, gone. Both states, both kinds of
@@ -1952,10 +1946,29 @@ const evLine = e => {
     case 'depart': return `${who(e.payer)}'s${a} left ${e.region} into the pipe`;
     case 'published': return `the ${e.region} relay handed an event to Kafka`;
     case 'arrive': return `${e.payee ? who(e.payee) + ' received' : 'money arrived'}${a} in ${e.region}`;
-    case 'refund': return `a payment bounced · refund landed in ${e.region}`;
-    case 'notify': return `the notifications service stored the echo`;
-    default: return e.type;
+    case 'refund': case 'bounced': return `a payment bounced · refund landed in ${e.region}`;
+    case 'notify': case 'notified': return `the notifications service stored the echo`;
+    case 'transfer': return `${who(e.payer)} paid ${who(e.payee)}${a} · one ACID commit in ${e.region}`;
+    case 'relocate:depart': return `a shelf account left ${e.region} · one leg of the relocation saga`;
+    case 'relocate:arrive': return `a shelf account landed in ${e.region}`;
+    case 'mortgage': return `a loan disbursed${a} in ${e.region} · debt and cash in one commit`;
+    case 'settle-refused': return `a fill was refused · the venue filled, the money said no`;
   }
+  /* THE LIVE FEED USED THE OTHER VOCABULARY. This switch knew 'refund' and
+     'notify' · the TRACE spellings · while the feed emits 'bounced' and
+     'notified', so a compensation, the path nobody exercises by hand, showed up
+     in the live list as the literal word "bounced" beside a bare dot, while the
+     map correctly aliased it and drew kafka -> applier -> shard. Three spellings
+     of one fact, and the ticker knew only the one the map does not use. The
+     asset-bearing kinds are matched by shape for the same reason iconFor does:
+     a new row in the asset registry must not silently lose its sentence. */
+  const t = String(e.type || '');
+  const m = /^(settle|trade):([a-z0-9._-]+):(buy|sell)$/i.exec(t);
+  if (m) return m[1].toLowerCase() === 'settle'
+    ? `a ${m[2].toUpperCase()} ${m[3]} settled through the broker · four entries, two currencies`
+    : `a ${m[2].toUpperCase()} ${m[3]} booked in the ledger itself · the pre-broker path`;
+  if (t === 'published:settlements') return `the ${e.region} relay handed a fill to the settlements topic`;
+  return t;
 };
 const GUIDE = {
   welcome: { t: 'The Guide',
@@ -2144,8 +2157,15 @@ function shardStats(sh) {
 
 let lastSummary = null;
 function gShow(subject, ctx = {}) {
-  gSubject = subject; gCtx = ctx;
+  /* THE SUBJECT IS ONLY CLAIMED IF IT CAN BE SHOWN. gSubject was written
+     BEFORE the unknown-key bail, so clicking a trace step for a kind the guide
+     has no entry for · settle:*, relocate:*, settle-refused · parked gSubject
+     on a subject that does not exist. The plain/how/win depth buttons then
+     re-rendered that nonexistent subject and became a permanent no-op, and the
+     poller's guide hint, gated on gSubject === 'welcome', stopped updating too.
+     Failing to show something must not also break the thing that is shown. */
   const g = GUIDE[subject]; if (!g) return;
+  gSubject = subject; gCtx = ctx;
   if (!lastSummary && STATS[subject]) {
     $('#guide-title').textContent = g.t;
     $('#guide-body').innerHTML = '<p class="muted">fetching live numbers…</p>';
@@ -2199,7 +2219,7 @@ document.querySelectorAll('.node').forEach(n => n.onclick = () => {
   if (k && k.indexOf('scale:') === 0) { openConcept(k); return; }
   gShow(k);
   const plan = MB.mapClickPlan({ node: k, txs: txsTouching(k) });
-  if (plan.mode === 'play') { traceTx(plan.tx, true); return; }
+  if (plan.mode === 'play') { traceTx(plan.tx, true).catch(() => {}); return; }
   if (plan.mode === 'filter') {
     // emphasise, list, and leave whatever is running alone
     document.querySelectorAll('#ticker .tick-item').forEach(el =>
@@ -2342,7 +2362,14 @@ const QUESTIONS = [
 ];
 window.qOnMap = i => { const qq = QUESTIONS[i];
   document.querySelectorAll('.node').forEach(n => n.classList.toggle('onpath', qq.nodes.includes(n.dataset.node)));
-  qq.edges.forEach((e, j) => pulse(e, 'var(--violet)', j * 320));
+  /* THE QUIZ DOES NOT GET TO ANIMATE A MAP NOBODY IS LOOKING AT, and it does
+     not get to animate one somebody IS looking at either. pulse() pushes into
+     playTimers but claims no playingUntil and calls no stopPlay, so these
+     violet balls could fly alongside a running replay · two journeys on one
+     map, which is the single rule this view has · and they fired while the
+     x-ray tab was hidden, from the quiz tab, which is the other one. The node
+     marks are the answer to the question; the balls were decoration. */
+  if (xrayVisible()) qq.edges.forEach((e, j) => pulse(e, 'var(--violet)', j * 320));
   $('#xsvg').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
 window.qDepth = (i, d, btn) => {
   $('#qans-' + i).textContent = QUESTIONS[i][d];
@@ -2434,7 +2461,26 @@ function openConcept(k) {
 const seen = new Set(), tickIds = new Set();
 let firstPoll = true, activeTrace = null, latestEvents = [];
 let prevTickSig = '', prevEntSig = '';
-const ICON = { transfer_local: '💸', depart: '🛫', published: '📤', arrive: '🛬', refund: '↩️', notify: '🔔' };
+/* THE ICONS COVER EVERY SPELLING, because the feed uses the live vocabulary and
+   this table only knew the trace one. 'bounced' and 'notified' fell through to
+   the '·' fallback beside their own aliases, and the rare kinds · trades,
+   settlements, relocations, loans · rendered as a bare dot next to a raw
+   database string, while the transaction-groups panel a few hundred pixels
+   below on the SAME page rendered them properly. */
+const ICON = { transfer_local: '💸', transfer: '💸', depart: '🛫', published: '📤',
+  arrive: '🛬', refund: '↩️', bounced: '↩️', notify: '🔔', notified: '🔔',
+  'relocate:depart': '📦', 'relocate:arrive': '📦', mortgage: '🏦',
+  'settle-refused': '⛔' };
+/* The asset-bearing kinds carry a variable middle segment, so they are matched
+   by SHAPE rather than listed · listing them would mean every new asset row in
+   the registry silently loses its icon, which is the same disease one level up. */
+function iconFor(type) {
+  const t = String(type || '');
+  if (ICON[t]) return ICON[t];
+  if (/^settle:/.test(t)) return '🧾';
+  if (/^trade:/.test(t)) return '📈';
+  return '·';
+}
 
 async function xrayTick() {
   try {
@@ -2457,6 +2503,14 @@ async function xrayTick() {
     : 'cache · ' + (rc.cacheHitRate || 0) + '% hits · ' + (rc.cacheHits || 0) + '/' + ((rc.cacheHits||0)+(rc.cacheMisses||0));
   if ($('#redis-sub') && $('#redis-sub').textContent !== rsub) $('#redis-sub').textContent = rsub;
 
+  /* Marked seen on the tick that fetched them, deliberately, and NOT gated on
+     the tab being visible. Withholding the mark while the x-ray is hidden was
+     tried and is worse: `seen` is the only thing bounding the backlog, so a
+     visitor who spends a few minutes on the App tab returns to a burst of a
+     dozen queued historical journeys replaying one after another. The events a
+     hidden tab misses are not lost to the visitor · every product button and
+     every Rita tool follows the transaction it caused through followStart, and
+     a follow fetches the trace by id rather than waiting for the live feed. */
   const fresh = evs.filter(e => !seen.has(e.type + e.tx + e.ts));
   evs.forEach(e => seen.add(e.type + e.tx + e.ts));
   /* QUEUE the unseen events rather than animating whichever one happens to
@@ -2491,11 +2545,12 @@ async function xrayTick() {
   const sig = top.map(e => e.type + e.tx + e.ts).join('|');
   if (sig !== prevTickSig) {
     prevTickSig = sig;
+    if ($('#ticker')) delete $('#ticker').dataset.stale;   // a repaint means the feed is live again
     $('#ticker').innerHTML = top.map(e => {
       const id = e.type + e.tx + e.ts, isNew = !tickIds.has(id) && !firstPoll;
       const picked = activeTrace && activeTrace.tx === e.tx;
       return `<div class="tick-item${isNew ? ' new' : ''}${picked ? ' picked' : ''}" data-tx="${e.tx}" onclick='tickClick(${JSON.stringify(JSON.stringify(e))})'>
-        <div class="tick-ic">${ICON[e.type] || '·'}</div>
+        <div class="tick-ic">${iconFor(e.type)}</div>
         <div class="tick-main">${evLine(e)}<div class="tick-sub">${new Date(e.ts).toLocaleTimeString()} · tx ${e.tx.slice(0, 8)}…</div></div>
         <span class="chip ${e.region}">${e.region}</span></div>`;
     }).join('') || '<span class="muted">quiet · send some money on the App tab</span>';
@@ -2556,6 +2611,14 @@ async function xrayTick() {
       if (tk && !tk.dataset.stale) {
         tk.dataset.stale = '1';
         tk.innerHTML = '<span class="muted">live feed stalled · ' + String(e.message || e).slice(0, 90) + '</span>';
+        /* AND THE REPAINT IS RE-ARMED. The ticker is only rebuilt when the
+           top-14 signature CHANGES, so after one 429 the stall message survived
+           every subsequent healthy poll returning the same events · which, on a
+           bank with no background scheduler, means until a human moves money.
+           A recovered feed sat there claiming to be dead beside a map that was
+           updating live. Forgetting the old signature makes the next good poll
+           repaint unconditionally. */
+        prevTickSig = '';
       }
     }
   }
@@ -2622,13 +2685,16 @@ window.selectTx = tx => {
   deepLinkTx = tx;
   const btn = document.querySelector('[data-tab="xray"]');
   if (btn && $('#tab-xray').classList.contains('hidden')) btn.click();
-  return traceTx(tx, true).finally(() => { if (deepLinkTx === tx) deepLinkTx = null; });
+  return traceTx(tx, true).catch(() => {}).finally(() => { if (deepLinkTx === tx) deepLinkTx = null; });
 };
 
 window.tickClick = evJson => { const e = JSON.parse(evJson);
   const subj = (e.type.indexOf('trade:') === 0 || e.type.indexOf('settle:') === 0) ? 'ev:trade'
     : e.type === 'mortgage' ? 'ev:mortgage' : 'ev:' + e.type;
-  gShow(GUIDE[subj] ? subj : 'entry', { ev: e }); traceTx(e.tx, true); };
+  gShow(GUIDE[subj] ? subj : 'entry', { ev: e });
+  /* traceTx states its own failures now, but the rejection still has to be
+     consumed or a 429 is an unhandled promise rejection in the console. */
+  traceTx(e.tx, true).catch(() => {}); };
 
 function renderTrace(tr, tx) {
   activeTrace = tr;
@@ -2649,8 +2715,19 @@ function renderTrace(tr, tx) {
   }
   // the list must show the new selection immediately · waiting for the next
   // 2s tick means clicking a row appears to do nothing for two seconds
-  document.querySelectorAll('#ticker .tick-item').forEach(el =>
-    el.classList.toggle('picked', el.dataset.tx === tr.tx));
+  /* AND THE FILTER GOES, because a selection is not a filtered-out row.
+     A map click on a node touched by several transactions dims every row
+     outside that subset to 28%. Nothing on the selection path cleared it, and
+     .dim sets opacity only · never pointer-events · so clicking one of the
+     greyed rows selected it and left it wearing .picked AND .dim at once.
+     Opacity applies to the whole subtree, so the current selection became the
+     dimmest, hardest-to-read row in the list, and on an idle bank it stayed
+     that way indefinitely. Choosing a transaction ends the filter it was
+     excluded by. */
+  document.querySelectorAll('#ticker .tick-item').forEach(el => {
+    el.classList.remove('dim');
+    el.classList.toggle('picked', el.dataset.tx === tr.tx);
+  });
   const t0 = new Date(tr.steps[0].ts).getTime();
   const total = new Date(tr.steps[tr.steps.length - 1].ts).getTime() - t0;
   $('#trace-card').hidden = false;
@@ -2658,7 +2735,10 @@ function renderTrace(tr, tx) {
   $('#trace-head').textContent = `${who(tr.payer)} → ${who(tr.payee || 'the pipe')}${tr.amount ? ' · ' + eur(tr.amount) : ''} · ${total}ms end to end`;
   $('#trace-steps').innerHTML = tr.steps.map((st, i) => {
     const dt = i === 0 ? 0 : new Date(st.ts).getTime() - new Date(tr.steps[i - 1].ts).getTime();
-    const subj = st.step === 'transfer' ? 'ev:transfer_local' : 'ev:' + st.step;
+    /* The fallback the ticker already had. Without it, clicking a trace step
+       for a kind the guide has no entry for reached gShow with a dead key. */
+    const want = st.step === 'transfer' ? 'ev:transfer_local' : 'ev:' + st.step;
+    const subj = GUIDE[want] ? want : 'entry';
     return `<div class="trace-step" onclick='gShow("${subj}",{ev:{type:"${st.step === 'transfer' ? 'transfer_local' : st.step}",region:"${st.region}",payer:"${tr.payer || ''}",payee:"${tr.payee || ''}",amount:"${tr.amount || ''}",tx:"${tx}"}})'>
       <b style="flex:none">${st.region}</b><span class="muted">${st.detail}</span>
       <span class="lat">${i === 0 ? new Date(st.ts).toLocaleTimeString() : '+' + dt + 'ms'}</span></div>`;
@@ -2710,8 +2790,37 @@ function renderTrace(tr, tx) {
  * journey() rather than counting, and its stopFirst is unconditional, so the
  * map is always emptied before it is repainted. Unit tested in lib.test.js.
  */
+/* SELECTION IS GENERATIONAL, like the follow already was.
+   traceTx awaited the fetch before doing anything, with no token, so two clicks
+   a few hundred ms apart whose responses came back out of order · which they
+   can, the server runs a virtual thread per request and a settlement trace does
+   strictly more work than a local transfer · let the EARLIER click's
+   continuation run LAST and quietly revert the panel, the row and the map to a
+   transaction the visitor had already moved on from. It looked like the second
+   click "did not register". followPoll solved exactly this with followToken;
+   this is the same fix in the same shape. */
+let traceToken = 0;
+
 async function traceTx(tx, auto = false) {
-  const tr = await api('/api/xray/trace?tx=' + tx);
+  const token = ++traceToken;
+  let tr;
+  try {
+    tr = await api('/api/xray/trace?tx=' + encodeURIComponent(tx));
+  } catch (e) {
+    /* A 429 or a 5xx is not an answer about this transaction. It used to be an
+       unhandled rejection: gShow had already repainted the guide to narrate the
+       new event, the panel still described the OLD one, the old journey kept
+       flying, and nothing anywhere said why. Stale and silent is the one state
+       this view must never be in. */
+    if (token !== traceToken) return;
+    console.error('traceTx failed for', tx, e);
+    $('#play-wrap').hidden = false;
+    $('#play-caption').textContent =
+      'could not load this trace · ' + String((e && e.message) || e).slice(0, 80) +
+      ' · the map still shows the previous one';
+    return;
+  }
+  if (token !== traceToken) return;   // a newer click has already won
   const d = MB.playDecision({ steps: tr && tr.steps, graph: MAP, auto });
   // teardown first, always · the pending lap of the OLD trace must not land on
   // the new one. Loop's on/off is a mode of the view and survives; only its
@@ -2768,6 +2877,16 @@ let playingUntil = 0;
  */
 function stopPlay() {
   playTimers.forEach(clearTimeout); playTimers = []; playingUntil = 0;
+  /* THE PENDING LAP IS PART OF WHAT IS RUNNING TOO.
+     loopTimer is not a member of playTimers, and stopPlay did not clear it, so
+     a lap armed before a teardown survived the teardown and woke up inside the
+     journey that replaced it: press replay during the 2s loop pause and the
+     replay you asked for was torn down and restarted from zero part way
+     through. Every other stop-shaped path in this file already paired the two ·
+     traceTx, renderTrace, setLooping, tab-leave, followStart · and playTrace,
+     the one that runs on every lap and every replay, did not. Clearing it here
+     makes the pairing a property of stopping rather than of remembering. */
+  clearTimeout(loopTimer); loopTimer = null;
   /* A FOLLOW IS PART OF WHAT IS RUNNING, so it stops here too. This line used
      to be `following = null`, which stopped the poll from doing anything but
      left its scheduled retry alive to wake up, find itself disowned and return
@@ -2850,13 +2969,35 @@ function livePolicy() {
 /** Reflect a live journey in the panel and the list, without claiming it as a
  *  deliberate choice and without replaying what is already on screen. */
 function noteLiveSelection(tx) {
-  api('/api/xray/trace?tx=' + tx).then(tr => {
-    if (!tr || !tr.steps || !tr.steps.length) return;
+  /* THE PANEL STOPS NAMING THE OLD TRANSACTION IMMEDIATELY.
+     The balls for the new one are already crossing the map by the time this
+     runs · drainLiveQueue calls runJourney BEFORE this fetch · so for the whole
+     round trip the panel, the trace id and the .picked row all described the
+     PREVIOUS transaction while the map animated a different one. The 2s poller
+     re-asserted that stale highlight rather than clearing it. And if the fetch
+     rejected or came back empty, the panel never caught up at all: the map had
+     animated a route for a transaction it never named, silently, forever. So
+     the stale claim is dropped up front and the panel says what it is doing. */
+  activeTrace = null;
+  document.querySelectorAll('#ticker .tick-item.picked').forEach(el => el.classList.remove('picked'));
+  $('#trace-card').hidden = false;
+  $('#trace-tx').textContent = String(tx).slice(0, 13) + '…';
+  $('#trace-head').textContent = 'live traffic · loading its trace';
+  api('/api/xray/trace?tx=' + encodeURIComponent(tx)).then(tr => {
     if (selectionExplicit) return;            // a real choice landed while we fetched
+    if (!tr || !tr.steps || !tr.steps.length) {
+      $('#trace-head').textContent = 'live traffic · no trace recorded for this one';
+      setReplayable(false);
+      return;
+    }
     renderTrace(tr, tx);
     selectionExplicit = false;
     gShow('trace', { tr, total: 0 });
-  }).catch(() => {});
+  }).catch(e => {
+    if (selectionExplicit) return;
+    $('#trace-head').textContent = 'live traffic · could not load its trace';
+    setReplayable(false);
+  });
 }
 function drainLiveQueue() {
   if (drainTimer) return;                       // already draining
@@ -2898,7 +3039,7 @@ function setReplayable(can) {
      and this is also called at load with nothing selected · which the page
      never used to do, so the very first press of replay was a silent no op
      through the `if (activeTrace)` guard and loop lit up while playing nothing. */
-  const st = MB.controlState({ hasSelection: !!activeTrace, canDraw: !!can });
+  const st = MB.controlState({ hasSelection: !!activeTrace, canDraw: !!can, following: !!following });
   [['#replay-btn', st.replay], ['#loop-btn', st.loop]].forEach(([sel, on]) => {
     const b = $(sel); if (!b) return;
     b.disabled = !on;
@@ -2923,7 +3064,18 @@ function loopAgain() {
   if (!looping || !activeTrace) return;
   if (document.hidden) return;                       // resumes on visibilitychange
   if (!xrayVisible()) return;                        // resumes when the tab comes back
-  loopTimer = setTimeout(() => { if (looping && activeTrace) playTrace(activeTrace); }, LOOP_PAUSE_MS);
+  /* ONE CHAIN, NOT TWO. This used to assign over whatever handle was already in
+     loopTimer, so a manual replay landing during a loop pause created a SECOND
+     lap chain and made the first handle unreachable by every clearTimeout in
+     this file · including the one on tab-leave. The orphan then ran a full
+     journey against a hidden tab, and, through playTrace -> stopPlay ->
+     cancelFollow, silently killed any follow started in that window. */
+  clearTimeout(loopTimer);
+  loopTimer = setTimeout(() => {
+    /* The guards are re-checked HERE, not only at schedule time. A timer armed
+       on a visible tab is not a promise that the tab is still visible 2s later. */
+    if (looping && activeTrace && !document.hidden && xrayVisible()) playTrace(activeTrace);
+  }, LOOP_PAUSE_MS);
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -3000,6 +3152,14 @@ function playTrace(tr) {
     return;
   }
   setReplayable(true);
+  /* ONE VIOLET MEANS ONE THING, on this path too. renderTrace swept the quiz's
+     .onpath marks; playTrace did not, and the replay button and the loop-armed
+     tab entry both reach playTrace WITHOUT going through renderTrace. So a
+     visitor who used the quiz's "show on the map" and then pressed replay
+     watched the route in dim violet while the question's boxes · heavier stroke,
+     fully opaque, not on the route at all · sat there in the same violet saying
+     "the money is about to arrive here" about boxes it never visits. */
+  document.querySelectorAll('.node.onpath').forEach(n => n.classList.remove('onpath'));
   /* Re-plan, because stopPlay() above has just wiped the marks renderTrace
      made. This is also what makes a LOOP legible: every lap begins from a
      fully violet route and greens it again in order, rather than the second lap
@@ -3112,6 +3272,15 @@ function followStart(spec) {
   const fill = $('#play-fill');
   fill.style.transition = 'none'; fill.style.width = '4%';
   $('#play-caption').textContent = 'watching it happen…';
+  /* THE CONTROLS FOLLOW THE PANEL, not activeTrace. Everything above has just
+     repainted this card to describe a transaction that does not exist yet, but
+     activeTrace still holds the PREVIOUS one, so replay and loop kept the
+     enabled state that selection left them in. Pressing either while the poll
+     widened replayed the old, unrelated journey under a panel captioned
+     "watching it happen…" AND, through playTrace -> stopPlay -> cancelFollow,
+     permanently killed the wait for the visitor's own transaction. controlState
+     now knows about `following`; this is the call that tells it. */
+  setReplayable(false);
   setTimeout(() => $('#trace-card').scrollIntoView({ behavior: 'smooth', block: 'center' }), 150);
   return followPoll(o.tx || null, token, 0);
 }
@@ -3523,9 +3692,22 @@ const AGENT_TOOLS = {
       }
       if (a.action === 'capture' || a.action === 'release') {
         if (!lastAuth[me]) return fail('no hold from this session · make one first');
-        // the SAME transaction the hold created · capture and release are two
-        // more entries against it, so the trace to watch is the one already there
-        const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: a.action, customer: me, tx: willFollow({ tx: lastAuth[me], head: 'your card hold, live' }) }) });
+        /* NOT the authorization's transaction, which is what this used to
+           follow. The comment here claimed "capture and release are two more
+           entries against it, so the trace to watch is the one already there",
+           and that is simply false: Products.capture and Products.release each
+           mint a DERIVED but DIFFERENT id · uuid("capture:"+authTx) · and claim
+           their own transfer row under it. Following the authorization gave a
+           full, confident, hedge-free replay of a transaction the visitor had
+           not just caused, with nothing on screen suggesting it was the wrong
+           one. The derived id is a Java name-based UUID this page cannot
+           compute, so the new row is DISCOVERED from the feed like every other
+           id the browser does not mint. If it cannot be resolved the follow
+           times out and says so, which is the honest outcome. */
+        const known = knownTxs();
+        const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: a.action, customer: me, tx: lastAuth[me] }) });
+        willFollow({ find: { kinds: ['transfer'], owner: myOwner(), known },
+                     head: a.action === 'capture' ? 'your capture, live' : 'your release, live' });
         if (r.result === 'ok') delete lastAuth[me];
         return r.result === 'ok' ? (a.action === 'capture' ? 'captured · the merchant is paid' : 'released · nothing was spent') : fail(r.result);
       }
@@ -3552,7 +3734,13 @@ const AGENT_TOOLS = {
          the broker's FILL id, a uuid the browser never sees. So the follow is
          described rather than named, and MB.discoverTx resolves it from the
          feed once the settlement actually lands. */
-      willFollow({ find: { kinds: ['settle', 'settle-refused', 'trade'], owner: myOwner(), known: knownTxs() },
+      willFollow({ find: { kinds: ['settle', 'settle-refused', 'trade'], owner: myOwner(), known: knownTxs(),
+                   /* A relocation leg and a broker settlement are owned, in the feed,
+                      by an account LABEL or by "broker" · never by the customer. The
+                      owner gate could therefore never match one, so every relocation
+                      and every trade by a customer sorting below "broker" polled ten
+                      times and blamed a read model that was perfectly current. */
+                   ownerOptional: ['relocate', 'settle', 'settle-refused'] },
                    head: 'your order · settling through the broker' });
       const r = await api('/api/trade', { method: 'POST', body: JSON.stringify(Object.assign({ txId: uuid(), customer: me, asset: a.asset, side: a.side }, size)) });
       return r.result === 'placed'
@@ -3574,7 +3762,7 @@ const AGENT_TOOLS = {
     exec: async a => {
       /* Relocation.java mints an id per leg and the API returns none of them,
          so this is discovered too · the newest leg is the one to watch. */
-      willFollow({ find: { kinds: ['relocate'], owner: myOwner(), known: knownTxs() },
+      willFollow({ find: { kinds: ['relocate'], owner: myOwner(), known: knownTxs(), ownerOptional: ['relocate', 'settle', 'settle-refused'] },
                    head: 'your relocation, live' });
       const r = await api('/api/relocate', { method: 'POST', body: JSON.stringify({ customer: me, to: a.region === 'uk' ? 1 : 0 }) });
       return r.result === 'ok' ? `relocated to ${r.region} · your balance travelled as one saga` : fail(r.error || r.result);
