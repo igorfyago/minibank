@@ -48,6 +48,8 @@ public final class SsoServer {
         server.createContext("/.well-known/jwks.json", ex -> handle(ex, this::jwks));
         server.createContext("/health", ex -> handle(ex, this::health));
         server.createContext("/login", ex -> handle(ex, this::loginPage));
+        server.createContext("/eco-nav.js", ex -> handle(ex, this::estateAsset));
+        server.createContext("/estate-auth.js", ex -> handle(ex, this::estateAsset));
         server.createContext("/", ex -> handle(ex, this::root));
 
         server.setExecutor(null);
@@ -207,6 +209,19 @@ public final class SsoServer {
             if (in == null) return Response.json(404, "{\"error\":\"login page not found\"}");
             String html = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             return new Response(200, html, "text/html; charset=utf-8");
+        }
+    }
+
+    /** Estate JS assets every app includes cross-origin (eco-nav.js, estate-auth.js).
+     *  Allowlisted by exact context path; 404 if the resource is not on the classpath yet. */
+    private Response estateAsset(HttpExchange ex) throws IOException {
+        if (!"GET".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"method not allowed\"}");
+        String name = ex.getHttpContext().getPath().substring(1);
+        try (var in = getClass().getResourceAsStream("/web/" + name)) {
+            if (in == null) return Response.json(404, "{\"error\":\"not found\"}");
+            String js = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            ex.getResponseHeaders().add("Cache-Control", "max-age=300");
+            return new Response(200, js, "application/javascript; charset=utf-8");
         }
     }
 
