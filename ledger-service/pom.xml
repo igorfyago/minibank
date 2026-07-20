@@ -153,7 +153,18 @@
           <!-- The browser code that is arithmetic (web/lib.js) has unit tests
                too · node's own test runner, no npm, no package.json, nothing
                to install. Skip with -Dskip.js.tests (the Docker build already
-               passes -DskipTests, so the image never needs node). -->
+               passes -DskipTests, so the image never needs node).
+               A GLOB, NOT ONE FILE. This named lib.test.js explicitly, so
+               theme-parity.test.js sat beside it and never ran in a build · a
+               test that only fires when someone remembers to invoke it by hand
+               is not a guard. The pattern picks up every *.test.js in the
+               directory, so the next one added is wired up already.
+               It is a GLOB and not the bare directory because node 23 changed
+               the test runner: a positional argument is now a glob pattern,
+               and a plain directory path is resolved as a MODULE, which fails
+               with MODULE_NOT_FOUND on node 25 (verified here). node expands
+               the pattern itself, which is what makes it work under maven
+               where there is no shell to expand it first. -->
           <execution>
             <id>js-tests</id>
             <phase>test</phase>
@@ -162,7 +173,7 @@
               <executable>node</executable>
               <arguments>
                 <argument>--test</argument>
-                <argument>${project.basedir}/src/test/js/lib.test.js</argument>
+                <argument>${project.basedir}/src/test/js/*.test.js</argument>
               </arguments>
               <skip>${skip.js.tests}</skip>
             </configuration>

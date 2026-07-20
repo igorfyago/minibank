@@ -47,14 +47,25 @@
   .acct-card, .tx-card { border-radius:18px; }
   .tx-card { margin-top:14px; }
   .acct-label { color:var(--dim); font-size:12px; font-weight:600; }
-  .balance-num { font-size:46px; font-weight:750; margin:4px 0 10px; letter-spacing:-.5px;
-                 font-variant-numeric:tabular-nums; overflow-wrap:break-word; }
+  .balance-num { font-size:46px; font-weight:750; margin:4px 0 10px; letter-spacing:-.5px; }
 
   .prod-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; }
   .prod { min-width:0; position:relative; transition:border-color .15s, transform .15s; }
   .prod { border:1px solid var(--line); border-radius:14px; padding:11px 13px; }
   .prod.expandable:hover { border-color:var(--violet); transform:translateY(-1px); cursor:pointer; }
-  .prod.open { border-color:var(--violet); }
+  /* THE ONE DECLARATION THIS PAGE ADDS TO A BANK RULE, and it is a measured
+     one · see the entry in theme-parity.test.js's ALLOWED, which is what
+     keeps it from being drift.
+     The bank's expansions and this page's are not the same object. This one
+     is an ORDER TICKET: eight labelled figures, an amount RANGE INPUT and up
+     to three buttons. A range input is not text and does not reflow · in a
+     159px grid cell at 390px the control measures 65.0px, and slider(k,10,250,
+     5,50) is 49 stops, so a €5 step is 1.3px of travel and the amount cannot
+     be aimed at. Spanning the row on OPEN (and only on open · every closed
+     tile stays 159px and the grid is untouched) takes the open tile to 328.0px
+     and the control to 234.0px · 4.8px a step. All four figures measured in a
+     390px frame against this file's own stylesheet. */
+  .prod.open { border-color:var(--violet); grid-column:1 / -1; }
   .prod-chev { position:absolute; top:9px; right:12px; color:var(--dim); font:600 17px system-ui;
     transition:transform .2s, color .2s; }
   .prod.open .prod-chev { transform:rotate(90deg); color:var(--violet); }
@@ -67,7 +78,6 @@
   .mini { background:none; border:1px solid var(--line); color:var(--text); padding:3px 10px;
           border-radius:7px; font:600 11px system-ui; cursor:pointer; }
   .mini:hover { border-color:var(--violet); color:var(--violet); }
-  .mini:disabled { opacity:.45; cursor:not-allowed; border-color:var(--line); color:var(--text); }
 
   .sl-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
   .sl-row input[type=range] { flex:1; accent-color:var(--violet); min-width:0; }
@@ -77,34 +87,26 @@
     border-top:1px solid rgba(255,255,255,.04); font-variant-numeric:tabular-nums; }
   .chip { font-size:10.5px; border:1px solid var(--line); border-radius:999px; padding:1.5px 8px; color:var(--dim); flex:none; }
 
-  /* THE BANK'S TRANSACTION LIST, copied across for the holdings.
-     A portfolio row is the same object the bank already draws for a payment:
-     an identity on the left, and money right-aligned with its reference
-     figure beneath in dim type. So these are index.html's rules verbatim ·
-     lines 177-190 and 270-278 and 409-410 · not a .hold-row invented to look
-     similar. If one of them changes in the bank it changes here too.
-     .tx-av (the 42px avatar) is the one member of the family left behind: a
-     portfolio row carries no icon, and pulling it in would mean inventing a
-     glyph per instrument. */
+  /* THE BAND · an asset class and its subtotal, and nothing else left of the
+     bank's transaction list.
+     Holdings used to be drawn as .tx-row: an identity left, money right, the
+     bank's idiom for a PAYMENT. That was the wrong borrowing. A transaction is
+     a log entry, a holding is money, and the bank already has a shape for
+     money · the .prod tile in a .prod-grid it draws Savings and Credit card
+     with. The holdings compose from that now, so .tx-row/.tx-main/.tx-name/
+     .tx-sub/.tx-right/.tx-amt/.tx-after and the .acc-chev that ended each row
+     are gone with the list they belonged to.
+     What survives is the band above each grid: .tx-day for the dim label and
+     the spacing that separates one asset class from the last, .txg-head for
+     the flex row that carries the subtotal. Both are the bank's, verbatim.
+     (The old `.tx-day.txg-head { gap:12px }` compound went too. It existed to
+     drag the band's columns onto .tx-row's 12px gap so a subtotal sat over the
+     figures it totalled. Tiles have no columns to line a band up with, so the
+     rule now defends nothing · and it was the one selector on this page the
+     bank does not define, which is exactly what the parity test forbids.) */
   .tx-day { color:var(--dim); font-size:12px; font-weight:600; margin:14px 0 4px; }
-  .tx-row { display:flex; align-items:center; gap:12px; padding:9px 4px; cursor:pointer; border-radius:12px; }
-  .tx-row:hover { background:rgba(255,255,255,.035); }
-  .tx-main { flex:1; min-width:0; }
-  .tx-name { font-weight:600; font-size:14px; }
-  .tx-sub { color:var(--dim); font-size:12px; }
-  .tx-right { text-align:right; }
-  .tx-amt { font-weight:650; font-size:14px; font-variant-numeric:tabular-nums; }
-  .tx-after { color:var(--dim); font-size:11.5px; font-variant-numeric:tabular-nums; }
   .txg-head { display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:650; }
   .txg-head .muted { font-weight:400; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .acc-chev { margin-left:auto; flex:none; color:var(--dim); transition:transform .18s; font-size:15px; }
-  /* A BAND AND ITS ROWS ARE ONE SET OF COLUMNS. .txg-head and .tx-row are both
-     the bank's, and they disagree by 4px of gap, so a subtotal composed from
-     one drifted left of the figures it totals in the other · 16px out by the
-     value column. These two declarations are copied off .tx-row above, not
-     chosen: no colour, no font, no radius, nothing that is a look. It is the
-     statement that the subtotal sits over its own column. */
-  .tx-day.txg-head { gap:12px; padding-right:4px; }
 
   .sk { background:linear-gradient(90deg, #161c28 25%, #202939 37%, #161c28 63%);
     background-size:400% 100%; animation:skm 1.3s ease infinite; border-radius:7px; }
@@ -150,13 +152,17 @@
 
     <div class="card tx-card">
       <h2>Holdings</h2>
-      <!-- the skeleton is ROW-shaped because the holdings are · a two-up grid
-           here would settle into a list a moment later and the card would
-           visibly change its mind about what it is -->
+      <!-- the skeleton is TILE-shaped because the holdings are · the same rule
+           as before, pointing the other way now that a holding is a .prod tile
+           and not a row. A row-shaped skeleton would settle into a two-up grid
+           a moment later and the card would visibly change its mind about what
+           it is. Same .sk-tile the bank's own Products card shimmers with. -->
       <div id="holdings">
         <div class="sk" style="width:40%;height:12px;margin:14px 0 10px"></div>
-        <div class="tx-row"><div class="tx-main"><div class="sk" style="width:35%;height:13px"></div><div class="sk" style="width:60%;height:10px;margin-top:5px"></div></div><div class="tx-right"><div class="sk" style="width:70px;height:13px"></div><div class="sk" style="width:40px;height:10px;margin:5px 0 0 auto"></div></div></div>
-        <div class="tx-row"><div class="tx-main"><div class="sk" style="width:30%;height:13px"></div><div class="sk" style="width:55%;height:10px;margin-top:5px"></div></div><div class="tx-right"><div class="sk" style="width:70px;height:13px"></div><div class="sk" style="width:40px;height:10px;margin:5px 0 0 auto"></div></div></div>
+        <div class="prod-grid">
+          <div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div>
+          <div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div>
+        </div>
       </div>
     </div>
 
@@ -239,7 +245,11 @@ function sortHoldings(hs) {
 
 /** A mark from /api/watchlist and /api/instruments, which fail SOFT TO ZERO
  *  (BrokerApi.mark) unlike /api/portfolio · so on those two a literal 0 means
- *  "no price", not "free". */
+ *  "no price", not "free".
+ *  It reads a holding correctly too, and valueWhy/dayWhy use it for that: a
+ *  zero mark is never valued on the portfolio side either, because
+ *  Quote.priced() requires signum > 0, so the row arrives unpriced with a
+ *  0.00 in `price` and "no mark" is the true thing to say about it. */
 const markUnavailable = v => { const n = num(v); return !isNum(n) || n === 0; };
 
 /** A price that is real but not current. PriceFeed serves the last good
@@ -328,9 +338,13 @@ function drawHeader(p) {
   if (Number(a.unpriced) > 0)    why.push(a.unpriced + ' with no live mark');
   if (Number(a.expired) > 0)     why.push(a.expired + ' expired');
   if (Number(a.fabricated) > 0)  why.push(a.fabricated + ' with no observed price');
+  // ONE clause list, TWO figures. marketValue and unrealized are withheld by
+  // the same Acc.whole() gate, so the same sentence is the true one for both ·
+  // and the Unrealized row used to say 'needs a live mark' regardless, which
+  // is the wrong system to name when the cause is an expired contract.
+  const aggWhy = tail => why.length ? why.join(' · ') + ' holding(s), so ' + tail : tail;
   $('pv').innerHTML = mv !== null ? esc(mv)
-    : NA((why.length ? why.join(' · ') + ' holding(s), so the total is withheld rather than partly summed'
-                     : 'the total is withheld rather than partly summed'));
+    : NA(aggWhy('the total is withheld rather than partly summed'));
 
   // TODAY, in the bank's sub-line position · rendered only when the backend
   // actually established it. A withheld day change says so in one short line
@@ -386,14 +400,17 @@ function drawHeader(p) {
   // the two together to get the total was doing the arithmetic the first
   // label had already claimed to have done.
   const rows = [];
-  rows.push(row('Unrealized', a.unrealized, a.unrealizedPct));
-  rows.push(row('Realized', a.realized, null));
+  rows.push(row('Unrealized', a.unrealized, a.unrealizedPct,
+                aggWhy('this figure is withheld rather than partly summed')));
+  // realized is stored, not marked · no feed can take it away, so there is no
+  // feed to blame if it ever arrives missing
+  rows.push(row('Realized', a.realized, null, 'no realized P&L was recorded'));
   $('pnl').innerHTML = rows.join('');
 
-  function row(label, v, pct) {
+  function row(label, v, pct, rowWhy) {
     const s = fmtSignedEur(v), p2 = fmtPct(pct);
     return `<div class="ph-row"><span>${esc(label)}</span><b class="${signClass(v)}">${
-      s === null ? NA('needs a live mark') : esc(s)
+      s === null ? NA(rowWhy) : esc(s)
     }${p2 !== null ? ' · ' + esc(p2) : ''}</b></div>`;
   }
 }
@@ -415,35 +432,173 @@ function slider(k, min, max, step, dflt) {
 }
 
 /**
- * ONE RIGHT-ALIGNED NUMERIC ZONE · the shape the whole screen is built from.
+ * ONE LABELLED FIGURE PAIR · the shape the whole screen is built from.
  *
- * A currency figure, and directly beneath it in dim tabular type the thing it
- * is a figure OF: the quantity under a value, the percentage under a P&L. That
- * pairing repeats at row, at band and at header, which is the entire visual
- * hierarchy · there is no second idea to learn further down the page.
+ * A label, and hard against the right edge the money it names, sign-coloured,
+ * with its percentage trailing it when there honestly is one. This is the
+ * bank's .ph-row · the same element drawHeader() already totals Unrealized and
+ * Realized with above, and the same one the bank's own expanded product tiles
+ * use. It repeats at tile and at header, which is the entire visual hierarchy:
+ * there is no second idea to learn further down the page.
  *
- * `after` empty is a deliberate state and not a gap to fill. A position opened
- * today has a real day change and NO honest percentage, so the lower line is
- * blank rather than '0.00%', which would be a specific claim that it did not
- * move made about something that moved.
+ * A missing percentage is a deliberate state and not a gap to fill. A position
+ * opened today has a real day change and NO honest percentage, so nothing
+ * trails the figure rather than '0.00%', which would be a specific claim that
+ * it did not move made about something that moved.
  */
-function zone(main, after, klass) {
-  // &nbsp; RATHER THAN NOTHING when there is no reference figure. An empty
-  // .tx-after collapses to zero height, and .tx-row centres its children, so
-  // a zone missing its lower line floats its currency figure 8px below the
-  // ones beside it · the day column visibly sagging exactly on the rows whose
-  // percentage we are withholding. The blank line has to occupy space for the
-  // figures to share a baseline; the bank's own .prod-sub carries a
-  // min-height for the same reason.
-  return `<div class="tx-right"><div class="tx-amt ${klass || ''}">${main}</div>
-    <div class="tx-after">${after || '&nbsp;'}</div></div>`;
+/* WHY THE PERCENTAGES ARE ON THE TAP AND NOT THE FACE · a measurement, not a
+ * preference. A .prod tile in the bank's two-column .prod-grid is 159px wide
+ * at 390px, which leaves a .ph-row 131px of usable width. Measured in the
+ * browser at the row's own 11px system-ui: the label 'Unrealized' is 51px and
+ * '+€1,876.54 · +23.45%' is 105px · 156px for a pair that has 131px to live
+ * in. It did not overflow, it wrapped, and the wrap was the problem: the
+ * figure broke after the separator, so line one read '+€1,876.54 ·' ending at
+ * x=116 and line two '+23.45%' ending at x=97, neither flush with the 131px
+ * edge the Day row above it sits on. A column of money that does not share a
+ * right edge is harder to read than one number less.
+ *
+ * So both P&Ls keep their euro figure on the face and both hand their
+ * percentage to the expansion. SYMMETRY IS THE POINT. Dropping unrealised
+ * alone would re-make the mistake this page already reverted once · the day
+ * looking like the only P&L the position has, when a position can be up on
+ * the year and down on the morning. Neither is privileged and neither is
+ * hidden: 'Day' and 'Unrealized' are both on the face, in euro, on one flush
+ * line each, and one tap gives both of them their percentage. */
+/* THE REASON IS AN ARGUMENT, NOT A CONSTANT · the same rule drawHeader's own
+ * comment block states, enforced here by making it impossible to omit.
+ *
+ * This function used to answer 'needs a live mark' for every withheld figure
+ * it drew, at every call site. That sentence is true of exactly one of the
+ * conditions the backend withholds under. A position whose feed answered with
+ * a price but no prior close (Portfolio.java:410) has a live mark, is valued
+ * live in the .prod-val directly above, shows a live 'Last' in its expansion,
+ * and its Day still read "not available · needs a live mark" · sending the
+ * reader to check a feed that is working. So the caller, which is the only
+ * thing that knows WHICH figure it is asking for and why the backend might
+ * have withheld it, supplies the reason. */
+function pnlRow(label, eur, pct, why) {
+  const s = fmtSignedEur(eur), p = fmtPct(pct);
+  return `<div class="ph-row"><span>${esc(label)}</span><b class="${signClass(eur)}">${
+    s === null ? NA(why) : esc(s) + (p === null ? '' : ' · ' + esc(p))
+  }</b></div>`;
 }
 
-/** A P&L zone: currency on top, percent beneath, both taking the sign colour. */
-function pnlZone(eur, pct) {
-  const s = fmtSignedEur(eur), p = fmtPct(pct);
-  return zone(s === null ? '<span class="muted">·</span>' : esc(s), p === null ? '' : esc(p),
-              signClass(eur));
+/**
+ * WHY THIS HOLDING HAS NO VALUE · read off the row itself, in the order
+ * Portfolio.build decides it, so the sentence names the condition that
+ * actually fired rather than the most common one.
+ *
+ * value is null when isExpired, or the contract size is unknown, or the quote
+ * was not observed (no mark at all, or a fabricated constant). Each is a
+ * different fact about a different system and they do not collapse into one.
+ */
+function valueWhy(h) {
+  if (h.priceSource === 'expired')
+    return 'this contract has expired · it is still held and it is not valued, so no figure is claimed';
+  if (markUnavailable(h.price))
+    return 'the feed returned no mark for this instrument';
+  if (h.priceSource === 'fallback')
+    return 'no price for this instrument was ever observed · a stand-in constant is not a mark';
+  if (num(h.multiplier) === null)
+    return 'this instrument is not in the catalog, so its contract size · and with it its value · is unknown';
+  return 'this figure is withheld rather than partly computed';
+}
+
+/**
+ * WHY THIS HOLDING HAS NO DAY CHANGE · the same read, one condition longer.
+ *
+ * The day block is gated on `q.observed() && q.prevClose() != null && valuable`
+ * (Portfolio.java:410), so everything that kills the value kills the day too,
+ * AND a missing prior close kills the day on its own while the value stands.
+ * That last case is the one the single hardcoded reason got wrong.
+ */
+function dayWhy(h) {
+  if (h.priceSource === 'expired')
+    return 'this contract has expired · there is no current price to measure against its prior close';
+  if (markUnavailable(h.price))
+    return 'the feed returned no mark for this instrument, so today\'s move cannot be measured';
+  if (h.priceSource === 'fallback')
+    return 'no price for this instrument was ever observed · a stand-in constant cannot measure a day';
+  if (num(h.multiplier) === null)
+    return 'this instrument is not in the catalog, so its contract size · and with it its day move · is unknown';
+  if (num(h.prevClose) === null)
+    return 'the feed returned a price but no prior close · there is nothing to measure today\'s move against, '
+         + 'and the mark above is live';
+  return 'today\'s move is withheld rather than partly computed';
+}
+
+/**
+ * THE BAND'S FIGURE · the same money as a tile's, with the label dropped,
+ * because the asset class beside it is already the label and a band that
+ * repeated 'Day' on every group would say the word four times on one screen.
+ *
+ * EURO ONLY, and that is the same measurement pnlRow was rewritten for one
+ * scale up. Measured at 390px against the file's own stylesheet, with a
+ * .txg-head that is 328px wide, flex-wrap:nowrap and align-items:center:
+ *
+ *   with the percentages   Stocks 37.6 + €15,000.00 64.3
+ *                          + '+€110.00 · +0.74%' 89.8
+ *                          + '+€1,876.54 · +23.45%' 104.3 + 32px of gaps
+ *                          = 328.0px band, 37.5px tall against an 18.75px
+ *                            line box · BOTH P&L spans wrapped internally to
+ *                            two lines while the label and the value beside
+ *                            them stayed on one, so they sat 9px proud of the
+ *                            figures they belong to and the row read ragged.
+ *                            The flexing .muted spacer that carries the
+ *                            holding count was squeezed to width 0.0 against
+ *                            a scrollWidth of 6.5 · not truncated, ERASED,
+ *                            with no ellipsis and no digit, on an ordinary
+ *                            phone with ordinary five-figure subtotals.
+ *
+ *   euro only              same band 18.75px tall · one line · and the count
+ *                          measures 72.7px (Stocks), 60.6px (Options), 30.8px
+ *                          even at €150,000.00 with a +€123,456.78 subtotal.
+ *
+ * So the band follows the tile's rule rather than contradicting it: the euro
+ * figure is the one that stays. A tile hands its percentage to the tap; a band
+ * has no tap and therefore no percentage, which is a figure withheld and not
+ * one invented. The aggregate percentages are still on the header above and
+ * the per-holding ones are still one tap below.
+ *
+ * A withheld subtotal keeps the dim '·' the band has always used · a band is a
+ * narrow row of columns and the words do not fit here · and the reason goes on
+ * the title. THE REASON IS AN ARGUMENT, for the same cause as pnlRow: the day
+ * subtotal and the unrealized subtotal are withheld under DIFFERENT gates
+ * (Acc.day() on withoutPrevClose, Acc.unrealized() on whole()) and one string
+ * cannot be true of both.
+ */
+function bandPnl(eur, why) {
+  const s = fmtSignedEur(eur);
+  if (s === null) return `<span class="muted" title="${esc(why)}">·</span>`;
+  return `<span class="${signClass(eur)}">${esc(s)}</span>`;
+}
+
+/** Why a band cannot show a VALUE or an UNREALIZED subtotal · both are gated
+ *  on Acc.whole(), which is `unpriced == 0 && fabricated == 0 && expired == 0`.
+ *  Three clauses, each a different fact, each counted separately on the Group
+ *  and named only when it is non-zero · the shape drawHeader already uses for
+ *  the headline. Naming a clause that did not fire ("0 holding(s) have no live
+ *  mark") sends the reader to check a system that is fine. */
+function groupWhy(g) {
+  const why = [];
+  if (Number(g.unpriced) > 0)   why.push(g.unpriced + ' with no live mark');
+  if (Number(g.expired) > 0)    why.push(g.expired + ' expired');
+  if (Number(g.fabricated) > 0) why.push(g.fabricated + ' with no observed price');
+  return why.length
+    ? why.join(' · ') + ' holding(s) here, so this subtotal is withheld rather than partly summed'
+    : 'this subtotal is withheld rather than partly summed';
+}
+
+/** Why a band cannot show a DAY subtotal · a different gate entirely.
+ *  Acc.day() returns null on withoutPrevClose > 0 and on nothing else, so with
+ *  every feed answering and one position opened today the Stocks day subtotal
+ *  goes missing while every mark under it is live. Blaming the feed there is
+ *  the band-scale version of the bug pnlRow was fixed for. */
+function groupDayWhy(g) {
+  return Number(g.withoutPrevClose) > 0
+    ? g.withoutPrevClose + ' position(s) here could not be measured against a prior close, '
+      + 'so this subtotal is withheld rather than partly summed'
+    : 'today\'s subtotal is withheld rather than partly summed';
 }
 
 function drawHoldings(p) {
@@ -466,81 +621,88 @@ function drawHoldings(p) {
   const html = groups.map(g => {
     const rows = sortHoldings(hs.filter(h => (h.kind || null) === (g.kind || null)));
     if (!rows.length) return '';
-    return band(g) + rows.map(h => holdingRow(h)).join('');
+    return band(g) + `<div class="prod-grid">${rows.map(h => holdingTile(h)).join('')}</div>`;
   }).join('');
 
   $('holdings').innerHTML = html;
 }
 
 /**
- * THE BAND · an asset class, and the subtotal of exactly the rows beneath it.
+ * THE BAND · an asset class, and the subtotal of exactly the tiles beneath it.
  *
  * Composed from two of the bank's classes rather than a third invented one:
  * .tx-day supplies the dim colour and the spacing that separates one band
  * from the last, .txg-head supplies the flex row. The middle .muted is the
- * bank's own flexing spacer and carries the row count, so it is the first
+ * bank's own flexing spacer and carries the holding count, so it is the first
  * thing to truncate when the phone is narrow · which is the right priority,
  * because the numbers on the right are the reason to look.
+ *
+ * That priority is a claim about widths and it was false for a while: with a
+ * percentage beside each subtotal the fixed content wanted ~374px in a 328px
+ * band, and the spacer did not truncate, it went to width 0.0 and took the
+ * count with it. It is honest again only because bandPnl carries euro alone ·
+ * see the measurements there. The band holds FOUR things and no more, and
+ * anything added here has to be measured at 390px before it ships.
  */
 function band(g) {
   const value = fmtEur(g.marketValue);
   return `<div class="tx-day txg-head">
     <span>${esc(g.label)}</span>
     <span class="muted">${g.holdings}</span>
-    ${zone(value === null
-             ? `<span class="muted" title="${esc(g.unpriced + g.expired
-                 + ' holding(s) here could not be valued, so this subtotal is withheld rather than partly summed')}">·</span>`
-             : esc(value), '')}
-    ${pnlZone(g.dayChange, g.dayChangePct)}
-    ${pnlZone(g.unrealized, g.unrealizedPct)}
-    <!-- the rows end in a chevron and the band does not, so without this the
-         subtotal hangs a chevron's width to the right of the very figures it
-         totals. Same class, so the reservation cannot drift from the thing it
-         is reserving for; hidden rather than absent so it takes up space, and
-         aria-hidden so a screen reader is not told about a '›' that means
-         nothing here. -->
-    <span class="acc-chev" aria-hidden="true" style="visibility:hidden">›</span>
+    <span>${value === null
+             ? `<span class="muted" title="${esc(groupWhy(g))}">·</span>`
+             : esc(value)}</span>
+    ${bandPnl(g.dayChange, groupDayWhy(g))}
+    ${bandPnl(g.unrealized, groupWhy(g))}
   </div>`;
 }
 
 /**
- * THE ROW. Ticker and exchange on the first line, the company name beneath;
- * then value over quantity, the day over its percentage, and the unrealised
- * over its percentage. Both P&L numbers are on the row on purpose · burying
- * unrealised behind a tap made the day look like the only P&L the position
- * had, and a position can be up on the year and down on the morning.
+ * THE TILE · the bank's .prod, the shape it draws Savings and Credit card
+ * with, carrying a position instead of a product.
+ *
+ * A holding was drawn as a .tx-row until now, which was the bank's TRANSACTION
+ * idiom on the bank's money. A transaction is a log entry: it happened once,
+ * it is over, and a list is the right picture of a sequence of them. A holding
+ * is money you have right now, and the bank already draws money as a tile.
+ *
+ * Nothing moved behind the tap. All six figures are on the face: the market
+ * value as the headline .prod-val, the quantity on the sub-line beside the
+ * company name, and both P&Ls as .ph-rows. Burying unrealised behind a tap was
+ * tried on the old row and reverted, because it made the day look like the
+ * only P&L the position had · and a position can be up on the year and down on
+ * the morning. Reshaping the row into a tile is not a licence to re-lose that.
+ * The expansion keeps exactly what it kept before: the things a face has no
+ * room to label · what it cost, what it is marked at, what has been banked.
  */
-function holdingRow(h) {
+function holdingTile(h) {
   const isOpen = open === h.symbol;
   const value = fmtEur(h.value);
   const qty = fmtQty(h.qty);
 
-  // What the row says when it cannot say a price · in the affordance, beside
+  // What the tile says when it cannot say a price · in the affordance, beside
   // the number it is about, rather than in prose under the fold.
-  // A numeric column is too narrow for the words "not available", so an
-  // unvalued row shows a dim '·' up there · which is honest but silent, and
-  // on a phone there is no hover to explain it. The reason therefore goes on
-  // the sub-line, in the affordance, where the other two already are.
   const note = h.priceSource === 'expired' ? 'expired'
              : priceStale(h.priceSource) ? 'last known price'
              : num(h.price) === null ? 'no live price'
              : null;
-  const sub = [h.exchange, h.name, note].filter(Boolean).map(esc).join(' · ');
+  // The quantity leads the sub-line: it is the figure the value above is a
+  // value OF, so the two want to be adjacent. A tile is wider than the numeric
+  // column the row gave this, so the words fit here where they did not there.
+  const sub = [qty === null ? null : qty + unitFor(h.kind), h.name, note]
+                .filter(Boolean).map(esc).join(' · ');
 
-  return `<div class="tx-row" onclick="tileOpen('${esc(h.symbol)}')">
-      <div class="tx-main">
-        <div class="tx-name">${esc(h.symbol)}</div>
-        <div class="tx-sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sub}</div>
+  return `<div class="prod expandable${isOpen ? ' open' : ''}" onclick="tileOpen('${esc(h.symbol)}')">
+      <span class="prod-chev">›</span>
+      <div class="prod-name">${esc(h.symbol)}${h.exchange ? ' · ' + esc(h.exchange) : ''}</div>
+      <div class="prod-val">${value === null ? NA(valueWhy(h)) : esc(value)}</div>
+      <div class="prod-sub">${sub}</div>
+      <div class="ph">
+        ${pnlRow('Day', h.dayChange, null, dayWhy(h))}
+        ${pnlRow('Unrealized', h.unrealized, null, valueWhy(h))}
       </div>
-      ${zone(value === null
-               ? `<span class="muted" title="${esc('no live mark for this instrument')}">·</span>`
-               : esc(value),
-             qty === null ? '' : esc(qty + unitFor(h.kind)))}
-      ${pnlZone(h.dayChange, h.dayChangePct)}
-      ${pnlZone(h.unrealized, h.unrealizedPct)}
-      <span class="acc-chev"${isOpen ? ' style="transform:rotate(90deg);color:var(--violet)"' : ''}>›</span>
-    </div>
-    ${isOpen ? `<div class="prod-x" onclick="event.stopPropagation()">${expansion(h)}</div>` : ''}`;
+      ${isOpen ? `<div class="prod-x" onclick="event.stopPropagation()">${expansion(h)}</div>` : ''}
+    </div>`;
 }
 
 function expansion(h) {
@@ -553,9 +715,14 @@ function expansion(h) {
   // conclude the page is wrong. 1 is the ordinary case and says nothing.
   const mult = num(h.multiplier);
 
-  // Unrealised and the day are BOTH on the row now, so neither is repeated
-  // here. What is left is the stuff a row has no column for: what it cost,
-  // what it is marked at, and what has already been banked.
+  // Both P&Ls are restated here IN FULL, and that is the point of the tap
+  // rather than a duplication: the face carries them in euro only, because a
+  // 131px .ph-row cannot hold 'Unrealized' and '+€1,876.54 · +23.45%' at once
+  // (see pnlRow). The percentage is the half that did not fit, so this is
+  // where a reader comes to get it, and the euro figure comes with it so the
+  // two are read together rather than one being hunted for above.
+  // What is otherwise here is the stuff a face has no room for at all: what it
+  // cost, what it is marked at, and what has already been banked.
   // THE TWO FIGURES ARE NOT IN THE SAME UNIT, AND THE LABELS NOW SAY SO.
   //
   // avgCost is costBasis/qty and costBasis carries the multiplier · it was
@@ -575,6 +742,8 @@ function expansion(h) {
   const perContract = isNum(mult) && mult !== 1;
 
   return `<div class="ph">
+      ${pnlRow('Day', h.dayChange, h.dayChangePct, dayWhy(h))}
+      ${pnlRow('Unrealized', h.unrealized, h.unrealizedPct, valueWhy(h))}
       ${cell(perContract ? 'Avg cost / contract' : 'Avg cost',
         fmtEur(h.avgCost) === null ? NA('no cost basis recorded') : esc(fmtEur(h.avgCost)))}
       ${cell(perContract ? 'Last · premium per share' : 'Last', fmtEur(h.price) === null
@@ -658,7 +827,7 @@ function drawWatchlist() {
            about the same feed. A 'cached' mark is the last price actually
            observed, served because the upstream is unreachable, and PriceFeed
            puts NO age bound on it · if Yahoo stays down for days the same
-           figure keeps coming back. holdingRow badges that '· last known
+           figure keeps coming back. holdingTile badges that '· last known
            price' and the 46px total is qualified too; these tiles printed a
            plain €199.90 and looked live, because the endpoint discarded the
            source before the page could see it. It ships priceSource now. -->

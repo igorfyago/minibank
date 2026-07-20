@@ -190,12 +190,24 @@ public final class Portfolio {
      * A group with no holdings is never built. An empty band with a €0.00
      * subtotal is a report about a database, and the screen would have to
      * apologise for it.
+     *
+     * WHY `fabricated` IS HERE. Acc.whole() · the gate that withholds
+     * marketValue and unrealized · is `unpriced == 0 && fabricated == 0 &&
+     * expired == 0`, three conditions. The band shipped only two of them, so a
+     * subtotal withheld PURELY because a constant stood in for a price had no
+     * count to name and the screen said "0 holding(s) here could not be
+     * valued". That is the same defect drawHeader's comment block was written
+     * about, one scale down: naming the wrong reason sends the reader to check
+     * a system that is fine, and naming a count of zero says nothing at all.
+     * A band cannot explain its own withholding out of the aggregate's counts,
+     * which are about the whole book, so it carries its own.
      */
     public record Group(String kind, String label, int holdings,
                         BigDecimal marketValue, BigDecimal costBasis,
                         BigDecimal unrealized, BigDecimal unrealizedPct,
                         BigDecimal dayChange, BigDecimal dayChangePct,
-                        int unpriced, int withoutPrevClose, int stale, int expired) {}
+                        int unpriced, int withoutPrevClose, int fabricated,
+                        int stale, int expired) {}
 
     public record Snapshot(Aggregate aggregate, List<Holding> holdings, List<Group> groups) {}
 
@@ -472,7 +484,7 @@ public final class Portfolio {
             groups.add(new Group(kind, groupLabel(kind), g.holdings,
                     g.value(), money(g.costBasis), g.unrealized(), g.unrealizedPct(),
                     g.day(), g.dayPct(),
-                    g.unpriced, g.withoutPrevClose, g.stale, g.expired));
+                    g.unpriced, g.withoutPrevClose, g.fabricated, g.stale, g.expired));
         }
 
         // Rule 3: an incomplete total is not a total. Note the ordering ·

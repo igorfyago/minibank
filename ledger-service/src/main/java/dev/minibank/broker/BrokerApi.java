@@ -420,6 +420,10 @@ public final class BrokerApi {
              // counts cannot answer that, they are about the whole book
              .append(",\"unpriced\":").append(g.unpriced())
              .append(",\"withoutPrevClose\":").append(g.withoutPrevClose())
+             // the third clause of Acc.whole(). Without it a band whose
+             // subtotal is withheld only because a constant stood in for a
+             // price could name no count and read "0 holding(s)".
+             .append(",\"fabricated\":").append(g.fabricated())
              .append(",\"stale\":").append(g.stale())
              .append(",\"expired\":").append(g.expired())
              .append('}');

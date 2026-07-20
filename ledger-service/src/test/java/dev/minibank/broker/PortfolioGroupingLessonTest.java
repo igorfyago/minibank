@@ -312,10 +312,35 @@ class PortfolioGroupingLessonTest {
         // and the subtotals must be the shipped ones, not re-derived
         assertTrue(java.util.regex.Pattern.compile("\\bg\\.marketValue\\b").matcher(page).find(),
                 "the band draws the subtotal the server computed");
-        assertTrue(java.util.regex.Pattern.compile("\\bg\\.dayChangePct\\b").matcher(page).find(),
-                "including the day percentage, which only the server can withhold correctly");
-        assertTrue(java.util.regex.Pattern.compile("\\bg\\.unrealizedPct\\b").matcher(page).find(),
-                "and the unrealised percentage");
+        assertTrue(java.util.regex.Pattern.compile("\\bg\\.dayChange\\b").matcher(page).find(),
+                "and the day subtotal, which only the server can withhold correctly");
+        assertTrue(java.util.regex.Pattern.compile("\\bg\\.unrealized\\b").matcher(page).find(),
+                "and the unrealised subtotal");
+
+        // THE BAND'S PERCENTAGES ARE NOT READ, AND THAT IS DELIBERATE.
+        // This used to require g.dayChangePct and g.unrealizedPct on the page.
+        // Measured at 390px against the page's own stylesheet: a .txg-head is
+        // 328px and flex-wrap is nowrap, and with '+€110.00 · +0.74%' beside
+        // '+€1,876.54 · +23.45%' the fixed content wants ~374px · both P&L
+        // spans wrapped internally to 37.5px against an 18.75px line box, and
+        // the flexing .muted that carries the holding count was squeezed to
+        // width 0.0 against a scrollWidth of 6.5. Erased, not truncated, so no
+        // ellipsis could render either, on an ordinary phone with ordinary
+        // five-figure subtotals. Euro only measures 18.75px tall with 30-73px
+        // of slack left for the count. A figure that does not fit is withheld,
+        // never half-drawn · the tile does the same thing for the same reason
+        // (see pnlRow) and hands its percentage to the tap instead.
+        //
+        // What the band DOES have to read is why a subtotal is missing, which
+        // is a fact only the server holds · Acc.whole() is three clauses and
+        // Acc.day() is a fourth, different one.
+        for (String field : new String[] { "g.unpriced", "g.expired", "g.fabricated",
+                                           "g.withoutPrevClose" }) {
+            assertTrue(java.util.regex.Pattern.compile("\\b" + field.replace(".", "\\.") + "\\b")
+                            .matcher(page).find(),
+                    "the band must name the condition that withheld it, and only the server "
+                    + "counts them · missing " + field);
+        }
 
         // the headline percentage the page has always read and never received
         int hdr = page.indexOf("function drawHeader");
@@ -380,6 +405,92 @@ class PortfolioGroupingLessonTest {
         assertEquals("369.75", summed.toPlainString(),
                 "the bands DO sum to a different number, and that is the correct outcome "
                 + "rather than the bug · documented so nobody reconciles it away");
+    }
+
+    // ------------------------------------------------------------------
+    /**
+     * A BAND HAS TO BE ABLE TO NAME ITS OWN REASON, and it could not name one
+     * of the three.
+     *
+     * Acc.whole() · the gate that withholds marketValue and unrealized · is
+     * `unpriced == 0 && fabricated == 0 && expired == 0`. The Group shipped
+     * `unpriced` and `expired` and not `fabricated`, so a band withheld PURELY
+     * because a hardcoded constant stood in for a price had no non-zero count
+     * to point at and the screen rendered "0 holding(s) here could not be
+     * valued". That is the same defect drawHeader's comment block was written
+     * about one scale up: a count of zero explains nothing, and naming the
+     * wrong system sends the reader to check a feed that is fine.
+     *
+     * The three are not interchangeable. Unpriced means the feed did not
+     * answer. Expired means the contract has stopped existing and will never
+     * be marked again. Fabricated means PriceFeed.fallback() answered with a
+     * constant · the feed is up, it is simply not telling the truth, and that
+     * is a different thing to go and look at.
+     */
+    @Test
+    @DisplayName("lesson 11: a band withheld by a FABRICATED price carries the count that says so")
+    void lesson11_aBandCanNameAFabricatedPrice() {
+        Portfolio.Snapshot s = Portfolio.build(
+                List.of(position("AAPL", "10", "1800", "0"),
+                        position("BTC", "0.5", "20000", "0")),
+                catalog(),
+                // a constant wearing a price's clothes · priced() is true and
+                // observed() is false, which is exactly PriceFeed.fallback()
+                Map.of("AAPL", new Portfolio.Quote(new BigDecimal("195"),
+                                                   new BigDecimal("190"), "fallback"),
+                       "BTC", quote("50000", "49000")),
+                Map.of(), TODAY);
+
+        Portfolio.Group stocks = group(s, "equity");
+        assertNull(stocks.marketValue(), "a fabricated price is not a valuation");
+        assertNull(stocks.unrealized(), "and it buys no P&L either");
+
+        assertEquals(1, stocks.fabricated(),
+                "THE BAND MUST BE ABLE TO SAY WHY. Without this count the only true sentence "
+                + "available to the screen was a count of zero.");
+        assertEquals(0, stocks.unpriced(),
+                "and it must not be able to blame the feed for answering · it did answer");
+        assertEquals(0, stocks.expired(), "nor an expiry that has not happened");
+
+        Portfolio.Group crypto = group(s, "crypto");
+        assertEquals("25000.00", crypto.marketValue().toPlainString(),
+                "one fabricated stock spoils the Stocks band and nothing else");
+        assertEquals(0, crypto.fabricated());
+    }
+
+    // ------------------------------------------------------------------
+    /**
+     * And the count has to reach the browser · a field the JSON writer forgets
+     * is a field the page cannot read, and the page would fall back to the
+     * same silent zero.
+     */
+    @Test
+    @DisplayName("lesson 12: every field on a Group reaches the browser · nothing is computed and dropped")
+    void lesson12_theBandJsonCarriesEveryField() throws Exception {
+        // Driven off the RECORD rather than a hand-written list, so adding a
+        // counter to Group and forgetting the writer fails here instead of
+        // shipping a band that cannot explain itself. `fabricated` was
+        // computed by Acc for as long as Acc has existed and never left the
+        // JVM, which is how the screen ended up with a count of zero as its
+        // only true sentence.
+        java.nio.file.Path src = java.nio.file.Path.of(
+                "src", "main", "java", "dev", "minibank", "broker", "BrokerApi.java");
+        assertTrue(java.nio.file.Files.exists(src),
+                "expected to read " + src.toAbsolutePath() + " · surefire runs in the module root");
+        String api = java.nio.file.Files.readString(src, StandardCharsets.UTF_8);
+
+        int at = api.indexOf("for (Portfolio.Group g : snap.groups())");
+        assertTrue(at > 0, "the groups writer must still exist");
+        String writer = api.substring(at);
+
+        for (java.lang.reflect.RecordComponent rc : Portfolio.Group.class.getRecordComponents()) {
+            String name = rc.getName();
+            assertTrue(writer.contains(",\\\"" + name + "\\\":") || writer.contains("{\\\"" + name + "\\\":"),
+                    "the groups JSON drops `" + name + "` · a field the writer forgets is a field "
+                    + "the page cannot read");
+            assertTrue(writer.contains("g." + name + "()"),
+                    "the groups JSON must take `" + name + "` from the Group rather than restate it");
+        }
     }
 
     // ------------------------------------------------------------------ fixtures
