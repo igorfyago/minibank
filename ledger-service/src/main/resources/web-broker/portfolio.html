@@ -307,7 +307,13 @@ const NA = why => `<span class="muted" title="${esc(why)}">not available</span>`
  *  request goes out exactly as before, on the param the four demo accounts are
  *  still explored through. A token only ever ADDS identity. */
 const params   = new URLSearchParams(location.search);
-let   customer = params.get('customer') || '10';
+// 12 (oscar), NOT 10 (igor), and the change is load-bearing rather than
+// cosmetic. 10 is a claimed account now, so an anonymous visitor defaulting to
+// it gets a 403 on first paint · the page would open on a refusal. 12 is one
+// of the unclaimed demo books this page exists to show off. A signed-in owner
+// never sees this value survive: the server resolves their token to their own
+// customer and the reply's `customer` field overwrites it a moment later.
+let   customer = params.get('customer') || '12';
 
 const AUTH_ORIGIN = location.hostname.startsWith('broker.')
   ? location.protocol + '//auth.' + location.hostname.slice('broker.'.length)

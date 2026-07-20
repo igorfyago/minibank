@@ -261,9 +261,85 @@
    * not assign, so the caller keeps its last good value. Stale and correct is a
    * much better failure than fresh and garbage.
    */
-  function makeApi(fetchImpl) {
+  /**
+   * THE ESTATE COOKIE, TRADED FOR A TOKEN · how this page proves who is asking.
+   *
+   * The bank's api() sent no credential of any kind, which was fine while the
+   * server took the caller's word from ?customer= and fatal the moment it
+   * stopped. A signed-in owner whose browser sends nothing is indistinguishable
+   * from a stranger, so the first thing enforcement would have done is lock
+   * Igor out of his own account. This is the other half of that change.
+   *
+   * The cookie is HttpOnly on .b4rruf3t.com, so script cannot read it · it can
+   * only spend it, on one credentialed call to the auth service, which answers
+   * with an access token for THIS origin. Same mechanism the broker's
+   * portfolio.html already uses; lifted here so the two cannot drift.
+   *
+   * NOTHING IS REQUIRED. No session means the refresh fails, null comes back,
+   * and every request goes out exactly as it did before · which is still the
+   * whole public demo, because an unclaimed account needs no credential.
+   */
+  var _tokenWait = null;
+
+  function authOrigin() {
+    if (typeof location === 'undefined') return 'https://auth.b4rruf3t.com';
+    var h = location.hostname;
+    return h.indexOf('bank.') === 0
+      ? location.protocol + '//auth.' + h.slice('bank.'.length)
+      : 'https://auth.b4rruf3t.com';    // local dev has no auth · refresh fails, param stands
+  }
+
+  function tokenFresh(t) {
+    try {
+      var claims = JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      // a minute of slack · never send a token that lapses in flight
+      return (claims.exp || 0) * 1000 > Date.now() + 60000;
+    } catch (e) { return false; }
+  }
+
+  async function ensureToken() {
+    // lib.js is loaded by the node test suite too, where there is no browser
+    // storage and no cookie to spend · returning null there keeps makeApi's
+    // behaviour byte-identical to what those tests already assert
+    if (typeof localStorage === 'undefined' || typeof fetch === 'undefined') return null;
+    var have = localStorage.getItem('b4rruf3t_token');
+    if (have && tokenFresh(have)) return have;
+    // one refresh in flight at a time, so a page full of panels firing at once
+    // does not stampede the auth service with the same cookie
+    if (!_tokenWait) _tokenWait = (async function () {
+      try {
+        var stored = localStorage.getItem('b4rruf3t_refresh');
+        var r = await fetch(authOrigin() + '/v1/tokens/refresh', {
+          method: 'POST',
+          credentials: 'include',            // the estate cookie · the whole point
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(stored ? { refresh_token: stored } : {}),
+        });
+        if (!r.ok) return null;
+        var d = await r.json();
+        if (d.access_token) localStorage.setItem('b4rruf3t_token', d.access_token);
+        if (d.refresh_token) localStorage.setItem('b4rruf3t_refresh', d.refresh_token);
+        return d.access_token || null;
+      } catch (e) { return null; } finally { _tokenWait = null; }
+    })();
+    return _tokenWait;
+  }
+
+  function makeApi(fetchImpl, tokenFn) {
     return async function api(path, opt) {
-      var r = await fetchImpl(path, opt);
+      // tokenFn is OPTIONAL and its absence is not a degraded mode · it is the
+      // old behaviour exactly, which is what lets the existing tests call
+      // makeApi(fakeFetch) and still assert on the options object they passed.
+      var sendOpt = opt;
+      if (tokenFn) {
+        var token = await tokenFn();
+        if (token) {
+          var headers = new Headers((opt && opt.headers) || {});
+          if (!headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + token);
+          sendOpt = Object.assign({}, opt || {}, { headers: headers });
+        }
+      }
+      var r = await fetchImpl(path, sendOpt);
       var body = null;
       try { body = await r.json(); } catch (e) { body = null; }
       if (r.ok || r.status === 400 || r.status === 409) return body;
@@ -1138,6 +1214,7 @@
     tabLeavePlan: tabLeavePlan,
     tabEnterPlan: tabEnterPlan,
     makeApi: makeApi,
+    ensureToken: ensureToken,
     mapGraph: mapGraph,
     MAP_PAIRS: MAP_PAIRS,
     EDGE_XY: EDGE_XY,

@@ -163,6 +163,31 @@ public final class Directory {
         }
     }
 
+    /**
+     * EVERY CLAIMED ACCOUNT, in one query · the forward direction of
+     * customerForSso, and the input to the privacy rule in Access.
+     *
+     * The whole set rather than a per-id probe, because the caller needs to
+     * answer "is this one claimed" on every anonymous request and this table is
+     * tiny: one row per human who has ever signed in. Reading all of it once a
+     * minute costs one connection; asking per request would cost one per
+     * request, on a bare DriverManager connect with no pool.
+     *
+     * Uncached HERE on purpose. Access holds the snapshot and owns the TTL,
+     * because it is the thing that has to keep serving a slightly old answer
+     * through an outage. A second cache at this level would only make the two
+     * disagree about when a link became visible.
+     */
+    public static java.util.Set<Long> claimedCustomers() throws SQLException {
+        java.util.Set<Long> ids = new java.util.HashSet<>();
+        try (Connection c = openOwnDb();
+             var st = c.createStatement();
+             ResultSet rs = st.executeQuery("SELECT customer_id FROM sso_customers")) {
+            while (rs.next()) ids.add(rs.getLong(1));
+        }
+        return ids;
+    }
+
     /** sso_sub -> customer id. Absence is cached as an empty Optional, so a
      *  ConcurrentHashMap (which cannot hold nulls) can still remember a miss. */
     private static final Map<String, Optional<Long>> SSO_CACHE = new ConcurrentHashMap<>();
@@ -183,6 +208,11 @@ public final class Directory {
      */
     public static void linkSso(String sub, long customerId) throws SQLException {
         SSO_CACHE.remove(sub);   // a new link must be visible immediately
+        // and so must the fact that this account is now PRIVATE · Access reads
+        // the same table to decide whether an anonymous caller may name it, and
+        // an account that stayed publicly readable for a minute after somebody
+        // claimed it would be a hole with a timer on it
+        Access.invalidate();
         try (Connection c = openOwnDb();
              PreparedStatement ps = c.prepareStatement(
                      "INSERT INTO sso_customers(sso_sub, customer_id) VALUES (?,?) ON CONFLICT DO NOTHING")) {

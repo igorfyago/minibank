@@ -1273,7 +1273,11 @@ const $ = s => document.querySelector(s);
 /* Non-2xx is not data. 400 and 409 are answers and still come back as bodies;
    429 and 5xx throw, so `x = await api(...)` never overwrites good state with
    an error object. Contract and reasoning live in lib.js, unit-tested there. */
-const api = MB.makeApi(fetch);
+// The second argument is new and it is what makes this page able to open a
+// private account at all · MB.ensureToken spends the estate cookie for a
+// bearer token and api() carries it. Without a session it returns null and
+// every call goes out bare, exactly as before, which is still the whole demo.
+const api = MB.makeApi(fetch, MB.ensureToken);
 
 /* ---------------- tabs ---------------- */
 /* LEAVING THE X-RAY TAB IS A STOP.
@@ -1326,15 +1330,38 @@ async function loadAccounts() {
   accounts = await api('/api/accounts');
   const customers = accounts.filter(a => a.kind === 'customer');
   if (me === null) {
+    // YOUR OWN BOOK WINS. The server flags the row it resolved from our token,
+    // so a signed-in owner lands on their account rather than on whatever the
+    // address bar said or whichever demo happens to sort first. Only on the
+    // first paint · after that switchUser owns the selection and re-deciding
+    // on every 2s poll would drag the page back off any account you picked.
+    const yours = customers.find(a => a.you);
+    if (yours) me = yours.id;
+  }
+  if (me === null) {
     // ?customer=N is the estate's identity handoff: the broker's Bank pill
     // arrives with it, so landing here must mean the same person, not a
-    // silent reset to the first demo account. Unknown ids fall through.
+    // silent reset to the first demo account. Unknown ids fall through, and
+    // so now do private ones · honouring a handoff we cannot open would land
+    // the visitor on a 403 with no way back.
     const asked = Number(new URLSearchParams(location.search).get('customer'));
-    if (asked && customers.some(a => a.id === asked)) me = asked;
+    if (asked && customers.some(a => a.id === asked && !a.private)) me = asked;
   }
-  if (me === null) me = customers[0]?.id;
-  $('#who').innerHTML = customers.map(a =>
-    `<button class="ghost ${a.id === me ? 'on' : ''}" onclick="switchUser(${a.id})">${a.owner} <span style="opacity:.55;font-size:11px">· ${a.region}</span></button>`).join('')
+  // THE ANONYMOUS DEFAULT IS A PUBLIC ACCOUNT, and this line is the difference
+  // between a working demo and a front page that 403s on first paint. It used
+  // to be customers[0], which is igor · the one account that is now private.
+  if (me === null) me = (customers.find(a => !a.private) || customers[0] || {}).id;
+  $('#who').innerHTML = customers.map(a => {
+    // Somebody's account, and not the somebody holding this browser. Drawn,
+    // because the cast list is public and always has been, but not offered:
+    // a button that can only produce a refusal is worse than a closed door.
+    const locked = a.private && !a.you;
+    if (locked) return `<button class="ghost" disabled style="opacity:.4;cursor:not-allowed" `
+      + `title="${a.owner}'s account is private · sign in as ${a.owner} to open it">${a.owner} `
+      + `<span style="opacity:.55;font-size:11px">· private</span></button>`;
+    return `<button class="ghost ${a.id === me ? 'on' : ''}" onclick="switchUser(${a.id})">${a.owner} `
+      + `<span style="opacity:.55;font-size:11px">· ${a.you ? 'you' : a.region}</span></button>`;
+  }).join('')
     + `<button class="ghost" onclick="toggleSignup()" title="create your own customer">+</button>`;
   const mine = accounts.find(a => a.id === me);
   $('#balance').textContent = mine ? fmt(mine.balance) : '·';
