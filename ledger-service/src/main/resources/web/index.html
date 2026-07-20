@@ -1304,6 +1304,7 @@ $('#su-go').onclick = async () => {
   const el = $('#su-result');
   if (!/^[a-z]{3,12}$/.test(name)) { el.textContent = '3–12 letters, a–z only'; el.style.color = 'var(--amber)'; return; }
   el.textContent = 'creating…'; el.style.color = 'var(--dim)';
+  const known = knownTxs();
   const r = await api('/api/signup', { method: 'POST', body: JSON.stringify({ name, region: suRegion }) });
   if (r.result === 'ok') {
     $('#signup-panel').classList.add('hidden');
@@ -1311,6 +1312,11 @@ $('#su-go').onclick = async () => {
     me = r.id; lastTx = null;
     say(`✓ welcome, ${name} · you live in ${r.region}: your account was just created on that region's database, and the world funded you €500`, 'var(--green)');
     refreshAll();
+    /* The €500 is a real transfer the server wrote, and nothing came back
+       naming it · the new customer's own name finds it. Named by `name`
+       rather than by myOwner(), which reads an accounts list this signup has
+       not reloaded yet. */
+    followStart({ find: { kinds: ['transfer'], owner: name, known }, head: 'the world funding you, live' });
   } else { el.textContent = '✗ ' + (r.error || r.result); el.style.color = 'var(--red)'; }
 };
 function say(msg, color) { const el = $('#send-result'); el.textContent = msg; el.style.color = color; }
@@ -1361,6 +1367,7 @@ async function sendExternal() {
   extSave(a);
   say('✓ external transfer accepted · your balance moved now; the outside rails take ~30s', 'var(--green)');
   renderExt(); refreshAll();
+  followStart({ tx, head: 'your external transfer, live' });
 }
 const EXT_STAGES = [['Pending', 5000], ['Approved', 12000], ['Sending', 25000], ['Sent', 1/0]];
 function renderExt() {
@@ -1388,18 +1395,23 @@ $('#send-amount').addEventListener('keydown', e => { if (e.key === 'Enter') $('#
 $('#act-send').onclick = () => { $('#send-panel').classList.toggle('hidden'); $('#send-amount').focus(); };
 $('#act-retry').onclick = () => { if (lastTx) doTransfer(lastTx); else say('send something first · Retry replays the SAME txId to prove idempotency', 'var(--dim)'); };
 $('#act-add').onclick = async () => {
-  const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: 1, to: me, amount: '100.00' }) });
+  const tx = uuid();
+  const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: tx, from: 1, to: me, amount: '100.00' }) });
   say(r.result === 'ok' ? '✓ added €100.00 from the world · your region, plain ACID' : '✗ ' + (r.result || r.error),
       r.result === 'ok' ? 'var(--green)' : 'var(--red)');
   loadAccounts(); loadStatement();
+  if (r.result === 'ok') followStart({ tx, head: 'your top-up, live' });
 };
 $('#act-move').onclick = async () => {
   const mine = accounts.find(a => a.id === me);
   if (!mine) return;
+  const known = knownTxs(), owner = myOwner();
   const r = await api('/api/relocate', { method: 'POST', body: JSON.stringify({ customer: me, to: 1 - mine.shard }) });
   if (r.result === 'ok') say(`✈ relocated to ${r.region} · the balance travelled as ONE saga, then the pointer flipped`, 'var(--green)');
   else say('✗ ' + (r.error || r.result), 'var(--amber)');
   loadAccounts(); loadStatement();
+  // no leg id comes back · the newest relocation leg is discovered from the feed
+  if (r.result === 'ok') followStart({ find: { kinds: ['relocate'], owner, known }, head: 'your relocation, live' });
 };
 
 /* the product shelf · every product is accounts + transfers, valued live */
@@ -1464,11 +1476,19 @@ async function loadProdHist(key, acct) {
      <b class="${x.in ? 'amount-pos' : ''}">${x.in ? '+' : '−'}${Number(x.amount.replace('-', '')).toLocaleString('en-US', { maximumFractionDigits: 8 })}</b></div>`).join('')
     || '<div class="ph-row"><span class="muted">no activity on this account yet</span></div>';
 }
+/* The App tab's product buttons run the SAME tools Rita runs, so they follow
+   the same way · one rule for "the visitor caused a transaction", not two. */
 async function prodRun(fn) {
-  const out = await fn();
+  /* The catch is what keeps the follow honest rather than merely tidy: a tool
+     that throws half way through has recorded a target and produced nothing, and
+     a target nobody clears is one the NEXT action would follow instead of its
+     own. Every exit from here settles it. */
+  let out;
+  try { out = await fn(); } catch (e) { out = fail('that fizzled · try again'); }
   if (out && out.err) say('✗ ' + out.err, 'var(--red)');
   else say(typeof out === 'string' ? '✓ ' + out : '✓ done', 'var(--green)');
   refreshAll();
+  followed(out);
 }
 window.pSav = dir => prodRun(() => AGENT_TOOLS.savings_move.exec({ direction: dir, amount: String(sliderVals.sv) + '.00' }));
 window.pCard = act => prodRun(() => AGENT_TOOLS.card_action.exec({ action: act, amount: String(sliderVals.cd) + '.00' }));
@@ -2718,7 +2738,7 @@ async function traceTx(tx, auto = false) {
 
 /* ---- the player: a 3-second museum replay of a payment's real journey ---- */
 
-let playTimers = [], following = null, playedSteps = 0;
+let playTimers = [], following = null;
 /* Until when a deliberate animation owns the map. The live poller used to
    animate up to six events, three balls each, every two seconds, with no idea a
    replay was running and using raw setTimeout that stopPlay() could not cancel.
@@ -2747,7 +2767,13 @@ let playingUntil = 0;
  * begins from an empty map, which is also what makes the progression readable.
  */
 function stopPlay() {
-  playTimers.forEach(clearTimeout); playTimers = []; following = null; playingUntil = 0;
+  playTimers.forEach(clearTimeout); playTimers = []; playingUntil = 0;
+  /* A FOLLOW IS PART OF WHAT IS RUNNING, so it stops here too. This line used
+     to be `following = null`, which stopped the poll from doing anything but
+     left its scheduled retry alive to wake up, find itself disowned and return
+     · harmless, and only because every exit checked. A follow now holds a
+     token and a timer, and both are released together. */
+  cancelFollow();
   const layer = $('#pulse-layer');
   if (layer) while (layer.firstChild) layer.removeChild(layer.firstChild);
   document.querySelectorAll('.node.hot, .node.hot-amber')
@@ -3032,73 +3058,137 @@ function playTrace(tr) {
   }, j.total + 250));
 }
 
-/* ---- live follow: after YOU send money, watch it actually happen ---- */
-async function followTx(tx) {
-  /* THE VISITOR'S OWN PAYMENT WINS, and it used to lose a race to auto pick.
-     stopPlay() clears `following`, so setting it BEFORE the tab click was not
-     enough on its own · the click runs autoPickLatest, activeTrace was still
-     null because the trace fetch had not returned, and 250ms later auto pick
-     clicked the newest ticker row and started a second animation beside this
-     one. Order matters here: stop first, then claim, then switch. */
-  stopPlay();
-  following = tx; playedSteps = 0; deepLinkTx = tx;
+/* ---- live follow: after YOU act, watch YOUR transaction happen ---- */
+/**
+ * AN ACTION THE VISITOR PERFORMED IS THE MOST EXPLICIT SELECTION THERE IS.
+ *
+ * The reported symptom: the owner asked Rita to send €50 to oscar, the payment
+ * succeeded, the events appeared in the live list · and the panel stayed on an
+ * old, unrelated settlement while the map replayed that stranger's journey.
+ * The transaction he had just caused sat in the list, unselected, still.
+ *
+ * The cause was that only two of the eleven money-moving paths followed
+ * anything at all, and the reason they did not is a rule that is correct
+ * somewhere else: autoPickLatest deliberately refuses to override a selection,
+ * because a background poll must never yank the panel away from what somebody
+ * chose to look at. An action is not a background poll. MB.followPlan is given
+ * the SOURCE of the intent so the two can be told apart without weakening the
+ * auto-pick rule, which still stands down exactly as before.
+ *
+ * IDEMPOTENCY IS A TOKEN, NOT A FLAG. A second action must cancel the first
+ * one's pending retries rather than race them, so every scheduled poll carries
+ * the token it was born under and returns the moment a newer follow exists.
+ */
+let followToken = 0, followTimer = null, followSteps = 0, followFind = null;
+
+/** Cancel whatever follow is in flight. Called by stopPlay, so anything that
+ *  takes the map also takes the follow with it. */
+function cancelFollow() {
+  followToken++;
+  clearTimeout(followTimer); followTimer = null;
+  if (following && deepLinkTx === following) deepLinkTx = null;
+  following = null; followSteps = 0; followFind = null;
+}
+
+/** The only entry point. `spec.tx` when the id is known; `spec.find` when it is
+ *  not and has to be discovered from the feed (see MB.discoverTx). */
+function followStart(spec) {
+  const o = spec || {};
+  if (!o.tx && !o.find) return;
+  stopPlay();                         // and with it, any earlier follow
+  const token = ++followToken;
+  following = o.tx || '(finding)'; deepLinkTx = o.tx || null;
+  followSteps = 0; followFind = o.find || null;
   // loop is a mode of the view, not of a trace · if it was on, it follows the
-  // visitor to their own payment rather than being silently dropped
+  // visitor to their own transaction rather than being silently dropped
   clearTimeout(loopTimer); loopTimer = null;
-  document.querySelector('[data-tab="xray"]').click();
+  const btn = document.querySelector('[data-tab="xray"]');
+  if (btn && $('#tab-xray').classList.contains('hidden')) btn.click();
   $('#trace-card').hidden = false;
   $('#play-wrap').hidden = false;
-  $('#trace-tx').textContent = tx.slice(0, 13) + '…';
-  $('#trace-head').textContent = 'your payment, live';
+  $('#trace-tx').textContent = o.tx ? String(o.tx).slice(0, 13) + '…' : '…';
+  $('#trace-head').textContent = o.head || 'what you just did, live';
   $('#trace-steps').innerHTML = '';
   const fill = $('#play-fill');
   fill.style.transition = 'none'; fill.style.width = '4%';
   $('#play-caption').textContent = 'watching it happen…';
   setTimeout(() => $('#trace-card').scrollIntoView({ behavior: 'smooth', block: 'center' }), 150);
-  followPoll(tx, 0);
+  return followPoll(o.tx || null, token, 0);
 }
-async function followPoll(tx, tries) {
-  if (following !== tx) return;
-  let tr = null;
-  try { tr = await api('/api/xray/trace?tx=' + tx); } catch (e) { /* retry */ }
-  if (following !== tx) return;
-  if (tr && tr.steps && tr.steps.length) {
-    renderTrace(tr, tx);
-    const expect = tr.steps.some(s2 => s2.step === 'depart') ? 4 : 3;
-    // Animate only what is NEW since the last poll, through the same model the
-    // replay uses. Previously this called into the replay's own segment
-    // renderer with a hand-made window, so a followed transaction and a
-    // replayed one were drawn by two different sets of rules.
-    const fresh = tr.steps.slice(playedSteps);
-    if (fresh.length) {
-      const j = MB.journey(fresh, MAP);
-      runJourney(j);
-      playingUntil = Date.now() + j.total + 400;
-      markStep(tr.steps.length - 1);
-    }
-    playedSteps = tr.steps.length;
-    const fill = $('#play-fill');
-    fill.style.transition = 'width .6s ease';
-    fill.style.width = Math.min(96, playedSteps / expect * 100) + '%';
-    const hasNotify = tr.steps.some(s2 => s2.step === 'notify');
-    const settled = tr.steps.some(s2 => s2.step === 'arrive' || s2.step === 'refund') || !tr.steps.some(s2 => s2.step === 'depart');
-    if (hasNotify && settled) {
-      const t0 = new Date(tr.steps[0].ts), t1 = new Date(tr.steps[tr.steps.length - 1].ts);
-      fill.style.width = '100%';
-      $('#play-caption').textContent = `✓ settled · ${t1 - t0}ms end to end, every part you just saw really ran`;
-      document.querySelectorAll('.trace-step').forEach(el => el.classList.remove('active'));
-      following = null; if (deepLinkTx === tx) deepLinkTx = null;
-      gShow('trace', { tr, total: t1 - t0 });
-      return;
-    }
+
+/** Back-compat name · a plain payment whose id the browser minted itself. */
+function followTx(tx) { return followStart({ tx, head: 'your payment, live' }); }
+
+async function followPoll(tx, token, attempt) {
+  if (token !== followToken) return;
+  /* THE ID MAY NOT BE OURS TO KNOW. A trade settles under the broker's fill id
+     and a relocation leg mints its own, so those follows arrive with a
+     description instead and resolve it against the feed. */
+  if (!tx && followFind) {
+    tx = MB.discoverTx(latestEvents, followFind);
+    if (tx) { following = tx; deepLinkTx = tx; $('#trace-tx').textContent = String(tx).slice(0, 13) + '…'; }
   }
-  if (tries > 60) {
-    $('#play-caption').textContent = 'still in flight · the pipe holds it safely (consumers may be rebalancing); it will settle';
-    following = null; if (deepLinkTx === tx) deepLinkTx = null;
+  let tr = null;
+  if (tx) { try { tr = await api('/api/xray/trace?tx=' + encodeURIComponent(tx)); } catch (e) { /* not there yet */ } }
+  if (token !== followToken) return;
+  const steps = (tr && tr.steps) || [];
+  const plan = MB.followPlan({
+    source: 'user', hasSelection: !!activeTrace, steps,
+    prevCount: followSteps, graph: MAP, attempt,
+  });
+  followSteps = steps.length;
+
+  if (plan.select && tr) {
+    renderTrace(tr, tx);
+    /* THE POINT OF ALL OF THIS. The visitor caused this transaction, so it owns
+       the panel, the row and the map · which is what selectionExplicit means,
+       and what the old follow never set. */
+    selectionExplicit = true;
+    const fill = $('#play-fill');
+    fill.style.transition = 'width .5s ease';
+    fill.style.width = (plan.play ? 100 : Math.min(92, 20 + steps.length * 20)) + '%';
+  }
+  if (plan.retry) {
+    if (steps.length) $('#play-caption').textContent =
+      `watching it happen… ${steps.length} step${steps.length === 1 ? '' : 's'} so far`;
+    followTimer = setTimeout(() => followPoll(tx, token, attempt + 1), plan.waitMs);
     return;
   }
-  playTimers.push(setTimeout(() => followPoll(tx, tries + 1), 700));
+
+  following = null; followFind = null;
+  if (deepLinkTx === tx) deepLinkTx = null;
+  if (plan.play && tr) {
+    const t0 = new Date(steps[0].ts).getTime();
+    const t1 = new Date(steps[steps.length - 1].ts).getTime();
+    if (plan.partial) $('#trace-head').textContent = 'your transaction · ' + plan.reason;
+    gShow('trace', { tr, total: t1 - t0 });
+    // the SAME replay every other selection gets · a followed transaction and a
+    // clicked one are now drawn by one set of rules rather than two
+    playTrace(tr);
+    return;
+  }
+  $('#play-caption').textContent = plan.reason;
+  if (!steps.length) setReplayable(false);
 }
+
+/* WHAT THE VISITOR JUST CAUSED, recorded where it happens.
+ *
+ * Every tool below moves money, and each one used to be free to forget the
+ * follow · nine of them did. A tool names its target as it mints the id, and
+ * the two callers that RUN tools (Rita's Allow button and the App tab's product
+ * buttons) both hand it to followed() afterwards, so the follow is a property
+ * of running a tool rather than something each tool has to remember. */
+let pendingFollow = null;
+function willFollow(spec) { pendingFollow = spec || null; return spec && spec.tx; }
+function followed(out) {
+  const spec = pendingFollow; pendingFollow = null;
+  if (!spec || (out && out.err)) return;      // a failed action created nothing
+  followStart(spec);
+}
+/** The owner name the events feed uses for both sides of this customer's rows. */
+function myOwner() { const a = accounts.find(x => x.id === me); return a ? a.owner : null; }
+/** Which transactions were already in the feed before the action · see MB.discoverTx. */
+function knownTxs() { return latestEvents.map(e => e.tx); }
 $('#replay-btn').onclick = () => { if (activeTrace) playTrace(activeTrace); };
 $('#loop-btn').onclick = () => setLooping(!looping);
 
@@ -3392,23 +3482,27 @@ const AGENT_TOOLS = {
     exec: async a => {
       const rec = accounts.find(x => x.owner === String(a.to).toLowerCase()) || accounts.find(x => x.id === Number(a.to));
       if (!rec) return fail('I could not find "' + a.to + '" in the cast');
-      const tx = uuid();
+      /* THE BUG, in one word: `crossShard`. This followed only payments that
+         crossed regions, so "send 50 to oscar" between two eu customers moved
+         real money, appeared in the live list, and left the panel on whatever
+         unrelated transaction happened to be open. A local transfer is a
+         shorter journey, not an uninteresting one. */
+      const tx = willFollow({ tx: uuid(), head: 'your payment, live' });
       const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: tx, from: me, to: rec.id, amount: a.amount }) });
-      if (r.result === 'ok' && r.crossShard) followTx(tx);
       return r.result === 'ok' ? `sent ${fmt(a.amount)} to ${rec.owner}` + (r.crossShard ? ' · cross-region, watch it on the map' : '') : fail(r.result || r.error);
     } },
   add_money: {
     sum: a => `⬇ Add ${fmt(a.amount)} from the world`,
     exec: async a => {
       if (Number(a.amount) > 500) return fail('top-ups cap at €500');
-      const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: 1, to: me, amount: a.amount }) });
+      const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: willFollow({ tx: uuid(), head: 'your top-up, live' }), from: 1, to: me, amount: a.amount }) });
       return r.result === 'ok' ? `added ${fmt(a.amount)}` : fail(r.result || r.error);
     } },
   savings_move: {
     sum: a => `💰 Move ${fmt(a.amount)} ${a.direction === 'to_savings' ? 'into savings' : 'back to main'}`,
     exec: async a => {
       const from = a.direction === 'to_savings' ? me : me + 100, to = a.direction === 'to_savings' ? me + 100 : me;
-      const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from, to, amount: a.amount }) });
+      const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: willFollow({ tx: uuid(), head: 'your savings move, live' }), from, to, amount: a.amount }) });
       return r.result === 'ok' ? 'moved' : fail(r.result || r.error);
     } },
   card_action: {
@@ -3417,23 +3511,25 @@ const AGENT_TOOLS = {
                  repay: `💳 Repay ${fmt(a.amount || 0)} of card debt` })[a.action] || 'card action',
     exec: async a => {
       if (a.action === 'pay_cafe') {
-        const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me + 400, to: 7, amount: a.amount || '12.00' }) });
+        const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: willFollow({ tx: uuid(), head: 'your card payment, live' }), from: me + 400, to: 7, amount: a.amount || '12.00' }) });
         return r.result === 'ok' ? 'paid · your card went negative, legally'
           : fail(r.result === 'insufficient_funds' ? 'the CHECK constraint said no (limit)' : r.result);
       }
       if (a.action === 'hold') {
-        const tx = uuid();
+        const tx = willFollow({ tx: uuid(), head: 'your authorization, live' });
         const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: 'authorize', customer: me, tx, amount: a.amount || '25.00' }) });
         if (r.result === 'ok') { lastAuth[me] = tx; return 'held · capture or release when ready'; }
         return fail(r.result || r.error);
       }
       if (a.action === 'capture' || a.action === 'release') {
         if (!lastAuth[me]) return fail('no hold from this session · make one first');
-        const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: a.action, customer: me, tx: lastAuth[me] }) });
+        // the SAME transaction the hold created · capture and release are two
+        // more entries against it, so the trace to watch is the one already there
+        const r = await api('/api/card', { method: 'POST', body: JSON.stringify({ action: a.action, customer: me, tx: willFollow({ tx: lastAuth[me], head: 'your card hold, live' }) }) });
         if (r.result === 'ok') delete lastAuth[me];
         return r.result === 'ok' ? (a.action === 'capture' ? 'captured · the merchant is paid' : 'released · nothing was spent') : fail(r.result);
       }
-      const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me, to: me + 400, amount: a.amount }) });
+      const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: willFollow({ tx: uuid(), head: 'your repayment, live' }), from: me, to: me + 400, amount: a.amount }) });
       return r.result === 'ok' ? 'repaid' : fail(r.result || r.error);
     } },
   trade: {
@@ -3451,6 +3547,13 @@ const AGENT_TOOLS = {
       // the quantity because a euro figure re-derived through a moved price
       // overshoots the holding and the broker refuses the order whole.
       const size = a.units ? { units: String(a.units) } : { eur: a.eur };
+      /* AND THIS ONE CANNOT BE FOLLOWED BY ITS OWN ID. The txId below is the
+         ORDER's; the ledger transaction is claimed by Products.settleFill under
+         the broker's FILL id, a uuid the browser never sees. So the follow is
+         described rather than named, and MB.discoverTx resolves it from the
+         feed once the settlement actually lands. */
+      willFollow({ find: { kinds: ['settle', 'settle-refused', 'trade'], owner: myOwner(), known: knownTxs() },
+                   head: 'your order · settling through the broker' });
       const r = await api('/api/trade', { method: 'POST', body: JSON.stringify(Object.assign({ txId: uuid(), customer: me, asset: a.asset, side: a.side }, size)) });
       return r.result === 'placed'
         ? `order placed with the broker · ${r.status} at the venue, settlement is asynchronous`
@@ -3460,15 +3563,19 @@ const AGENT_TOOLS = {
     sum: a => a.action === 'apply' ? `🏦 Take a ${fmt(a.amount)} loan` : `🏦 Repay ${fmt(a.amount)} of the loan`,
     exec: async a => {
       if (a.action === 'apply') {
-        const r = await api('/api/mortgage', { method: 'POST', body: JSON.stringify({ txId: uuid(), customer: me, amount: a.amount }) });
+        const r = await api('/api/mortgage', { method: 'POST', body: JSON.stringify({ txId: willFollow({ tx: uuid(), head: 'your loan, live' }), customer: me, amount: a.amount }) });
         return r.result === 'ok' ? 'approved and disbursed · your cash rose, your loan account fell, net worth unmoved' : fail(r.result || r.error);
       }
-      const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: me, to: me + 500, amount: a.amount }) });
+      const r = await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: willFollow({ tx: uuid(), head: 'your loan repayment, live' }), from: me, to: me + 500, amount: a.amount }) });
       return r.result === 'ok' ? 'repaid' : fail(r.result || r.error);
     } },
   relocate: {
     sum: a => `✈ Relocate you to ${a.region}`,
     exec: async a => {
+      /* Relocation.java mints an id per leg and the API returns none of them,
+         so this is discovered too · the newest leg is the one to watch. */
+      willFollow({ find: { kinds: ['relocate'], owner: myOwner(), known: knownTxs() },
+                   head: 'your relocation, live' });
       const r = await api('/api/relocate', { method: 'POST', body: JSON.stringify({ customer: me, to: a.region === 'uk' ? 1 : 0 }) });
       return r.result === 'ok' ? `relocated to ${r.region} · your balance travelled as one saga` : fail(r.error || r.result);
     } },
@@ -3484,6 +3591,8 @@ window.actAllow = async i => {
   m.failed = !!(result && result.err);
   m.result = m.failed ? result.err : result;
   chatPaint(); refreshAll();
+  // allowing an action is CAUSING it · the map follows what the visitor did
+  followed(result);
 };
 window.actDeny = i => {
   const m = chatLog[i];

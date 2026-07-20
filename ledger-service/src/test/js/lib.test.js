@@ -1968,3 +1968,328 @@ test('the page settles its controls before anything is selected', () => {
     'setReplayable used to run only from renderTrace and playTrace, so at load ' +
     'replay was a silent no-op and loop lit up while playing nothing');
 });
+
+// ======================================================= THE VISITOR'S OWN TX
+/**
+ * The reported bug: the owner asked Rita to send €50 to oscar, the payment
+ * succeeded, the events showed up in the live list · and the trace panel stayed
+ * on an unrelated settle:aapl:buy while the map replayed that old journey. The
+ * transaction he had just caused sat in the list, unselected, not moving.
+ *
+ * Two separate things were wrong and only one of them is obvious. Nine of the
+ * eleven money-moving paths followed nothing at all, which is the easy half.
+ * The interesting half is why the fix is NOT "make autoPickLatest take over":
+ * auto-pick is a background poll and has to keep standing down, or it yanks the
+ * panel away from whatever somebody chose to look at. So the SOURCE of the
+ * intent is an input to the decision, and both cases are tested here.
+ */
+const FOLLOW_MAP = MB.mapGraph(GRAPH_PAIRS);
+const LOCAL_DONE = [
+  { step: 'transfer', region: 'eu', ts: '2026-07-20T10:00:00.000Z', detail: 'committed' },
+  { step: 'published', region: 'eu', ts: '2026-07-20T10:00:00.090Z', detail: 'relayed' },
+  { step: 'notify', region: 'notifications', ts: '2026-07-20T10:00:00.180Z', detail: 'notified' },
+];
+const fp = o => MB.followPlan(Object.assign({ graph: FOLLOW_MAP }, o));
+
+test('an action the visitor PERFORMED overrides whatever was selected', () => {
+  const plan = fp({ source: 'user', hasSelection: true, steps: LOCAL_DONE, prevCount: 3 });
+  assert.equal(plan.supersede, true,
+    'causing a payment is the most explicit selection there is · this is the ' +
+    'reported bug, where the panel stayed on a stranger settle:aapl:buy');
+  assert.equal(plan.select, true);
+  assert.equal(plan.play, true, 'and it PLAYS · selecting without animating was half the symptom');
+});
+
+test('a background pick still stands down for a selection · the rule is not weakened', () => {
+  const plan = fp({ source: 'auto', hasSelection: true, steps: LOCAL_DONE, prevCount: 3 });
+  assert.equal(plan.supersede, false);
+  assert.equal(plan.select, false);
+  assert.equal(plan.play, false);
+  assert.equal(plan.retry, false, 'and it does not keep trying either');
+  // the same trace, the same completeness, the opposite answer · the source of
+  // the intent is the only difference, which is the distinction that was missing
+  assert.equal(fp({ source: 'user', hasSelection: true, steps: LOCAL_DONE, prevCount: 3 }).play, true);
+});
+
+test('an automatic pick on an unselected map still gets to act', () => {
+  // standing down is about not stealing · with nothing selected there is
+  // nothing to steal, and auto-pick has always been allowed to open the panel
+  assert.equal(fp({ source: 'auto', hasSelection: false, steps: LOCAL_DONE, prevCount: 3 }).play, true);
+});
+
+test('a departure with no arrival is a saga still moving, and is never played', () => {
+  const half = [
+    { step: 'depart', region: 'eu', ts: '2026-07-20T10:00:00.000Z' },
+    { step: 'published', region: 'eu', ts: '2026-07-20T10:00:00.050Z' },
+  ];
+  // asked twice with the same answer · "it stopped growing" must not outrank
+  // "it has demonstrably not finished"
+  const plan = fp({ source: 'user', steps: half, prevCount: 2, attempt: 3 });
+  assert.equal(plan.play, false, 'animating here draws money leaving and never landing');
+  assert.equal(plan.retry, true);
+});
+
+test('a publish with no notification still owes the second consumer group', () => {
+  const plan = fp({ source: 'user', steps: LOCAL_DONE.slice(0, 2), prevCount: 2, attempt: 2 });
+  assert.equal(plan.play, false,
+    'notifications is a separate group on the same topic · its hop is part of ' +
+    'the journey, and drawing the payment without it draws two thirds of one');
+  assert.equal(plan.retry, true);
+});
+
+test('the complete payment plays, and claims nothing is missing', () => {
+  const plan = fp({ source: 'user', steps: LOCAL_DONE, prevCount: 3, attempt: 2 });
+  assert.equal(plan.play, true);
+  assert.equal(plan.partial, false);
+  assert.equal(plan.reason, '');
+});
+
+test('a transaction that owes nothing plays as soon as it stops growing', () => {
+  // a card hold and a savings move write no outbox row, so they are never
+  // notified and would otherwise sit out every retry before drawing a journey
+  // that was ready on the first poll
+  const one = [{ step: 'transfer', region: 'eu', ts: '2026-07-20T10:00:00.000Z' }];
+  assert.equal(fp({ source: 'user', steps: one, prevCount: 0 }).play, false,
+    'the FIRST sighting is not evidence that nothing more is coming');
+  assert.equal(fp({ source: 'user', steps: one, prevCount: 0 }).retry, true);
+  assert.equal(fp({ source: 'user', steps: one, prevCount: 1 }).play, true,
+    'the second identical answer is');
+});
+
+test('the retry interval widens, and the retries run out', () => {
+  const waits = [];
+  for (let a = 0; a < 10; a++) {
+    const p = fp({ source: 'user', steps: [], attempt: a, maxAttempts: 10 });
+    assert.equal(p.retry, true, 'attempt ' + a + ' must still be trying');
+    waits.push(p.waitMs);
+  }
+  assert.ok(waits[0] <= 200, 'the first look is prompt · ' + waits[0] + 'ms');
+  assert.ok(waits.every((w, i) => i === 0 || w >= waits[i - 1]), 'never narrows: ' + waits);
+  assert.ok(waits[3] > waits[0], 'and genuinely widens: ' + waits);
+  assert.ok(waits.every(w => w <= 2000), 'no single wait is a hang: ' + waits);
+  assert.ok(waits.reduce((a, b) => a + b, 0) < 15000, 'the budget is seconds, not minutes');
+  assert.equal(fp({ source: 'user', steps: [], attempt: 10, maxAttempts: 10 }).retry, false,
+    'and it does not spin forever');
+});
+
+test('when the retries run out it plays what landed rather than nothing', () => {
+  const plan = fp({ source: 'user', steps: LOCAL_DONE.slice(0, 2), attempt: 10, maxAttempts: 10 });
+  assert.equal(plan.play, true, 'a partial journey the visitor caused beats a stranger complete one');
+  assert.equal(plan.partial, true);
+  assert.ok(plan.reason.length > 0, 'and it says so rather than claiming to have settled');
+});
+
+test('a transaction with no trace at all is stated, not animated', () => {
+  const plan = fp({ source: 'user', steps: [], attempt: 10, maxAttempts: 10 });
+  assert.equal(plan.play, false);
+  assert.equal(plan.select, false, 'there is nothing to select · the panel must not lie');
+  assert.ok(plan.reason.length > 0);
+});
+
+test('a transaction that happens off this diagram is selected but not played', () => {
+  const off = [{ step: 'somebody-elses-subsystem', region: 'eu', ts: '2026-07-20T10:00:00Z' }];
+  const plan = fp({ source: 'user', steps: off, attempt: 10, maxAttempts: 10 });
+  assert.equal(plan.select, true, 'the steps are real and the panel should show them');
+  assert.equal(plan.play, false, 'but nothing on this map corresponds to them');
+});
+
+// --------------------------------------------------------------- discoverTx
+/**
+ * A trade's ledger transaction is claimed by Products.settleFill under the
+ * BROKER's fill id. The txId the browser sends to /api/trade belongs to the
+ * ORDER and never becomes a transaction, so following it would poll a trace
+ * that is never going to exist. Relocation legs have the same shape.
+ */
+const EVENTS = [
+  { type: 'settle:aapl:buy', tx: 'fill-new', ts: '2026-07-20T10:00:02Z', payer: 'igor', payee: 'igor', region: 'eu' },
+  { type: 'transfer_local', tx: 'pay-1', ts: '2026-07-20T10:00:01Z', payer: 'igor', payee: 'oscar', region: 'eu' },
+  { type: 'settle:btc:sell', tx: 'fill-old', ts: '2026-07-20T09:00:00Z', payer: 'igor', payee: 'igor', region: 'eu' },
+];
+
+test('a trade is found by what was NOT in the feed when the visitor acted', () => {
+  assert.equal(MB.discoverTx(EVENTS, { kinds: ['settle'], owner: 'igor', known: ['fill-old'] }), 'fill-new');
+  assert.equal(MB.discoverTx(EVENTS, { kinds: ['settle'], owner: 'igor', known: ['fill-old', 'fill-new'] }), null,
+    'nothing new means nothing to follow · never fall back to an older one');
+});
+
+test('the asset in the middle of the kind does not hide the settlement', () => {
+  // settle:aapl:buy, settle:btc:sell · the asset is a row in a registry, so an
+  // instrument listed tomorrow must be discoverable without touching this file
+  assert.equal(MB.discoverTx([EVENTS[2]], { kinds: ['settle'], owner: 'igor', known: [] }), 'fill-old');
+  assert.equal(MB.discoverTx(EVENTS, { kinds: ['transfer'], owner: 'igor', known: [] }), 'pay-1',
+    'and transfer_local is reached by its normalised name, not its feed name');
+});
+
+test('another customer transaction is never followed', () => {
+  const theirs = [{ type: 'settle:aapl:buy', tx: 'not-mine', ts: '2026-07-20T10:00:02Z', payer: 'coco', payee: 'coco' }];
+  assert.equal(MB.discoverTx(theirs, { kinds: ['settle'], owner: 'igor', known: [] }), null);
+  assert.equal(MB.discoverTx(theirs, { kinds: ['settle'], owner: 'coco', known: [] }), 'not-mine');
+});
+
+test('discovery does not need two machines to agree about the time', () => {
+  // the events carry the database clock and the caller has the browser one ·
+  // membership rather than comparison is why this works at all
+  const noClock = [{ type: 'relocate:depart', tx: 'leg-1', ts: 'not a date', payer: 'igor', payee: 'igor' }];
+  assert.equal(MB.discoverTx(noClock, { kinds: ['relocate'], owner: 'igor', known: [] }), 'leg-1');
+  assert.equal(MB.discoverTx([], { kinds: ['relocate'], owner: 'igor', known: [] }), null);
+});
+
+// ------------------------------------------- the follow loop, lifted and run
+/**
+ * The page's own follow, driven on a fake clock against a fake API.
+ *
+ * Not a source grep. This file has been bitten once by a test that read the
+ * page as text and went green BECAUSE of the regression it existed to catch, so
+ * what is asserted here is what the functions DO: how many times they poll, in
+ * what order, what they hand to the player, and whether a second action leaves
+ * the first one's retries alive behind it.
+ */
+function liftFollow(replies) {
+  const vm = require('node:vm');
+  let now = 10_000, seq = 0;
+  const timers = [];
+  const el = () => ({ style: {}, textContent: '', innerHTML: '', hidden: true,
+                      scrollIntoView() {}, classList: { contains: () => false } });
+  const ctx = {
+    MB, Date, Math, JSON, console, encodeURIComponent, String, Number,
+    // page state the lifted functions read and write as globals
+    followToken: 0, followTimer: null, followSteps: 0, followFind: null,
+    following: null, deepLinkTx: null, loopTimer: null,
+    activeTrace: null, selectionExplicit: false, latestEvents: [],
+    MAP: FOLLOW_MAP, pendingFollow: null,
+    // what the test watches
+    polled: [], rendered: [], played: [], captions: [], stopped: 0,
+    document: { querySelector: () => null, querySelectorAll: () => [] },
+    $: () => el(),
+    setTimeout: (fn, ms) => { timers.push({ id: ++seq, at: now + Math.max(0, ms), fn }); return seq; },
+    clearTimeout: id => { const i = timers.findIndex(t => t.id === id); if (i >= 0) timers.splice(i, 1); },
+    stopPlay: () => { ctx.stopped++; vm.runInContext('cancelFollow()', ctx); },
+    renderTrace: (tr, tx) => { ctx.activeTrace = tr; ctx.rendered.push(tx); },
+    playTrace: tr => ctx.played.push(tr.tx),
+    gShow: () => {},
+    setReplayable: () => {},
+    api: async path => {
+      const tx = decodeURIComponent(path.slice(path.indexOf('tx=') + 3));
+      ctx.polled.push(tx);
+      const list = replies[tx];
+      const nth = ctx.polled.filter(t => t === tx).length - 1;
+      if (!list) throw new Error('no such trace');
+      return { tx, steps: list[Math.min(nth, list.length - 1)] };
+    },
+  };
+  vm.createContext(ctx);
+  for (const name of ['cancelFollow', 'followStart', 'followTx', 'followPoll',
+                      'willFollow', 'followed']) {
+    const start = INDEX.search(new RegExp('(?:async )?function ' + name + '\\('));
+    assert.ok(start > 0, name + ' must exist as a top level function in the page');
+    const close = /\r?\n\}\r?\n/.exec(INDEX.slice(start));
+    assert.ok(close, name + ' must be top level to be liftable');
+    vm.runInContext(INDEX.slice(start, start + close.index + close[0].length), ctx);
+  }
+  ctx.start = spec => { ctx.spec = spec; return vm.runInContext('followStart(spec)', ctx); };
+  ctx.settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+  ctx.advance = async ms => {
+    const target = now + ms;
+    for (;;) {
+      const due = timers.filter(t => t.at <= target).sort((a, b) => a.at - b.at)[0];
+      if (!due) break;
+      timers.splice(timers.indexOf(due), 1);
+      now = due.at;
+      await due.fn();
+      await ctx.settle();
+    }
+    now = target;
+  };
+  ctx.pending = () => timers.length;
+  ctx.armed = () => timers.map(t => t.id);
+  return ctx;
+}
+
+const GROWING = [[], [LOCAL_DONE[0]], LOCAL_DONE.slice(0, 2), LOCAL_DONE];
+
+test('the follow WAITS for the trace, then plays it exactly once', async () => {
+  const ctx = liftFollow({ 'my-tx': GROWING });
+  await ctx.start({ tx: 'my-tx' });
+  await ctx.settle();
+  assert.deepEqual(ctx.played, [],
+    'the API answered on the local commit · the publish, the notification and ' +
+    'the arrival had not happened yet, so there was nothing complete to draw');
+  await ctx.advance(20_000);
+  assert.deepEqual(ctx.played, ['my-tx'],
+    'one play, once the journey is actually there · not one per poll');
+  assert.ok(ctx.polled.length >= 4, 'it kept looking: ' + ctx.polled.length + ' polls');
+  assert.ok(ctx.polled.length <= 12, 'and it did not spin: ' + ctx.polled.length + ' polls');
+  assert.equal(ctx.pending(), 0, 'nothing is left scheduled once it has played');
+});
+
+test('the followed transaction is SELECTED, not merely animated', async () => {
+  const ctx = liftFollow({ 'my-tx': GROWING });
+  await ctx.start({ tx: 'my-tx' });
+  await ctx.advance(20_000);
+  assert.ok(ctx.rendered.includes('my-tx'),
+    'renderTrace is what fills the panel and marks the matching row picked · ' +
+    'the reported bug is a transaction sitting in the list unselected');
+  assert.equal(ctx.selectionExplicit, true,
+    'and it is an EXPLICIT selection, so live traffic does not paint over it');
+  assert.equal(ctx.activeTrace.tx, 'my-tx');
+});
+
+test('a follow overrides a selection that was already open', async () => {
+  const ctx = liftFollow({ 'my-tx': [LOCAL_DONE, LOCAL_DONE] });
+  ctx.activeTrace = { tx: 'somebody-elses-settle', steps: [] };
+  ctx.selectionExplicit = true;
+  await ctx.start({ tx: 'my-tx' });
+  await ctx.advance(20_000);
+  assert.equal(ctx.activeTrace.tx, 'my-tx',
+    'this is the whole bug · an old settle:aapl:buy kept the panel and the map');
+  assert.deepEqual(ctx.played, ['my-tx']);
+});
+
+test('a second action supersedes the first and cancels its pending retries', async () => {
+  const ctx = liftFollow({ slow: [[], [], [], [], [], []], quick: [LOCAL_DONE] });
+  await ctx.start({ tx: 'slow' });
+  await ctx.advance(400);
+  const slowPolls = ctx.polled.filter(t => t === 'slow').length;
+  assert.ok(slowPolls >= 1, 'the first follow got going');
+  assert.equal(ctx.pending(), 1, 'exactly one retry is armed · never a fan of them');
+  const stale = ctx.armed();
+
+  await ctx.start({ tx: 'quick' });
+  assert.deepEqual(ctx.armed().filter(id => stale.includes(id)), [],
+    'the earlier follow\'s armed retry is CANCELLED the moment a second action ' +
+    'takes over · disowning it and leaving it to wake up is racing it, not stopping it');
+  await ctx.advance(20_000);
+  assert.equal(ctx.polled.filter(t => t === 'slow').length, slowPolls,
+    'and it polled no further');
+  assert.deepEqual(ctx.played, ['quick'], 'and only the newest action animated');
+  assert.equal(ctx.pending(), 0);
+});
+
+test('a trade is followed even though its id belongs to the order', async () => {
+  const ctx = liftFollow({ 'fill-new': [LOCAL_DONE] });
+  ctx.latestEvents = EVENTS;
+  await ctx.start({ find: { kinds: ['settle'], owner: 'igor', known: ['fill-old'] } });
+  await ctx.advance(20_000);
+  assert.deepEqual(ctx.played, ['fill-new'],
+    'the browser never sees the fill id · it is discovered from the feed');
+  assert.ok(ctx.rendered.includes('fill-new'));
+});
+
+test('running a tool follows what it created, and a failed tool follows nothing', () => {
+  const ctx = liftFollow({ made: [LOCAL_DONE] });
+  const started = [];
+  ctx.followStart = spec => started.push(spec && (spec.tx || 'find'));
+  const vm = require('node:vm');
+  // exactly the shape prodRun and actAllow use: the tool names its target as
+  // it mints the id, the caller hands the tool's own result back
+  ctx.tx = vm.runInContext('willFollow({ tx: "made" })', ctx);
+  assert.equal(ctx.tx, 'made', 'the id is handed straight back so it can be sent to the API');
+  vm.runInContext('followed("sent EUR 50 to oscar")', ctx);
+  assert.deepEqual(started, ['made']);
+
+  vm.runInContext('willFollow({ tx: "made" }); followed({ err: "insufficient funds" })', ctx);
+  assert.deepEqual(started, ['made'], 'a refused action created no transaction to watch');
+
+  vm.runInContext('followed("a success with nothing pending")', ctx);
+  assert.deepEqual(started, ['made'], 'and a stale target is never followed twice');
+});

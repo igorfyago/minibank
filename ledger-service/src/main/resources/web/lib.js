@@ -724,6 +724,159 @@
     return { pick: true, retry: false, reason: '' };
   }
 
+  // ============================================ the visitor's own transaction
+
+  var FOLLOW_TRIES = 10;        // ~9s of widening waits, then play what landed
+  var FOLLOW_BASE_MS = 120;
+  var FOLLOW_MAX_MS = 1500;
+
+  /** Widening, so the first look is quick and the last one is patient. */
+  function followWait(attempt) {
+    var n = Math.max(0, attempt || 0);
+    return Math.min(FOLLOW_MAX_MS, Math.round(FOLLOW_BASE_MS * Math.pow(1.6, n)));
+  }
+
+  /**
+   * What a half-arrived trace still OWES, read from the steps themselves.
+   *
+   * A departure with no arrival is a saga that is still moving. A publish with
+   * no notification still owes the second consumer group on that topic. Both
+   * are knowable without a clock and without counting, which matters because
+   * the alternative · "wait a fixed 800ms and hope" · is exactly the guess this
+   * file exists to replace.
+   */
+  function traceOwing(steps) {
+    var has = {};
+    for (var i = 0; i < steps.length; i++) has[stepName(steps[i].step)] = true;
+    var departed = !!has.depart;
+    var landed = !!(has.arrive || has.refund);
+    var published = !!has.published || !!has['published:settlements'];
+    var notified = !!has.notify;
+    return {
+      owed: (departed && !landed) || (published && !notified),
+      settled: notified && (landed || !departed),
+    };
+  }
+
+  /**
+   * WHAT TO DO WHILE THE TRANSACTION YOU JUST CAUSED COMES INTO EXISTENCE.
+   *
+   * autoPickPlan stands down whenever something is already selected, and that
+   * rule is right FOR AN AUTOMATIC PICK: a background poll must never yank the
+   * panel away from what the visitor chose to look at. An action the visitor
+   * PERFORMED is the opposite case, and the two were being treated the same.
+   * Asking Rita to send €50 and then watching the panel stay on an unrelated
+   * settlement from ten minutes ago, with the new payment sitting unselected in
+   * the list, is that confusion made visible. So the SOURCE of the intent is an
+   * input here: a user action supersedes any selection, an automatic one still
+   * yields to it. Weakening the auto-pick rule would have fixed the symptom by
+   * breaking the thing the rule is for.
+   *
+   * The second decision is the harder one. The transaction does not exist yet
+   * when the API answers. /api/transfer returns the moment the local commit
+   * succeeds; the relay publish, the notification and, across regions, the
+   * arrival land over the following hundreds of milliseconds, and
+   * /api/xray/trace initially returns one step or none. Firing once and
+   * animating that draws a third of a journey and calls it finished. So the
+   * caller polls and this decides whether what came back is worth playing:
+   *
+   *   OWED    known-incomplete from the steps · never play, keep waiting.
+   *   SETTLED notified, and either landed or never departed · play now.
+   *   STABLE  nothing owed and the step count did not move since the previous
+   *           poll. Nothing more is coming. This is the card hold and the
+   *           savings move, which write no outbox row and so are never
+   *           "settled" in the notified sense; without it they would sit out
+   *           every retry before drawing a journey that was ready immediately.
+   *
+   * When the retries do run out it plays whatever exists rather than giving up
+   * silently: a partial journey the visitor caused still beats a stranger's
+   * complete one, and the caption says which it is.
+   */
+  function followPlan(opts) {
+    var o = opts || {};
+    var steps = o.steps || [];
+    var attempt = o.attempt || 0;
+    var max = o.maxAttempts == null ? FOLLOW_TRIES : o.maxAttempts;
+    var user = o.source === 'user';
+
+    /* An automatic follow is a background poll wearing a different hat, and it
+       obeys the rule every automatic pick obeys. */
+    if (!user && o.hasSelection) {
+      return { supersede: false, select: false, play: false, partial: false,
+               retry: false, waitMs: 0, tries: 0,
+               reason: 'a selection outranks an automatic pick' };
+    }
+
+    var st = traceOwing(steps);
+    var drawable = steps.length > 0 && journey(steps, o.graph).hops.length > 0;
+    var stable = steps.length > 0 && steps.length === (o.prevCount || 0);
+    var complete = steps.length > 0 && !st.owed && (st.settled || stable);
+    var left = Math.max(0, max - attempt);
+
+    if (complete && drawable) {
+      return { supersede: true, select: true, play: true, partial: false,
+               retry: false, waitMs: 0, tries: left, reason: '' };
+    }
+    if (left > 0) {
+      return { supersede: true, select: steps.length > 0, play: false, partial: false,
+               retry: true, waitMs: followWait(attempt), tries: left - 1, reason: '' };
+    }
+    if (drawable) {
+      return { supersede: true, select: true, play: true, partial: true,
+               retry: false, waitMs: 0, tries: 0,
+               reason: 'still settling · this is what has landed so far' };
+    }
+    if (steps.length) {
+      return { supersede: true, select: true, play: false, partial: true,
+               retry: false, waitMs: 0, tries: 0,
+               reason: 'no map animation for this one · ' +
+                       steps.map(function (s) { return s.step; }).join(', ') +
+                       ' happens off this diagram' };
+    }
+    return { supersede: true, select: false, play: false, partial: false,
+             retry: false, waitMs: 0, tries: 0,
+             reason: 'no trace for this one yet · the bank committed it, the read model has not caught up' };
+  }
+
+  /**
+   * THE TRANSACTION A TRADE CREATES IS NOT THE ONE THE BROWSER MINTED.
+   *
+   * /api/trade is given a txId, but that id belongs to the ORDER. The venue
+   * fills it, publishes, and Products.settleFill claims the ledger transaction
+   * under the FILL id · a uuid this page has never seen. Following the order id
+   * would poll a trace that is never going to exist, so a trade is followed by
+   * DISCOVERY: the newest event of the right kind, belonging to this customer,
+   * that was not already in the feed when the action was taken. Relocation legs
+   * have the same shape, Relocation.java minting an id per leg.
+   *
+   * The gate is "was not there before" rather than a timestamp, deliberately.
+   * The events carry the DATABASE's clock and the comparison would be against
+   * the BROWSER's; two machines a second apart would make this match nothing,
+   * or match everything. Set membership needs no clocks to agree.
+   */
+  function discoverTx(events, opts) {
+    var o = opts || {};
+    var kinds = o.kinds || [];
+    var owner = o.owner == null ? null : String(o.owner);
+    var known = {};
+    (o.known || []).forEach(function (t) { known[String(t)] = true; });
+    var best = null, bestAt = 0;
+    (events || []).forEach(function (e) {
+      if (!e || !e.tx || known[String(e.tx)]) return;
+      var type = stepName(e.type);
+      var hit = kinds.some(function (k) { return type === k || type.indexOf(k + ':') === 0; });
+      if (!hit) return;
+      /* Whose transaction it is. The feed names the two sides by OWNER, and a
+         customer's product accounts carry their owner's name, so a savings move
+         or a settlement is matched by the same test as a payment. */
+      if (owner && String(e.payer) !== owner && String(e.payee) !== owner) return;
+      var at = new Date(e.ts).getTime();
+      if (!isFinite(at)) at = 0;
+      if (best === null || at > bestAt) { bestAt = at; best = e.tx; }
+    });
+    return best;
+  }
+
   /* A deep link is a request to SEE a thing, and the thing may be a specific
      transaction. `#xray` alone behaves as an ordinary tab switch. */
   var HASH_TABS = ['xray', 'quiz', 'console', 'app'];
@@ -774,6 +927,8 @@
     controlState: controlState,
     liveEventPolicy: liveEventPolicy,
     autoPickPlan: autoPickPlan,
+    followPlan: followPlan,
+    discoverTx: discoverTx,
     parseXrayHash: parseXrayHash,
     mapClickPlan: mapClickPlan,
     tabLeavePlan: tabLeavePlan,
