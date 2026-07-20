@@ -587,6 +587,56 @@
     return { hops: hops, lights: lights, unknown: unknown, total: Math.round(cursor) };
   }
 
+  // ================================================== the route, before it runs
+  /**
+   * WHERE THIS JOURNEY IS GOING, decided before anything moves.
+   *
+   * Selecting a transaction should mark the WHOLE route first, so the visitor
+   * can see where the money is about to go, and then watch each node and edge
+   * flip to reached as the ball actually arrives. The page used to guess the
+   * route from a hand written list:
+   *
+   *     ['api', regions.has('eu') && 'shard0', regions.has('uk') && 'shard1',
+   *      steps.some(s => s.step === 'published') && 'kafka', ...]
+   *
+   * which is a second, cruder copy of the topology that journey() already owns.
+   * A local transfer has one region and no `published` match after aliasing, so
+   * it marked api and shard0 and stopped · the reported "only the first two".
+   * A securities settlement marked exactly the same two and none of the five
+   * broker nodes it walks, because the list had never heard of them, and no
+   * edge was ever marked at all.
+   *
+   * So the prediction is DERIVED from the journey rather than restated. The
+   * predicted path and the animated path cannot disagree, because they are the
+   * same list read twice.
+   *
+   * Nodes come from the LIGHTS, not from the hops' endpoints, and that is the
+   * one subtle decision here. A hop's `from` includes the origin the walk
+   * starts at · the browser · and nothing ever ARRIVES there, so it never turns
+   * green. Marking it violet forever would leave a journey that finished with a
+   * node still saying "about to happen", which is exactly the disagreement this
+   * function exists to remove. What is planned is precisely what gets reached.
+   *
+   * A journey with no hops is not a route, so it plans nothing: an undrawable
+   * transaction must leave the map alone rather than mark a state node on its
+   * own.
+   */
+  function plannedPath(j) {
+    var src = j || {};
+    var hops = src.hops || [], lights = src.lights || [];
+    if (!hops.length) return { nodes: [], edges: [] };
+    var nodes = [], edges = [], seenNode = {}, seenEdge = {};
+    for (var i = 0; i < hops.length; i++) {
+      var e = hops[i] && hops[i].edge;
+      if (e && !seenEdge[e]) { seenEdge[e] = true; edges.push(e); }
+    }
+    for (var k = 0; k < lights.length; k++) {
+      var n = lights[k] && lights[k].node;
+      if (n && !seenNode[n]) { seenNode[n] = true; nodes.push(n); }
+    }
+    return { nodes: nodes, edges: edges };
+  }
+
   // ======================================================= what a click MEANS
   /*
    * SELECTING A TRANSACTION IS A REQUEST TO SEE IT MOVE.
@@ -731,6 +781,7 @@
     makeApi: makeApi,
     mapGraph: mapGraph,
     journey: journey,
+    plannedPath: plannedPath,
     stepName: stepName,
     panelLegend: panelLegend,
     parseProm: parseProm,

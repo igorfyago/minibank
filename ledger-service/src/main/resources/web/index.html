@@ -193,6 +193,16 @@
   .edge { stroke-dasharray:4 7; animation:dashflow 1.5s linear infinite; }
   @keyframes dashflow { to { stroke-dashoffset:-22; } }
   .node.onpath rect, .node.onpath ellipse, .node.onpath path { stroke:var(--violet); stroke-width:2.5; }
+  /* PLANNED · where this journey is ABOUT to go. Marked the instant a
+     transaction is selected, before anything moves, so the whole route is
+     readable up front rather than being discovered one lamp at a time. Violet
+     because that is the house token for "the system's own intent", and held at
+     a lower stroke-opacity than the reached green so the two never compete:
+     dim violet is a promise, solid green is a fact. stroke-opacity rather than
+     opacity, because dimming the whole <g> would take the label with it. */
+  .node.planned rect, .node.planned ellipse, .node.planned path {
+    stroke:var(--violet); stroke-width:2; stroke-opacity:.5;
+  }
   /* Where the money has already been. The bright .hot is the CURRENT step; this
      is the trail behind it, so a replay reads as a journey with a history
      rather than one lamp moving around in the dark. */
@@ -200,7 +210,7 @@
      click selection, so illumination had to leave that colour alone or the
      three would keep saying different things in the same voice. */
   .node.visited rect, .node.visited ellipse, .node.visited path {
-    stroke:var(--green); stroke-width:2; opacity:1;
+    stroke:var(--green); stroke-width:2; opacity:1; stroke-opacity:1;
   }
   .node.visited text { fill:var(--text); }
   .node.hot rect, .node.hot ellipse, .node.hot path { stroke:var(--green); stroke-width:3;
@@ -503,6 +513,13 @@
      that is not there. The only thing being drawn is the absence. */
   .edge.ghost { stroke:var(--dim); stroke-width:1.5; stroke-dasharray:2 6; opacity:.3;
     marker-end:none; animation:none; }
+  /* THE ROUTE, ON THE LINES AS WELL AS THE BOXES. A journey is edges and nodes,
+     and marking only the boxes said where the money stops without saying how it
+     gets between them · on the nine hop securities loop that is most of the
+     information. Same two states as a node, same two colours, so one glance
+     reads the whole thing: violet is still to come, green has happened. */
+  .edge.planned { stroke:var(--violet); stroke-width:2; opacity:.5; }
+  .edge.visited { stroke:var(--green); stroke-width:2.2; opacity:.95; }
   .xlegend { display:flex; flex-wrap:wrap; justify-content:center; gap:6px 18px;
     margin-top:9px; font-size:11px; color:var(--dim); line-height:1.5; }
   .xlg { display:inline-flex; align-items:flex-start; gap:8px; max-width:340px; text-align:left; }
@@ -1818,12 +1835,55 @@ const MAP_PAIRS = [
 ];
 const MAP = MB.mapGraph(MAP_PAIRS);
 
+/** Every mark a journey leaves on the map, gone. Both states, both kinds of
+ *  element · a route half cleared is a route that lies about the next one. */
+function clearRoute() {
+  document.querySelectorAll('.node.planned, .edge.planned')
+    .forEach(el => el.classList.remove('planned'));
+  document.querySelectorAll('.node.visited, .edge.visited')
+    .forEach(el => el.classList.remove('visited'));
+}
+
+/**
+ * MARK THE WHOLE ROUTE BEFORE ANYTHING MOVES.
+ *
+ * Selecting a transaction should answer "where is this going" immediately, and
+ * the animation should then answer "where has it got to". The route comes from
+ * MB.plannedPath, which reads the journey the animation is about to run, so the
+ * prediction and the performance are the same list. The old code here guessed
+ * instead, from a hand written set of region and step tests, and marked api and
+ * the one shard and nothing else · two boxes out of eight for a cross-region
+ * payment, two out of eight for a securities trade, and never an edge.
+ *
+ * Already-reached marks are LEFT ALONE. A journey that is mid-flight when the
+ * panel repaints (a live event selecting itself, a followed payment polling
+ * again) must not have its history rewound to violet · only the part that has
+ * not happened yet is a plan. Wiping is stopPlay's job, and stopPlay runs
+ * before every fresh selection and before every loop lap.
+ */
+function markPlanned(j) {
+  const p = MB.plannedPath(j);
+  p.nodes.forEach(n => {
+    const el = document.querySelector(`.node[data-node="${n}"]`);
+    if (el && !el.classList.contains('visited')) el.classList.add('planned');
+  });
+  p.edges.forEach(e => {
+    const el = document.querySelector(`.edge[data-edge="${e}"]`);
+    if (el && !el.classList.contains('visited')) el.classList.add('planned');
+  });
+  return p;
+}
+
 /** Draw a journey. Every timer is registered so stopPlay() can cancel it,
  *  which is what the old live path did not do: its setTimeouts outlived any
  *  attempt to stop them and landed on top of whatever was running next. */
 function runJourney(j) {
   j.hops.forEach(h => {
     pulse(h.edge, 'var(--accent)', h.start, h.end - h.start);
+    // the line goes green when the ball finishes crossing it, not when it sets
+    // off · an edge that greens on departure claims an arrival that has not
+    // happened, which is the same lie as a node lighting early
+    playTimers.push(setTimeout(() => reachEdge(h.edge), h.end));
   });
   j.lights.forEach(l => {
     playTimers.push(setTimeout(() => reach(l.node), l.at));
@@ -2572,13 +2632,32 @@ function renderTrace(tr, tx) {
       <b style="flex:none">${st.region}</b><span class="muted">${st.detail}</span>
       <span class="lat">${i === 0 ? new Date(st.ts).toLocaleTimeString() : '+' + dt + 'ms'}</span></div>`;
   }).join('');
-  const regions = new Set(tr.steps.map(s2 => s2.region));
-  document.querySelectorAll('.node').forEach(n => n.classList.remove('onpath'));
-  ['api', regions.has('eu') && 'shard0', regions.has('uk') && 'shard1',
-   tr.steps.some(s2 => s2.step === 'published') && 'kafka',
-   tr.steps.some(s2 => s2.step === 'arrive' || s2.step === 'refund') && 'applier',
-   regions.has('notifications') && 'notif'].filter(Boolean)
-    .forEach(nm => document.querySelector(`.node[data-node="${nm}"]`)?.classList.add('onpath'));
+  /* THE WHOLE ROUTE, MARKED THE MOMENT IT IS SELECTED.
+   *
+   * What stood here was a hand written guess at the path:
+   *
+   *   ['api', regions.has('eu') && 'shard0', regions.has('uk') && 'shard1',
+   *    steps.some(s => s.step === 'published') && 'kafka',
+   *    steps.some(s => s.step === 'arrive' || s.step === 'refund') && 'applier',
+   *    regions.has('notifications') && 'notif']
+   *
+   * a second copy of the topology, and a much worse one than MB.journey which
+   * was already deciding what the balls would do. It could name six nodes at
+   * most, out of the sixteen on this map, and it never named an edge. A local
+   * transfer therefore lit api and shard0 and stopped · the reported "only the
+   * first two". A securities settlement lit the same two and none of ksettle,
+   * brokercons, brokerdb, korders or settle, because the list had never heard
+   * of the broker at all. It could also mark a node the journey does not
+   * reach: `browser` and `caddy` were missing while `api` was unconditional.
+   *
+   * It is derived now. Same journey object the animation runs, so the violet
+   * route and the green one cannot disagree about where the money goes. */
+  /* The quiz marks nodes with `onpath`, in the same violet, to answer "which
+     boxes is this question about". Two violets meaning two different things is
+     one violet too many, so a selected transaction takes the map back · which
+     is what the removed block did too, as its first line. */
+  document.querySelectorAll('.node.onpath').forEach(n => n.classList.remove('onpath'));
+  markPlanned(MB.journey(tr.steps, MAP));
   return total;
 }
 
@@ -2660,8 +2739,14 @@ function stopPlay() {
   playTimers.forEach(clearTimeout); playTimers = []; following = null; playingUntil = 0;
   const layer = $('#pulse-layer');
   if (layer) while (layer.firstChild) layer.removeChild(layer.firstChild);
-  document.querySelectorAll('.node.visited, .node.hot, .node.hot-amber')
-    .forEach(el => el.classList.remove('visited', 'hot', 'hot-amber'));
+  document.querySelectorAll('.node.hot, .node.hot-amber')
+    .forEach(el => el.classList.remove('hot', 'hot-amber'));
+  /* THE PLAN GOES WITH THE JOURNEY. It used to be only `visited` that was
+     swept, which was complete while a route was the only thing a selection
+     drew. Now a selection also marks where the money is ABOUT to go, and a
+     violet route left behind describes a transaction that is no longer on
+     screen · the same class of stale mark, in the other colour. */
+  clearRoute();
   /* THE BAR AND THE BOX ARE PART OF THE JOURNEY, so they go with it.
      Stopping used to leave #play-fill frozen wherever its CSS transition had
      reached, so the next selection opened showing the previous transaction's
@@ -2809,12 +2894,25 @@ document.addEventListener('visibilitychange', () => {
   else if (looping && activeTrace) loopAgain();
 });
 
-/** Light a node, now, and leave it marked. */
+/** Light a node, now, and leave it marked.
+ *
+ * PLANNED comes OFF here rather than being left to lose a CSS cascade fight.
+ * Both classes carry the same specificity, so which one won would depend on
+ * their order in the stylesheet · a rule someone could reorder without knowing
+ * they had changed what the map means. The DOM says one thing at a time
+ * instead: still to come, or arrived. */
 function reach(nd, holdMs) {
   if (!nd) return;
   glow(nd, 'hot', Math.max(600, holdMs || 700));
   const el = document.querySelector(`.node[data-node="${nd}"]`);
-  if (el) el.classList.add('visited');
+  if (el) { el.classList.remove('planned'); el.classList.add('visited'); }
+}
+
+/** The same flip, for the line the ball just finished crossing. */
+function reachEdge(name) {
+  if (!name) return;
+  const el = document.querySelector(`.edge[data-edge="${name}"]`);
+  if (el) { el.classList.remove('planned'); el.classList.add('visited'); }
 }
 
 /* Money is in the pipe from departure until arrival, and during a replay the
@@ -2842,8 +2940,7 @@ function markStep(i) {
 }
 
 function playTrace(tr) {
-  stopPlay();
-  document.querySelectorAll('.node.visited').forEach(n => n.classList.remove('visited'));
+  stopPlay();                       // which now clears the route, both colours
   const steps = tr.steps; if (!steps || !steps.length) return;
 
   // Everything about WHAT happens and WHEN now comes from one pure function,
@@ -2866,6 +2963,12 @@ function playTrace(tr) {
     return;
   }
   setReplayable(true);
+  /* Re-plan, because stopPlay() above has just wiped the marks renderTrace
+     made. This is also what makes a LOOP legible: every lap begins from a
+     fully violet route and greens it again in order, rather than the second lap
+     starting on a map that is already entirely green and therefore says
+     nothing. */
+  markPlanned(j);
   runJourney(j);
   playingUntil = Date.now() + j.total + 400;
 

@@ -970,6 +970,375 @@ test('an unlisted asset animates rather than falling silent · the registry is a
     }
 });
 
+/* ==========================================================================
+ * THE PLANNED ROUTE · where the money is ABOUT to go.
+ *
+ * The reported bug: selecting a transaction lit a couple of boxes green and
+ * left the rest dark, so the map answered "where has it got to" without ever
+ * answering "where is it going". The page was marking the route from a hand
+ * written guess:
+ *
+ *   ['api', regions.has('eu') && 'shard0', regions.has('uk') && 'shard1',
+ *    steps.some(s => s.step === 'published') && 'kafka',
+ *    steps.some(s => s.step === 'arrive' || s.step === 'refund') && 'applier',
+ *    regions.has('notifications') && 'notif']
+ *
+ * a second, cruder copy of a topology MB.journey already owned. It could name
+ * six nodes out of sixteen and no edges at all, so a local transfer marked two
+ * boxes and a nine hop securities settlement marked the same two.
+ *
+ * MB.plannedPath derives the route from the journey instead. These tests are
+ * about the one property that matters and that a guess can never have: the
+ * predicted path and the animated path are the same path.
+ * ======================================================================== */
+
+/* What the ANIMATION actually marks, simulated from the journey.
+ *
+ * runJourney sets a timer per light that calls reach(l.node), and a timer per
+ * hop that calls reachEdge(h.edge) when the ball lands. So this is the honest
+ * answer to "which nodes and edges end up green", derived the same way the
+ * page derives it and NOT from plannedPath · a test where both sides come from
+ * the function under test proves only that it agrees with itself. */
+function animationMarks(j) {
+  return {
+    nodes: new Set(j.lights.map(l => l.node)),
+    edges: new Set(j.hops.map(h => h.edge)),
+  };
+}
+
+test('the planned route is exactly what the animation goes on to mark · no more, no less', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const c of CASES) {
+    const j = MB.journey(c.steps, g);
+    const ran = animationMarks(j);
+    const planned = MB.plannedPath(j);
+
+    for (const n of planned.nodes)
+      assert.ok(ran.nodes.has(n),
+        c.name + ': ' + n + ' is planned violet and no ball ever arrives there, ' +
+        'so it would sit unresolved after the journey finished');
+    for (const n of ran.nodes)
+      assert.ok(planned.nodes.includes(n),
+        c.name + ': ' + n + ' turns green having never been planned · the route ' +
+        'the visitor was shown was not the route that ran');
+    for (const e of planned.edges)
+      assert.ok(ran.edges.has(e), c.name + ': edge ' + e + ' planned, never travelled');
+    for (const e of ran.edges)
+      assert.ok(planned.edges.includes(e), c.name + ': edge ' + e + ' travelled, never planned');
+  }
+});
+
+test('a cross-region payment plans ALL of its route, not the first two boxes', () => {
+  // The reported symptom, stated as the number it should be. eu -> uk is eight
+  // boxes and seven lines; the old guess named api and shard0 and stopped.
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const cross = CASES.find(c => c.name === 'cross-region eu to uk, igor to coco');
+  assert.ok(cross, 'the cross-region row must be in CASES');
+  const p = MB.plannedPath(MB.journey(cross.steps, g));
+
+  assert.deepEqual(p.nodes.slice().sort(),
+    ['api', 'applier', 'caddy', 'intransit', 'kafka', 'notif', 'shard0', 'shard1'],
+    'every box the saga touches, including the in-flight state and the notifier');
+  assert.deepEqual(p.edges.slice().sort(),
+    ['api_shard0', 'applier_shard1', 'browser_caddy', 'caddy_api',
+     'kafka_applier', 'kafka_notif', 'shard0_kafka'],
+    'and every line between them · the old code marked no edges whatsoever');
+});
+
+test('a securities trade plans the whole broker loop · the boxes nothing used to mark', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const buy = CASES.find(c => c.name === 'buy AAPL settled in eu, the whole securities loop');
+  assert.ok(buy, 'the trade row must be in CASES');
+  const p = MB.plannedPath(MB.journey(buy.steps, g));
+
+  assert.deepEqual(p.nodes.slice().sort(),
+    ['api', 'brokercons', 'brokerdb', 'caddy', 'korders', 'ksettle', 'settle', 'shard0']);
+  assert.deepEqual(p.edges.slice().sort(),
+    ['api_shard0', 'brokercons_brokerdb', 'brokerdb_korders', 'browser_caddy',
+     'caddy_api', 'korders_settle', 'ksettle_brokercons', 'settle_shard0',
+     'shard0_ksettle'],
+    'nine hops, nine planned lines');
+  for (const n of ['ksettle', 'brokercons', 'brokerdb', 'korders', 'settle'])
+    assert.ok(p.nodes.includes(n),
+      n + ' is on the route and the old guess had never heard of it');
+});
+
+test('ONE step that expands to NINE hops plans all nine · the screenshotted bug', () => {
+  /* The exact trace the owner photographed: a settle:btc:buy with "1 recorded
+   * steps, 0ms end to end". Before the animation, two boxes were violet · API
+   * and the eu database · and after it, seven were green. The prediction and
+   * the performance disagreed by five boxes.
+   *
+   * This case is the one that exposes it, and a payment would have hidden it: a
+   * payment is three steps and about three hops, so anything counting steps
+   * lands close enough to look right. A trade is ONE step carrying the entire
+   * nine hop saga, so the two numbers are 1 and 9 and there is nowhere to hide.
+   *
+   * The step count is asserted first, because it is the premise. If the trace
+   * endpoint ever starts recording a step per leg this test still holds, but it
+   * would no longer be testing what it was written for.
+   */
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const btc = CASES.find(c => c.name === 'an asset nobody hardcoded, because the registry is a table');
+  assert.ok(btc, 'the settle:btc:buy row must be in CASES');
+  assert.equal(btc.steps.length, 1, 'the premise: the server records ONE step for a trade');
+  assert.equal(btc.steps[0].step, 'settle:btc:buy');
+
+  const j = MB.journey(btc.steps, g);
+  assert.equal(j.hops.length, 9, 'and that one step expands to the whole saga');
+
+  const p = MB.plannedPath(j);
+  assert.equal(p.edges.length, 9, 'nine hops must plan nine lines, not one');
+  assert.deepEqual(p.nodes.slice().sort(),
+    ['api', 'brokercons', 'brokerdb', 'caddy', 'korders', 'ksettle', 'settle', 'shard0'],
+    'eight boxes · the version that read the STEP list marked api and shard0 and stopped');
+  // stated as the delta, so the failure message names the missing boxes
+  assert.deepEqual(p.nodes.filter(n => n !== 'api' && n !== 'shard0').sort(),
+    ['brokercons', 'brokerdb', 'caddy', 'korders', 'ksettle', 'settle'],
+    'the six boxes the screenshot showed dark before the animation and green after');
+});
+
+test('the origin is not planned, because nothing ever arrives there to green it', () => {
+  // The browser is where the walk STARTS. A violet mark on it would still be
+  // violet when the journey finished, which is the one thing the two states
+  // must never say together: planned means about to happen.
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const c of CASES) {
+    const j = MB.journey(c.steps, g);
+    const p = MB.plannedPath(j);
+    const arrivals = new Set(j.lights.map(l => l.node));
+    for (const n of p.nodes)
+      assert.ok(arrivals.has(n), c.name + ': ' + n + ' would never resolve to green');
+  }
+  const local = MB.plannedPath(MB.journey(CASES[0].steps, g));
+  assert.ok(!local.nodes.includes('browser'), 'the origin is where you are, not where you are going');
+  assert.ok(local.edges.includes('browser_caddy'), 'but the line leaving it is still travelled');
+});
+
+test('a journey the map cannot draw plans NOTHING, rather than a partial route', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const undrawable = MB.journey([{ step: 'teleport', region: 'eu' }], g);
+  assert.equal(undrawable.hops.length, 0, 'the premise: this really is undrawable');
+  assert.deepEqual(MB.plannedPath(undrawable), { nodes: [], edges: [] });
+
+  // and the degenerate inputs, because this runs on whatever a selection produced
+  assert.deepEqual(MB.plannedPath(undefined), { nodes: [], edges: [] });
+  assert.deepEqual(MB.plannedPath({}), { nodes: [], edges: [] });
+  assert.deepEqual(MB.plannedPath({ hops: [], lights: [{ node: 'intransit', at: 0, reason: 'state' }] }),
+    { nodes: [], edges: [] },
+    'no hops is no route · a state light on its own must not mark a lone box');
+});
+
+test('the planned route names each node and each edge once, however often it is walked', () => {
+  // A bounce publishes twice and notifies twice, so shard0_kafka and kafka_notif
+  // are genuinely travelled twice. That is two balls and one line.
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const c of CASES) {
+    const p = MB.plannedPath(MB.journey(c.steps, g));
+    assert.equal(new Set(p.nodes).size, p.nodes.length, c.name + ': a node planned twice');
+    assert.equal(new Set(p.edges).size, p.edges.length, c.name + ': an edge planned twice');
+  }
+  const bounce = CASES.find(c => c.name === 'bounced saga, the refund path');
+  const j = MB.journey(bounce.steps, g);
+  assert.ok(j.hops.filter(h => h.edge === 'kafka_notif').length === 2, 'the premise: it notifies twice');
+  assert.equal(MB.plannedPath(j).edges.filter(e => e === 'kafka_notif').length, 1);
+});
+
+test('the same journey always plans the same route', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const c of CASES) {
+    const j = MB.journey(c.steps, g);
+    assert.deepEqual(MB.plannedPath(j), MB.plannedPath(j), c.name);
+  }
+});
+
+test('every planned node and edge exists on the map, or the mark lands on nothing', () => {
+  // querySelector returns null and classList.add is never reached, silently.
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const nodes = drawnNodes(), edges = drawnEdges();
+  for (const c of CASES) {
+    const p = MB.plannedPath(MB.journey(c.steps, MAP_GRAPH_FROM_PAGE()));
+    for (const n of p.nodes) assert.ok(nodes.has(n), c.name + ': no data-node="' + n + '" on the map');
+    for (const e of p.edges) assert.ok(edges.has(e), c.name + ': no data-edge="' + e + '" on the map');
+  }
+  assert.ok(g, 'the fixture graph is still built, so the two stay comparable');
+});
+
+/* ==========================================================================
+ * AND THE PAGE ACTUALLY DOES IT.
+ *
+ * plannedPath being right is half of it. The other half is the renderer, and
+ * the temptation here is to grep index.html for the word "planned" · which is
+ * exactly the mistake that once made a guard go GREEN on the commit that
+ * reintroduced the bug it existed to catch. So the real functions are lifted
+ * out of the page and run against a fake map, and what is asserted is which
+ * classes end up on which elements.
+ * ======================================================================== */
+function fakeMap(nodeIds, edgeIds) {
+  const mk = (kind, id) => {
+    const cls = new Set([kind]);
+    return { kind, id, cls, classList: {
+      add: c => cls.add(c), remove: c => cls.delete(c), contains: c => cls.has(c) } };
+  };
+  const els = nodeIds.map(n => mk('node', n)).concat(edgeIds.map(e => mk('edge', e)));
+  const matches = (el, sel) => sel.trim().slice(1).split('.').every(c => el.cls.has(c));
+  return {
+    els,
+    document: {
+      querySelector: sel => {
+        const m = /^\.(node|edge)\[data-(?:node|edge)="([^"]+)"\]$/.exec(sel);
+        return m ? (els.find(el => el.kind === m[1] && el.id === m[2]) || null) : null;
+      },
+      querySelectorAll: sel => els.filter(el => sel.split(',').some(s => matches(el, s))),
+    },
+    marked: cls => els.filter(el => el.cls.has(cls)).map(el => el.id).sort(),
+  };
+}
+
+/** Run the page's own top level functions in a vm, over a fake map. */
+function liftMapMarking(dom) {
+  const vm = require('node:vm');
+  const ctx = { MB, document: dom.document, setTimeout: () => 0, console };
+  vm.createContext(ctx);
+  for (const name of ['clearRoute', 'markPlanned', 'glow', 'reach', 'reachEdge']) {
+    const start = INDEX.indexOf('function ' + name + '(');
+    assert.ok(start > 0, name + ' must exist as a top level function in the page');
+    const close = /\r?\n\}\r?\n/.exec(INDEX.slice(start));
+    assert.ok(close, name + ' must be top level to be liftable');
+    vm.runInContext(INDEX.slice(start, start + close.index + close[0].length), ctx);
+  }
+  return {
+    plan: j => { ctx.j = j; return vm.runInContext('markPlanned(j)', ctx); },
+    reach: n => { ctx.n = n; vm.runInContext('reach(n)', ctx); },
+    reachEdge: e => { ctx.e = e; vm.runInContext('reachEdge(e)', ctx); },
+    clear: () => vm.runInContext('clearRoute()', ctx),
+  };
+}
+
+function pageMap() {
+  return fakeMap([...drawnNodes()], [...drawnEdges()]);
+}
+/* The page's own MAP_PAIRS, so the marking test runs on the real topology
+   rather than on the fixture copy of it. The two are already policed against
+   each other by the three-copies tests above. */
+function MAP_GRAPH_FROM_PAGE() {
+  const block = INDEX.slice(INDEX.indexOf('const MAP_PAIRS'), INDEX.indexOf('const MAP ='));
+  const pairs = [...block.matchAll(/\['([a-z0-9]+)', '([a-z0-9]+)'\]/g)].map(m => [m[1], m[2]]);
+  assert.ok(pairs.length > 10, 'MAP_PAIRS must be parseable, or this test proves nothing');
+  return MB.mapGraph(pairs);
+}
+
+test('selecting marks the WHOLE route planned, before a single ball moves', () => {
+  const dom = pageMap(), map = liftMapMarking(dom);
+  const cross = CASES.find(c => c.name === 'cross-region eu to uk, igor to coco');
+  const j = MB.journey(cross.steps, MAP_GRAPH_FROM_PAGE());
+
+  map.plan(j);
+  assert.deepEqual(dom.marked('planned'),
+    ['api', 'api_shard0', 'applier', 'applier_shard1', 'browser_caddy', 'caddy',
+     'caddy_api', 'intransit', 'kafka', 'kafka_applier', 'kafka_notif', 'notif',
+     'shard0', 'shard0_kafka', 'shard1'].sort(),
+    'the whole route, boxes and lines, marked at selection time');
+  assert.deepEqual(dom.marked('visited'), [],
+    'and NOTHING is green yet · green is a claim that the money has arrived');
+});
+
+test('the screenshotted trade marks eight boxes at selection, not two', () => {
+  // The page half of the case above, driven through the page's own marking
+  // functions on the page's own topology.
+  const dom = pageMap(), map = liftMapMarking(dom);
+  const j = MB.journey([{ step: 'settle:btc:buy', region: 'eu' }], MAP_GRAPH_FROM_PAGE());
+  map.plan(j);
+
+  const boxes = dom.els.filter(el => el.kind === 'node' && el.cls.has('planned')).map(el => el.id).sort();
+  assert.deepEqual(boxes,
+    ['api', 'brokercons', 'brokerdb', 'caddy', 'korders', 'ksettle', 'settle', 'shard0'],
+    'the screenshot showed api and shard0 violet and the other six dark');
+  assert.equal(dom.els.filter(el => el.kind === 'edge' && el.cls.has('planned')).length, 9,
+    'and no line was marked at all');
+  assert.deepEqual(dom.marked('visited'), [], 'nothing green before the balls move');
+});
+
+test('each node and edge flips planned -> reached as the ball gets there, in order', () => {
+  const dom = pageMap(), map = liftMapMarking(dom);
+  const trade = CASES.find(c => c.name === 'buy AAPL settled in eu, the whole securities loop');
+  const j = MB.journey(trade.steps, MAP_GRAPH_FROM_PAGE());
+  const p = map.plan(j);
+
+  // replay the journey in the order runJourney's timers would fire
+  const events = j.hops.map(h => ({ at: h.end, run: () => map.reachEdge(h.edge) })
+    ).concat(j.lights.map(l => ({ at: l.at, run: () => map.reach(l.node) })))
+     .sort((a, b) => a.at - b.at);
+
+  let seen = 0;
+  for (const ev of events) {
+    ev.run(); seen++;
+    // whatever has already arrived is green and no longer violet, and the rest
+    // of the route is still violet · never both, never neither
+    for (const el of dom.els) {
+      const onRoute = p.nodes.includes(el.id) || p.edges.includes(el.id);
+      if (!onRoute) continue;
+      assert.ok(el.cls.has('planned') !== el.cls.has('visited'),
+        `after ${seen} arrivals, ${el.id} is both planned and reached, or neither`);
+    }
+  }
+
+  assert.deepEqual(dom.marked('visited'), [...p.nodes, ...p.edges].sort(),
+    'at the end the whole route is green');
+  assert.deepEqual(dom.marked('planned'), [], 'and nothing is left saying "about to happen"');
+});
+
+test('a repaint mid-flight re-plans only what has NOT happened yet', () => {
+  // renderTrace runs again while a journey is in the air · a live event
+  // selecting itself, a followed payment polling. Rewinding the green part back
+  // to violet would claim the money un-arrived.
+  const dom = pageMap(), map = liftMapMarking(dom);
+  const cross = CASES.find(c => c.name === 'cross-region eu to uk, igor to coco');
+  const j = MB.journey(cross.steps, MAP_GRAPH_FROM_PAGE());
+  map.plan(j);
+  map.reach('caddy'); map.reachEdge('browser_caddy');
+
+  map.plan(j);
+  assert.deepEqual(dom.marked('visited'), ['browser_caddy', 'caddy'],
+    'what has arrived stays arrived across a repaint');
+  assert.ok(!dom.document.querySelector('.node[data-node="caddy"]').cls.has('planned'));
+});
+
+test('stopping clears BOTH colours, so the next selection starts on an empty map', () => {
+  const dom = pageMap(), map = liftMapMarking(dom);
+  const j = MB.journey(CASES[2].steps, MAP_GRAPH_FROM_PAGE());
+  map.plan(j);
+  map.reach('caddy'); map.reachEdge('browser_caddy');
+  assert.ok(dom.marked('planned').length > 0 && dom.marked('visited').length > 0, 'the premise');
+
+  map.clear();
+  assert.deepEqual(dom.marked('planned'), [], 'a violet route left behind describes a transaction that is gone');
+  assert.deepEqual(dom.marked('visited'), [], 'and so does a green one');
+});
+
+test('a LOOP lap starts fully planned again, so the second lap is as legible as the first', () => {
+  // playTrace calls stopPlay (which clears) and then markPlanned before
+  // runJourney. Without the re-plan a lap would begin on a map that is already
+  // entirely green and therefore says nothing at all.
+  const dom = pageMap(), map = liftMapMarking(dom);
+  const j = MB.journey(CASES[2].steps, MAP_GRAPH_FROM_PAGE());
+  const p = map.plan(j);
+  [...p.nodes].forEach(map.reach); [...p.edges].forEach(map.reachEdge);
+  assert.deepEqual(dom.marked('planned'), [], 'lap one finished green');
+
+  map.clear(); map.plan(j);                        // what playTrace does per lap
+  assert.deepEqual(dom.marked('planned'), [...p.nodes, ...p.edges].sort(),
+    'lap two begins from a fully violet route');
+  assert.deepEqual(dom.marked('visited'), []);
+});
+
+test('an undrawable selection leaves the map completely unmarked', () => {
+  const dom = pageMap(), map = liftMapMarking(dom);
+  map.plan(MB.journey([{ step: 'teleport', region: 'eu' }], MAP_GRAPH_FROM_PAGE()));
+  assert.deepEqual(dom.marked('planned'), []);
+  assert.deepEqual(dom.marked('visited'), []);
+});
+
 /**
  * THE LIVE PATH, which is a different path from the replay.
  *
