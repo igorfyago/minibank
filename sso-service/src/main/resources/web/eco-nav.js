@@ -26,13 +26,21 @@
    * and another breakpoint says nav{display:none}), and a shared bar cannot
    * assume anything about the page it lands on. Cosmetics stay in the
    * stylesheet, where #eco-nav outranks any element or class rule. */
+  /* One geometry for every host. --eco-nav-h lets host subheaders do
+   * top: var(--eco-nav-h, 48px) so sticky bars ride under the estate bar. */
+  var NAV_H = 48;
   var GEOMETRY = 'position:fixed;top:0;left:0;right:0;bottom:auto;' +
-    'width:auto;height:auto;min-width:0;max-width:none;margin:0;' +
+    'width:auto;height:' + NAV_H + 'px;min-width:0;max-width:none;margin:0;' +
     'display:flex;flex-direction:row;align-items:center;gap:4px;' +
-    'padding:8px 20px;z-index:2147483000;overflow:visible;transform:none;';
+    'padding:0 20px;z-index:2147483000;overflow:visible;transform:none;';
 
   var CSS = [
-    '#eco-nav{background:rgba(13,17,23,.95);backdrop-filter:blur(12px);',
+    ':root{--eco-nav-h:' + NAV_H + 'px}',
+    /* Reserve the band BEFORE first paint: the page never shifts when the
+     * bar lands. Padding on html (not body) so hosts with their own
+     * body margin/padding reset don't drop the reservation. */
+    'html{padding-top:var(--eco-nav-h) !important}',
+    '#eco-nav{top:0;background:rgba(13,17,23,.95);backdrop-filter:blur(12px);',
     'border-bottom:1px solid #21262d;box-sizing:border-box;',
     "font:13px/1.5 system-ui,'Segoe UI',sans-serif}",
     '#eco-nav .eco-brand{color:#e6edf3;font-weight:650;margin-right:12px;text-decoration:none}',
@@ -41,14 +49,14 @@
     'border-radius:999px;transition:all .2s}',
     '#eco-nav .eco-tab:hover{color:#e6edf3;background:#21262d}',
     '#eco-nav .eco-tab.active{color:#58a6ff;background:rgba(88,166,255,.1)}',
+    /* Fixed min-width so the Sign-in -> avatar swap never reseats the bar */
     '#eco-nav .eco-user{margin-left:auto;color:#8b949e;font-size:12px;',
-    'display:flex;align-items:center;gap:8px}',
+    'display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:140px}',
     '#eco-nav .eco-user a{color:#58a6ff;text-decoration:none}',
     '#eco-nav .eco-user a:hover{text-decoration:underline}',
     '#eco-nav .eco-avatar{width:24px;height:24px;border-radius:50%;',
     'background:#58a6ff;color:#fff;display:flex;align-items:center;',
-    'justify-content:center;font-size:11px;font-weight:600}',
-    'body{padding-top:48px !important}'
+    'justify-content:center;font-size:11px;font-weight:600}'
   ].join('');
 
   function build() {
@@ -88,23 +96,20 @@
     nav.appendChild(user);
 
     document.body.insertBefore(nav, document.body.firstChild);
-    seat(nav);
     paintUser(user, nav);
   }
 
-  /* Push the page down by the bar's MEASURED height: hosts bring their own
-   * font metrics, so a constant clearance under- or over-shoots. */
-  function seat(nav) {
-    var h = nav.offsetHeight;
-    if (h > 0) document.body.style.setProperty('padding-top', h + 'px', 'important');
-  }
+  /* The band is reserved by the stylesheet (html{padding-top}), and the bar's
+   * height is a constant — no measuring, no re-seating, no layout churn. */
+  function seat(nav) {}
 
   function signInLink() {
     return '<a href="' + API + '/login?next=' + encodeURIComponent(location.href) + '">Sign in</a>';
   }
 
+  /* Stable placeholder so the async /users/me paint never moves anything. */
   function paintUser(widget, nav) {
-    var done = function () { seat(nav); };
+    var done = function () {};
     var token = localStorage.getItem(TOKEN_KEY);
     if (!token) { widget.innerHTML = signInLink(); done(); return; }
 
