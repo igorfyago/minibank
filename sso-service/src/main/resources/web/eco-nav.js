@@ -19,11 +19,20 @@
     { id: 'obs',    label: 'Agents', href: 'https://obs.b4rruf3t.com' }
   ];
 
+  /* The bar is a DIV, not a <nav>, and its geometry rides inline on the
+   * element: host pages style bare element selectors (the desk keeps
+   * nav{position:fixed;inset:0 auto 0 0;width:58px} for its mobile drawer,
+   * and another breakpoint says nav{display:none}), and a shared bar cannot
+   * assume anything about the page it lands on. Cosmetics stay in the
+   * stylesheet, where #eco-nav outranks any element or class rule. */
+  var GEOMETRY = 'position:fixed;top:0;left:0;right:0;bottom:auto;' +
+    'width:auto;height:auto;min-width:0;max-width:none;margin:0;' +
+    'display:flex;flex-direction:row;align-items:center;gap:4px;' +
+    'padding:8px 20px;z-index:2147483000;overflow:visible;transform:none;';
+
   var CSS = [
-    '#eco-nav{position:fixed;top:0;left:0;right:0;z-index:1000;',
-    'background:rgba(13,17,23,.95);backdrop-filter:blur(12px);',
-    'border-bottom:1px solid #21262d;padding:8px 20px;',
-    'display:flex;align-items:center;gap:4px;',
+    '#eco-nav{background:rgba(13,17,23,.95);backdrop-filter:blur(12px);',
+    'border-bottom:1px solid #21262d;box-sizing:border-box;',
     "font:13px/1.5 system-ui,'Segoe UI',sans-serif}",
     '#eco-nav .eco-brand{color:#e6edf3;font-weight:650;margin-right:12px;text-decoration:none}',
     '#eco-nav .eco-brand:hover{color:#58a6ff}',
@@ -48,8 +57,11 @@
     style.textContent = CSS;
     document.head.appendChild(style);
 
-    var nav = document.createElement('nav');
+    var nav = document.createElement('div');
     nav.id = 'eco-nav';
+    nav.setAttribute('role', 'navigation');
+    nav.setAttribute('aria-label', 'b4rruf3t estate');
+    nav.style.cssText = GEOMETRY;
 
     var brand = document.createElement('a');
     brand.className = 'eco-brand';
@@ -75,16 +87,25 @@
     nav.appendChild(user);
 
     document.body.insertBefore(nav, document.body.firstChild);
-    paintUser(user);
+    seat(nav);
+    paintUser(user, nav);
+  }
+
+  /* Push the page down by the bar's MEASURED height: hosts bring their own
+   * font metrics, so a constant clearance under- or over-shoots. */
+  function seat(nav) {
+    var h = nav.offsetHeight;
+    if (h > 0) document.body.style.setProperty('padding-top', h + 'px', 'important');
   }
 
   function signInLink() {
     return '<a href="' + API + '/login?next=' + encodeURIComponent(location.href) + '">Sign in</a>';
   }
 
-  function paintUser(widget) {
+  function paintUser(widget, nav) {
+    var done = function () { seat(nav); };
     var token = localStorage.getItem(TOKEN_KEY);
-    if (!token) { widget.innerHTML = signInLink(); return; }
+    if (!token) { widget.innerHTML = signInLink(); done(); return; }
 
     fetch(API + '/v1/users/me', { headers: { 'Authorization': 'Bearer ' + token } })
       .then(function (r) {
@@ -112,8 +133,9 @@
         out.textContent = 'Sign out';
         out.onclick = function () { window.ecoLogout(); return false; };
         widget.replaceChildren(avatar, label, out);
+        done();
       })
-      .catch(function () { widget.innerHTML = signInLink(); });
+      .catch(function () { widget.innerHTML = signInLink(); done(); });
   }
 
   function refreshToken() {
