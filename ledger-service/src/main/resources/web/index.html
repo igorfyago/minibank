@@ -686,6 +686,14 @@
   <h1 id="homelink">mini<span>bank</span></h1>
   <nav>
     <button class="tab-btn on" data-tab="app">App</button>
+    <!-- Invest sits beside App, not inside it. Until now the only door to the
+         broker was a button inside the Investments tile, which you had to know
+         to expand: someone who came here to trade had nowhere to click. App and
+         Invest are the two things a CUSTOMER does; X-ray, Console, Quiz and
+         Show are how the thing works. An anchor rather than a tab because the
+         broker is a separate service on its own origin, which is what keeps its
+         four fetches same-origin against itself. -->
+    <a class="tab-btn" id="nav-invest" href="/portfolio">Invest</a>
     <button class="tab-btn" data-tab="xray">X-ray</button>
     <button class="tab-btn" data-tab="console">Console</button>
     <button class="tab-btn" data-tab="quiz">Quiz</button>
@@ -1279,6 +1287,12 @@ async function loadAccounts() {
   const mine = accounts.find(a => a.id === me);
   $('#balance').textContent = mine ? fmt(mine.balance) : '·';
   $('#acct-label').textContent = mine ? `Main · EUR · ${mine.region} region` : 'Main · EUR';
+  // The broker defaults to customer 10 when asked without one, so a link that
+  // forgets this lands the visitor in somebody else's portfolio. brokerHref
+  // already carries it; the nav just has to be told each time the customer
+  // changes, which switchUser does by calling straight back through here.
+  const invest = $('#nav-invest');
+  if (invest && me !== null) invest.href = brokerHref(me);
   // The "To" dropdown is inside a 2s poll. Repainting a <select> with
   // innerHTML throws away its <option> nodes and the selection collapses to
   // the first entry, so picking coco reverted to oscar seconds later. Repaint
