@@ -1,7 +1,11 @@
 package dev.minibank.broker;
 
+import dev.minibank.ledger.BankAuth;
 import dev.minibank.ledger.OutboxRelay;
 import dev.minibank.ledger.Shards;
+import dev.minibank.ledger.SsoIdentity;
+
+import java.util.Optional;
 
 /**
  * THE BROKER, AS ITS OWN PROCESS.
@@ -66,7 +70,24 @@ public final class BrokerService {
 
         BrokerPort venue = venueFromEnv();
         Broker broker = new Broker(venue);
-        new BrokerApi(broker).start(port);
+
+        // SSO counts here now. The broker shipped ANONYMOUS, so caller() always
+        // fell to the ?customer= param · a read-anybody's-book IDOR the instant a
+        // token can name someone. A BankAuth turns a valid token (audience
+        // bank.b4rruf3t.com; the estate's shared directory maps its subject to a
+        // customer) into that customer's id, and the two-arg BrokerApi makes the
+        // token win over the parameter. Still permissive: no token, no identity,
+        // and the four demo accounts behave exactly as before. Enforcement · the
+        // day the param is refused on a private book · stays a separate decision.
+        //
+        // This is the adapter CallerIdentity's own javadoc sketched, now that
+        // the shared validator is a resolvable artifact rather than in flight.
+        SsoIdentity auth = new BankAuth(
+                System.getenv().getOrDefault("SSO_ISSUER", BankAuth.DEFAULT_ISSUER));
+        CallerIdentity who = header ->
+                (auth.verdict(header) instanceof SsoIdentity.Verdict.Known k && k.customerId() != null)
+                        ? Optional.of(k.customerId()) : Optional.empty();
+        new BrokerApi(broker, who).start(port);
 
         // one relay, pointed at THIS service's outbox · the ledger will
         // settle the cash leg from the far side of the topic

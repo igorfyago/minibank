@@ -287,10 +287,55 @@ function esc(s) {
  *  Its idiom for "we do not know" is plain dim text, so that is what this is. */
 const NA = why => `<span class="muted" title="${esc(why)}">not available</span>`;
 
-/** Identity, the permissive way: a bearer token wins server-side, and with
- *  none the query string stands. Same fallback as the rest of the estate. */
+/** Identity, the permissive way. A bearer token wins server-side; with none
+ *  the query string stands. What was missing was the token ever ARRIVING: this
+ *  subdomain's localStorage starts empty, so until now the server only ever saw
+ *  the ?customer= param, which is why any id in the URL was honoured.
+ *
+ *  ensureToken() below fixes that. The estate cookie (Domain=.b4rruf3t.com,
+ *  HttpOnly) rides in on its own; one credentialed refresh trades it for an
+ *  access token for THIS origin, and api() carries it. The server then reads
+ *  the customer from the TOKEN and ignores the URL param, so a signed-in person
+ *  sees THEIR book and no one else's, whatever they type in the address bar.
+ *
+ *  Nothing is required. No session means the refresh just fails and every
+ *  request goes out exactly as before, on the param the four demo accounts are
+ *  still explored through. A token only ever ADDS identity. */
 const params   = new URLSearchParams(location.search);
-const customer = params.get('customer') || '10';
+let   customer = params.get('customer') || '10';
+
+const AUTH_ORIGIN = location.hostname.startsWith('broker.')
+  ? location.protocol + '//auth.' + location.hostname.slice('broker.'.length)
+  : 'https://auth.b4rruf3t.com';       // local dev has no auth · refresh fails, param stands
+let _tokenWait = null;
+function _tokenFresh(t) {
+  try {
+    const exp = JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).exp || 0;
+    return exp * 1000 > Date.now() + 60000;      // a minute of slack, never send a token about to lapse
+  } catch { return false; }
+}
+async function ensureToken() {
+  const have = localStorage.getItem('b4rruf3t_token');
+  if (have && _tokenFresh(have)) return have;
+  // one refresh in flight at a time, so a page full of tiles firing at once
+  // does not stampede the auth service with the same cookie
+  if (!_tokenWait) _tokenWait = (async () => {
+    try {
+      const stored = localStorage.getItem('b4rruf3t_refresh');
+      const r = await fetch(AUTH_ORIGIN + '/v1/tokens/refresh', {
+        method: 'POST', credentials: 'include',       // the estate cookie · the whole point
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stored ? { refresh_token: stored } : {}),
+      });
+      if (!r.ok) return null;
+      const d = await r.json();
+      if (d.access_token) localStorage.setItem('b4rruf3t_token', d.access_token);
+      if (d.refresh_token) localStorage.setItem('b4rruf3t_refresh', d.refresh_token);
+      return d.access_token || null;
+    } catch { return null; } finally { _tokenWait = null; }
+  })();
+  return _tokenWait;
+}
 
 const $ = id => document.getElementById(id);
 let open = null;      // symbol of the expanded tile
@@ -320,6 +365,13 @@ async function api(path, opts) {
   // that looks like it is still loading is worse than one that says it cannot
   // load: the first is indistinguishable from a slow network, so nobody
   // refreshes and nobody reports it.
+  opts = opts || {};
+  const token = await ensureToken();          // null when not signed in · then unchanged
+  if (token) {
+    const headers = new Headers(opts.headers || {});
+    if (!headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + token);
+    opts = { ...opts, headers };
+  }
   let r;
   try {
     r = await fetch(path, opts);
@@ -974,6 +1026,11 @@ async function load() {
     return;
   }
   snap = p;
+  // The server just told us who it actually served · the token's customer when
+  // a token was sent, the param's otherwise. Adopt it, so every following call
+  // and the back-link to the bank speak the SAME identity the books belong to,
+  // even if the address bar said something else.
+  if (p.customer != null) customer = String(p.customer);
   watch = await api('/api/watchlist?customer=' + encodeURIComponent(customer));
   if (catalog === null) {
     const c = await api('/api/instruments');
