@@ -57,8 +57,11 @@ public final class Settlement {
 
     private Settlement() {}
 
+    /** A PLATFORM thread, for the reason spelled out in
+     *  NotificationsConsumer: a KafkaConsumer loop pins its carrier and
+     *  this box has two. */
     public static Thread start(String bootstrapServers) {
-        return Thread.startVirtualThread(() -> {
+        return Thread.ofPlatform().name("settlement").daemon().start(() -> {
             Properties p = new Properties();
             p.put("bootstrap.servers", bootstrapServers);
             p.put("group.id", GROUP);                 // stable: offsets survive restarts

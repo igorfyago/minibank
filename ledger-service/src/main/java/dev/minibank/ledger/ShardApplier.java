@@ -53,8 +53,11 @@ public final class ShardApplier {
     }
 
     /** Production mode: the consumer loop, on a virtual thread. */
+    /** A PLATFORM thread, for the reason spelled out in
+     *  NotificationsConsumer: a KafkaConsumer loop pins its carrier and
+     *  this box has two. */
     public static Thread start(String bootstrapServers) {
-        return Thread.startVirtualThread(() -> {
+        return Thread.ofPlatform().name("shardapplier").daemon().start(() -> {
             Properties p = new Properties();
             p.put("bootstrap.servers", bootstrapServers);
             p.put("group.id", "shard-applier");           // its own offsets, its own pace
