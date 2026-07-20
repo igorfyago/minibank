@@ -145,6 +145,15 @@ test('with the side\'s price absent the LAST stands in, labelled as the last', (
   assert.deepEqual(call('premiumBasis', 'sell', row), { px: 1.9, label: 'at last' });
 });
 
+test('a ZERO bid or ask is the absence of a quote, not a price of nothing', () => {
+  // Yahoo states 0.0 for an illiquid side · a 740 call on a 744 underlying is
+  // never free, so zero falls through to the last trade like null does
+  const row = { bid: '0.0', ask: '0.0', last: '19.18' };
+  assert.deepEqual(call('premiumBasis', 'buy', row), { px: 19.18, label: 'at last' });
+  assert.deepEqual(call('premiumBasis', 'sell', row), { px: 19.18, label: 'at last' });
+  assert.equal(call('premiumBasis', 'buy', { bid: '0.0', ask: '0.0', last: '0.0' }), null);
+});
+
 test('no bid, no ask, no last: no basis, so the ticket shows no estimate', () => {
   assert.equal(call('premiumBasis', 'buy', { bid: null, ask: null, last: null }), null);
   assert.equal(call('premiumBasis', 'buy', null), null);

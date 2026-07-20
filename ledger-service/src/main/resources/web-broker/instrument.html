@@ -298,9 +298,13 @@ function wholeContracts(qty) {
 function premiumBasis(side, row) {
   if (!row) return null;
   const ask = num(row.ask), bid = num(row.bid), last = num(row.last);
-  if (side === 'buy' && isNum(ask)) return { px: ask, label: 'at ask' };
-  if (side === 'sell' && isNum(bid)) return { px: bid, label: 'at bid' };
-  if (isNum(last)) return { px: last, label: 'at last' };
+  // a ZERO ask or bid is not a quote, it is the venue stating the ABSENCE of
+  // one · nobody sells a 740 call on a 744 underlying for nothing. Treating
+  // "0.0" as a price would show "$0.00 at ask" over a live $19 last, so zero
+  // falls through to the last trade exactly like null does.
+  if (side === 'buy' && isNum(ask) && ask > 0) return { px: ask, label: 'at ask' };
+  if (side === 'sell' && isNum(bid) && bid > 0) return { px: bid, label: 'at bid' };
+  if (isNum(last) && last > 0) return { px: last, label: 'at last' };
   return null;
 }
 
