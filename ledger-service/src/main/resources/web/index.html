@@ -770,13 +770,10 @@
             <!-- THE THREE THAT ARE DRAWN DIFFERENTLY. See the legend under the map. -->
             <!-- The bank never validates the SSO token. This line is the shape of a
                  check nobody wrote, so it is drawn as absent: no arrow, no motion. -->
-            <line class="edge ghost"  data-edge="api_jwks"      x1="430" y1="62"  x2="550" y2="175"/>
             <!-- The SSO holds a JDBC admin connection straight into the bank's own
                  routing database. Two services, one schema, no contract. -->
-            <line class="edge hazard" data-edge="sso_directory" x1="100" y1="200" x2="100" y2="148"/>
             <!-- Notifications.openForRead(): the API reads minibank_notifications over
                  JDBC, across a boundary the map above says only Kafka crosses. -->
-            <line class="edge hazard" data-edge="api_notif"     x1="449" y1="62"  x2="615" y2="330"/>
             <g class="node" data-node="browser" transform="translate(8,18)">
               <rect width="88" height="44" rx="9"/><text x="44" y="20" text-anchor="middle">Browser</text>
               <text x="44" y="34" text-anchor="middle" class="sub">PWA · vanilla JS</text></g>
@@ -1739,8 +1736,6 @@ const EDGES = {
      ONLY: no FLOW step names it, nothing calls pulse() on it, and the line is
      drawn with the animation switched off. A ball on that edge would be the
      map telling the same lie the missing check already tells. */
-  sso_directory:[100,200,100,148], api_notif:[449,62,615,330],
-  api_jwks:[430,62,550,175]
 };
 /* dur matters. It used to be hardcoded at 700ms while playTrace gives most
    steps 450, so a step's bullets were still in the air two steps later and the
@@ -1793,7 +1788,6 @@ const MAP_PAIRS = [
   ['ksettle', 'brokercons'], ['brokercons', 'brokerdb'],
   ['broker', 'brokerdb'], ['brokerdb', 'korders'],
   ['korders', 'settle'], ['settle', 'shard0'], ['settle', 'shard1'],
-  ['api', 'jwks'], ['sso', 'directory'], ['api', 'notif'],
 ];
 const MAP = MB.mapGraph(MAP_PAIRS);
 

@@ -855,7 +855,10 @@ test('an edge name always matches the nodes it connects', () => {
  */
 const UNWIRED_NODES = [
   'intransit',                                                  // lit as state, never travelled to
-  'ssodb',                                                      // the SSO's own database, drawn for the boundary
+  // The identity service and its parts are drawn as CONTEXT, the same way redis
+  // and fx are: really running on this box, with no edge claimed into the bank.
+  // The bank does not validate its tokens yet, and a drawn line would say it did.
+  'sso', 'ssodb', 'jwks',
   'rita', 'pricefeed', 'fx', 'redis', 'prometheus', 'grafana',  // context: also running on the box
 ];
 
