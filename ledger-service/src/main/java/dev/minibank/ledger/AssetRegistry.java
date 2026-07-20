@@ -538,12 +538,17 @@ public final class AssetRegistry {
     private static void ensureAccount(Connection c, long id, String owner, String kind, String currency)
             throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO accounts(id, owner, balance, version, kind, currency) VALUES (?,?,0,0,?,?) "
+                // the floor travels with the kind (minicredit): a broker or
+                // clearing slot is EXTERNAL and must stay unconstrained
+                // (clearing accounts swing negative on every arrival), while a
+                // customer holding keeps the fail-closed floor of 0
+                "INSERT INTO accounts(id, owner, balance, version, kind, currency, min_balance) VALUES (?,?,0,0,?,?,?) "
                         + "ON CONFLICT (id) DO NOTHING")) {
             ps.setLong(1, id);
             ps.setString(2, owner);
             ps.setString(3, kind);
             ps.setString(4, currency);
+            ps.setBigDecimal(5, Ledger.floorFor(kind));
             ps.executeUpdate();
         }
     }

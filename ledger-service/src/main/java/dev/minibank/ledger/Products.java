@@ -205,11 +205,17 @@ public final class Products {
 
     private static void ensure(Connection c, long id, String owner, String kind, String currency) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO accounts(id, owner, balance, version, kind, currency) VALUES (?,?,0,0,?,?) ON CONFLICT (id) DO NOTHING")) {
+                // min_balance is passed EXPLICITLY (minicredit): the card gets
+                // the shelf-default floor of -1000 and the loan -100000, the
+                // same numbers the old kind-branch CHECK hardcoded for
+                // everyone. ON CONFLICT DO NOTHING means an existing card
+                // keeps whatever floor a limit change already gave it.
+                "INSERT INTO accounts(id, owner, balance, version, kind, currency, min_balance) VALUES (?,?,0,0,?,?,?) ON CONFLICT (id) DO NOTHING")) {
             ps.setLong(1, id);
             ps.setString(2, owner);
             ps.setString(3, kind);
             ps.setString(4, currency);
+            ps.setBigDecimal(5, Ledger.floorFor(kind));
             ps.executeUpdate();
         }
     }

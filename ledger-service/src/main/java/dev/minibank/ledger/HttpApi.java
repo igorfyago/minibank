@@ -42,6 +42,14 @@ public final class HttpApi {
         server.createContext("/api/trade", ex -> handle(ex, HttpApi::trade));
         server.createContext("/api/mortgage", ex -> handle(ex, HttpApi::mortgageApply));
         server.createContext("/api/card", ex -> handle(ex, HttpApi::cardOps));
+        // MINICREDIT · the credit lifecycle, derived from the ledger. These
+        // sit beside /api/card on the CARDHOLDER's surface; /issuer/v1 is
+        // deliberately unchanged · the acquirer learns nothing about cycles,
+        // limits, interest or minimum due.
+        server.createContext("/api/credit/statement", ex -> handle(ex, HttpApi::creditStatement));
+        server.createContext("/api/credit/current", ex -> handle(ex, HttpApi::creditCurrent));
+        server.createContext("/api/credit/limit", ex -> handle(ex, HttpApi::creditLimit));
+        server.createContext("/api/credit/close", ex -> handle(ex, HttpApi::creditClose));
         // THE ISSUER FACE. A different route family from /api/* on purpose:
         // /api is the cardholder's own bank, /issuer is what an acquirer may
         // reach, and keeping them apart is what stops a merchant's processor
@@ -300,6 +308,11 @@ public final class HttpApi {
                         }
                         case "refund" -> { cross = true; label = "Refund"; tag = "refund"; }
                         case "mortgage" -> { label = "Loan"; tag = "loan"; }
+                        // minicredit's two charges name themselves · without
+                        // these the bottom branch would label both with the
+                        // counterparty's literal owner string, "bank income"
+                        case "interest" -> { label = "Interest charged"; tag = "sent"; }
+                        case "late-fee" -> { label = "Late fee"; tag = "sent"; }
                         default -> {
                             // ASSET MOVEMENTS NAME THE EVENT.
                             //
@@ -1569,13 +1582,24 @@ public final class HttpApi {
         }
         inv.append("]}");
 
+        // the LIMIT IS THE ROW'S, not a constant. This used to say "1000" in
+        // its own source while the schema said the same thing in a CHECK ·
+        // two copies of one fact, and minicredit made the row's copy movable.
+        BigDecimal cardBal = bal.getOrDefault(id + Products.CARD, BigDecimal.ZERO);
+        BigDecimal cardLimit;
+        try {
+            cardLimit = Credit.limit(id);
+        } catch (IllegalArgumentException e) {
+            cardLimit = BigDecimal.ZERO;   // no card on the shelf yet
+        }
         return Response.json(200,
                 "{\"main\":\"" + plain(bal.getOrDefault(id, BigDecimal.ZERO)) +
                 "\",\"savings\":\"" + plain(bal.getOrDefault(id + Products.SAVINGS, BigDecimal.ZERO)) +
-                "\",\"card\":\"" + plain(bal.getOrDefault(id + Products.CARD, BigDecimal.ZERO)) +
+                "\",\"card\":\"" + plain(cardBal) +
                 "\",\"held\":\"" + plain(bal.getOrDefault(id + Products.HOLDS, BigDecimal.ZERO)) +
-                "\",\"cardLimit\":\"1000\"" +
-                ",\"loan\":\"" + plain(bal.getOrDefault(id + Products.LOAN, BigDecimal.ZERO)) +
+                "\",\"cardLimit\":\"" + plain(cardLimit) +
+                "\",\"cardAvailable\":\"" + plain(cardLimit.add(cardBal)) +
+                "\",\"loan\":\"" + plain(bal.getOrDefault(id + Products.LOAN, BigDecimal.ZERO)) +
                 "\",\"investments\":" + inv +
                 ",\"fxRate\":\"" + fx.rate().toPlainString() +
                 "\",\"fxSource\":\"" + Json.esc(fx.source()) + "\"}");
@@ -2006,6 +2030,164 @@ public final class HttpApi {
             return Response.json(200, "{\"result\":\"" + kind + "\"}");
         } catch (IllegalArgumentException e) {
             return Response.json(400, "{\"error\":\"" + Json.esc(e.getMessage()) + "\"}");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // MINICREDIT · every number here is a fold over the ledger or a row the
+    // CHECK constraint enforces · no parallel arithmetic, nothing persisted
+    // ------------------------------------------------------------------
+
+    private static String qparam(HttpExchange ex, String name) {
+        String q = ex.getRequestURI().getQuery();
+        if (q != null) for (String p : q.split("&"))
+            if (p.startsWith(name + "=")) return p.substring(name.length() + 1);
+        return null;
+    }
+
+    private static String postingJson(Credit.Posting p) {
+        return "{\"amount\":\"" + plain(p.amount()) + "\",\"state\":\"" + p.state()
+                + "\",\"tx\":" + (p.txId() == null ? "null" : "\"" + p.txId() + "\"") + "}";
+    }
+
+    /** GET /api/credit/statement?customer=N&cycle=YYYY-MM · reading a
+     *  past-due statement is what closes it (lazily, idempotently) */
+    private static Response creditStatement(HttpExchange ex) throws Exception {
+        String cust = caller(qparam(ex, "customer"));
+        if (cust == null) return Response.json(400, "{\"error\":\"need ?customer=id\"}");
+        try {
+            long id = Long.parseLong(cust);
+            String ck = qparam(ex, "cycle");
+            Credit.CycleId cycle = ck == null
+                    ? Credit.CycleId.of(Instant.now()).previous()   // the statement most recently finished
+                    : Credit.CycleId.parse(ck);
+            Credit.Statement st = Credit.statement(id, cycle);
+            StringBuilder lines = new StringBuilder("[");
+            for (int i = 0; i < st.lines().size(); i++) {
+                Credit.Line l = st.lines().get(i);
+                if (i > 0) lines.append(',');
+                lines.append("{\"tx\":\"").append(l.txId())
+                     .append("\",\"at\":\"").append(l.at())
+                     .append("\",\"amount\":\"").append(plain(l.amount()))
+                     .append("\",\"kind\":\"").append(Json.esc(l.kind())).append("\"}");
+            }
+            return Response.json(200, "{\"cycle\":\"" + st.cycle().key()
+                    + "\",\"opening\":\"" + plain(st.opening())
+                    + "\",\"closing\":\"" + plain(st.closing())
+                    + "\",\"statementDebt\":\"" + plain(st.statementDebt())
+                    + "\",\"minimumDue\":\"" + plain(st.minimumDue())
+                    + "\",\"dueAt\":\"" + st.dueAt()
+                    + "\",\"payments\":\"" + plain(st.payments())
+                    // said in the payload, not discovered by an auditor: any
+                    // inbound transfer without a hold leg counts as a payment,
+                    // café refunds included
+                    + "\",\"paymentsNote\":\"inbound transfers without a hold leg, refunds included\""
+                    + ",\"interest\":" + postingJson(st.interest())
+                    + ",\"lateFee\":" + postingJson(st.lateFee())
+                    + ",\"lines\":" + lines.append(']') + "}");
+        } catch (IllegalArgumentException e) {
+            return Response.json(400, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");
+        }
+    }
+
+    /** GET /api/credit/current?customer=N · the open cycle as the tile needs
+     *  it. The interest figure is an ESTIMATE and the payload says so itself;
+     *  it is never persisted anywhere. */
+    private static Response creditCurrent(HttpExchange ex) throws Exception {
+        String cust = caller(qparam(ex, "customer"));
+        if (cust == null) return Response.json(400, "{\"error\":\"need ?customer=id\"}");
+        try {
+            long id = Long.parseLong(cust);
+            Instant now = Instant.now();
+            Credit.CycleId cycle = Credit.CycleId.of(now);
+            Shard home = Shards.forCustomer(id);
+            BigDecimal cardBal, held, debt;
+            try (Connection c = home.open()) {
+                cardBal = Ledger.cachedBalanceOn(c, id + Products.CARD);
+                held = Ledger.cachedBalanceOn(c, id + Products.HOLDS);
+                debt = Credit.postedDebtAt(c, id, now).negate().max(BigDecimal.ZERO);
+            }
+            BigDecimal limit = Credit.limit(id);
+            BigDecimal available = limit.add(cardBal);
+            BigDecimal spent = Credit.spentBetween(id, cycle.start(), now);
+            // the PREVIOUS cycle's minimum, while its grace window is open ·
+            // what the tile nags about. Zero once paid, gone once due.
+            Credit.CycleId prev = cycle.previous();
+            BigDecimal minCarried = BigDecimal.ZERO;
+            if (now.isBefore(prev.due())) {
+                Credit.Statement ps = Credit.statement(id, prev);
+                minCarried = ps.minimumDue().subtract(ps.payments()).max(BigDecimal.ZERO);
+            }
+            return Response.json(200, "{\"cycle\":\"" + cycle.key()
+                    + "\",\"postedDebt\":\"" + plain(debt)
+                    + "\",\"held\":\"" + plain(held)
+                    + "\",\"limit\":\"" + plain(limit)
+                    + "\",\"available\":\"" + plain(available)
+                    + "\",\"spentThisCycle\":\"" + plain(spent)
+                    + "\",\"closesAt\":\"" + cycle.end()
+                    + "\",\"minimumDueCarried\":\"" + plain(minCarried)
+                    + "\",\"estimate\":{\"nextInterest\":\"" + plain(Credit.interestEstimate(id))
+                    + "\",\"isEstimate\":true,\"note\":\"posts at cycle close; changes with every transaction\"}}");
+        } catch (IllegalArgumentException e) {
+            return Response.json(400, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");
+        }
+    }
+
+    /** GET /api/credit/limit?customer=N · POST {customer, limit} to move it.
+     *  The refusal path is the row CHECK itself: lowering a limit under the
+     *  customer's current debt answers debt_above_limit, like every other
+     *  constraint veto in this bank turned into a business answer. */
+    private static Response creditLimit(HttpExchange ex) throws Exception {
+        try {
+            if ("POST".equals(ex.getRequestMethod())) {
+                String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                String cust = caller(Json.num(body, "customer"));
+                String lim = Json.str(body, "limit");
+                if (lim == null) lim = Json.num(body, "limit");
+                if (cust == null || lim == null)
+                    return Response.json(400, "{\"error\":\"need customer, limit\"}");
+                Credit.LimitResult r = Credit.changeLimit(Long.parseLong(cust), new BigDecimal(lim));
+                String kind = switch (r) {
+                    case Credit.LimitOk ok -> "ok";
+                    case Credit.DebtAboveLimit d -> "debt_above_limit";
+                    case Credit.NotACard n -> "not_a_card";
+                };
+                return Response.json(200, "{\"result\":\"" + kind + "\"}");
+            }
+            String cust = caller(qparam(ex, "customer"));
+            if (cust == null) return Response.json(400, "{\"error\":\"need ?customer=id\"}");
+            long id = Long.parseLong(cust);
+            BigDecimal limit = Credit.limit(id);
+            BigDecimal cardBal = Shards.forCustomer(id).balance(id + Products.CARD);
+            BigDecimal available = limit.add(cardBal);
+            BigDecimal utilization = limit.signum() > 0
+                    ? cardBal.negate().max(BigDecimal.ZERO)
+                        .multiply(new BigDecimal("100")).divide(limit, 1, java.math.RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+            return Response.json(200, "{\"limit\":\"" + plain(limit)
+                    + "\",\"available\":\"" + plain(available)
+                    + "\",\"utilization\":\"" + utilization.toPlainString() + "\"}");
+        } catch (IllegalArgumentException e) {
+            return Response.json(400, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");
+        }
+    }
+
+    /** POST /api/credit/close {customer, cycle} · idempotent by the
+     *  deterministic tx ids, so a sweep, a test and a lazy read can all call
+     *  it and the charges still post exactly once */
+    private static Response creditClose(HttpExchange ex) throws Exception {
+        if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
+        String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String cust = caller(Json.num(body, "customer"));
+        String ck = Json.str(body, "cycle");
+        if (cust == null || ck == null) return Response.json(400, "{\"error\":\"need customer, cycle\"}");
+        try {
+            Credit.CloseResult r = Credit.closeCycle(Long.parseLong(cust), Credit.CycleId.parse(ck));
+            return Response.json(200, "{\"cycle\":\"" + r.cycle().key()
+                    + "\",\"interest\":" + postingJson(r.interest())
+                    + ",\"lateFee\":" + postingJson(r.lateFee()) + "}");
+        } catch (IllegalArgumentException e) {
+            return Response.json(400, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");
         }
     }
 

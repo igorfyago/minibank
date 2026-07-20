@@ -1673,13 +1673,19 @@ async function loadPortfolio() {
        <button class="mini" onclick="pSav('to_main')">⬆ back to main</button></div>
        <div class="ph" id="ph-sv"></div>`)
     + tile('cd',
+      /* the limit is the API's now, not this file's · a raised limit used to
+         render "available €1,240 of €1,000" here because 1000 was hardcoded
+         while the truth lived in the row's min_balance */
       `<div class="prod-name">💳 Credit card</div><div class="prod-val">${fmt(pf.card)}</div>
-       <div class="prod-sub">available ${fmt(1000 + card)} of €1,000${Number(pf.held) > 0 ? ' · held ' + fmt(pf.held) : ''}</div>`,
+       <div class="prod-sub">available ${fmt(pf.cardAvailable ?? 1000 + card)} of ${fmt(pf.cardLimit ?? 1000)}${Number(pf.held) > 0 ? ' · held ' + fmt(pf.held) : ''}</div>`,
       slider('cd', 5, 200, 5, 25) +
       `<div class="prod-btns"><button class="mini" onclick="pCard('pay_cafe')">pay café</button>
        <button class="mini" onclick="pCard('hold')">hold</button>
        ${lastAuth[me] ? `<button class="mini" onclick="pCard('capture')">capture</button><button class="mini" onclick="pCard('release')">release</button>` : ''}
        ${card < 0 ? `<button class="mini" onclick="pCard('repay')">repay</button>` : ''}</div>
+       <div id="cr-cd"></div>` +
+      slider('cl', 100, 5000, 100, Math.max(100, Number(pf.cardLimit) || 1000)) +
+      `<div class="prod-btns"><button class="mini" onclick="pLimit()">set limit</button></div>
        <div class="prod-sub" style="margin-top:6px">the limit is a CHECK constraint · holds count automatically</div>
        <div class="ph" id="ph-cd"></div>`)
     /* ONE INVESTMENTS CARD, NOT ONE CARD PER INSTRUMENT.
@@ -1705,7 +1711,64 @@ async function loadPortfolio() {
   if (openProd && ACCT[openProd] !== undefined) loadProdHist(openProd, me + ACCT[openProd]);
   // the chart follows whichever instrument the Investments tile is showing
   if (openProd === 'iv' && ivAsset) loadChart('iv', ivAsset);
+  // the credit lifecycle block fills in behind the paint, like the history
+  if (openProd === 'cd') loadCreditTile();
 }
+
+/* MINICREDIT · the cycle, the statement and the accruing interest, drawn
+   from /api/credit rather than computed here. Every euro figure in this
+   block is a fold over the ledger done server-side; the browser only
+   formats. Cached through the same stale-while-revalidate discipline as
+   statements, invalidated by every money action. */
+const creditCache = MB.swrCache({ ttl: 4000 });
+const creditOf = (key, path) => creditCache.get(key, () => api(path));
+async function loadCreditTile() {
+  const el = document.querySelector('#cr-cd');
+  if (!el) return;
+  try {
+    const [cur, stmt] = await Promise.all([
+      creditOf('cur:' + me, '/api/credit/current?customer=' + me),
+      creditOf('stmt:' + me, '/api/credit/statement?customer=' + me)]);
+    const lim = Number(cur.limit), avail = Number(cur.available);
+    const pct = lim > 0 ? Math.min(100, Math.max(0, 100 * (lim - avail) / lim)) : 0;
+    // cycle labels and the due date render in UTC · cycles ARE UTC months,
+    // and a viewer west of Greenwich must not see the boundary day drift
+    const [cy, cm] = cur.cycle.split('-').map(Number);
+    const cycleLabel = new Date(Date.UTC(cy, cm - 1, 1))
+      .toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+    const days = Math.max(0, Math.ceil((new Date(cur.closesAt) - Date.now()) / 864e5));
+    let stLine;
+    if (Number(stmt.statementDebt) === 0) {
+      stLine = 'no statement debt last cycle';
+    } else if (stmt.lateFee && stmt.lateFee.state === 'posted') {
+      stLine = `late fee posted · statement ${fmt(stmt.statementDebt)}`;
+    } else {
+      const by = new Date(stmt.dueAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+      stLine = `statement ${fmt(stmt.statementDebt)} · min due ${fmt(stmt.minimumDue)} by ${by}`;
+    }
+    // interest the floor would not let post is deferred, not forgiven ·
+    // without this line the estimate below would disagree with posted
+    // history and read as a bug
+    if (stmt.interest && stmt.interest.state === 'blocked')
+      stLine += ' · interest deferred at the limit';
+    el.innerHTML =
+      `<div style="height:4px;background:var(--line);border-radius:2px;margin:8px 0 6px">
+         <div style="height:4px;width:${pct.toFixed(1)}%;background:var(--accent);border-radius:2px"></div></div>
+       <div class="prod-sub">cycle ${cycleLabel} · closes in ${days}d</div>
+       <div class="prod-sub">${stLine}</div>
+       <div class="prod-sub">interest accrued ${fmt(cur.estimate.nextInterest)} · estimate, posts at cycle close</div>`;
+  } catch (e) {
+    el.innerHTML = '';   // a credit hiccup must not blank the tile's buttons
+  }
+}
+window.pLimit = () => prodRun(async () => {
+  const r = await api('/api/credit/limit', { method: 'POST',
+    body: JSON.stringify({ customer: me, limit: String(sliderVals.cl) + '.00' }) });
+  if (r.result === 'ok') return 'limit set to ' + fmt(sliderVals.cl);
+  return fail(r.result === 'debt_above_limit'
+    ? 'the debt already sits above that limit · repay first'
+    : r.result || r.error);
+});
 /* THE STATEMENT CACHE.
    Statements are the heaviest read in the app: the ledger page wants one,
    every open product card wants one for its own account, and the 2s poll
@@ -1746,6 +1809,7 @@ const REFRESH_TAIL_MS = [0, 350, 900, 1800, 3200];
 let refreshTimers = [];
 function refreshAll() {
   stmtCache.invalidate();     // money moved · the cache must not out-vote it
+  creditCache.invalidate();   // and the credit figures are views of the same money
   refreshTimers.forEach(clearTimeout); refreshTimers = [];
   REFRESH_TAIL_MS.forEach(delay => refreshTimers.push(setTimeout(() => {
     loadAccounts(); prevStmtSig = ''; loadStatement(); prevPortSig = ''; loadPortfolio();

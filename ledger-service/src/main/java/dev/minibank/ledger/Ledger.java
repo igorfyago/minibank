@@ -81,12 +81,30 @@ public final class Ledger {
             st.execute("ALTER TABLE accounts ALTER COLUMN balance TYPE NUMERIC(20,8)");
             // The business rule lives IN the schema: customers can never go
             // negative; external accounts may (money enters the bank through
-            // them); a CREDIT account may go negative to its limit; a LOAN
-            // account is a large negative that slowly heals. Kind-aware.
+            // them); a CREDIT account may go negative to its floor; a LOAN
+            // account is a large negative that slowly heals.
+            //
+            // MINICREDIT moved the floor INTO THE ROW. The old constraint was
+            // a kind-branch (credit >= -1000), so every card shared one limit
+            // and changing it meant DDL. min_balance is the per-row floor:
+            // NULL means unconstrained (external · the world going negative is
+            // how money enters the bank), and the DEFAULT of 0 FAILS CLOSED ·
+            // a creation path that forgets the column gets an account that is
+            // too strict, never too loose. Mirrors db/shard/V8__minicredit.sql.
+            st.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS min_balance NUMERIC(20,8) DEFAULT 0");
+            // The backfill, as a REPAIR rather than a one-shot: any code path
+            // that inserted an account without the column left the DEFAULT of
+            // 0 behind, and for external/credit/loan rows a 0 floor is never
+            // a legitimate state (external is unconstrained by design; a card
+            // or loan with a 0 floor is one nobody can use). Repairing only
+            // those three shapes means a customer's CHANGED limit · any floor
+            // other than 0 · is never flattened back to the shelf default.
+            st.execute("UPDATE accounts SET min_balance = NULL WHERE kind = 'external' AND min_balance IS NOT NULL");
+            st.execute("UPDATE accounts SET min_balance = -1000 WHERE kind = 'credit' AND min_balance = 0");
+            st.execute("UPDATE accounts SET min_balance = -100000 WHERE kind = 'loan' AND min_balance = 0");
             st.execute("ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_balance_check");
             st.execute("ALTER TABLE accounts ADD CONSTRAINT accounts_balance_check " +
-                       "CHECK (kind = 'external' OR (kind = 'credit' AND balance >= -1000) " +
-                       "OR (kind = 'loan' AND balance >= -100000) OR balance >= 0)");
+                       "CHECK (min_balance IS NULL OR balance >= min_balance)");
             st.execute("""
                 CREATE TABLE IF NOT EXISTS transactions (
                     id         UUID PRIMARY KEY,
@@ -148,6 +166,19 @@ public final class Ledger {
             st.execute("DROP TRIGGER IF EXISTS transactions_immutable ON transactions");
             st.execute("CREATE TRIGGER transactions_immutable BEFORE UPDATE OR DELETE ON transactions " +
                        "FOR EACH ROW EXECUTE FUNCTION ledger_immutable()");
+            // MINICREDIT (V8 mirror, continued): limit changes are auditable
+            // facts · not money, so not entries · and the statement fold reads
+            // entries by account and time, which wants its own index.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS credit_limit_events (
+                    id         BIGSERIAL PRIMARY KEY,
+                    account_id BIGINT NOT NULL REFERENCES accounts(id),
+                    old_floor  NUMERIC(20,8) NOT NULL,
+                    new_floor  NUMERIC(20,8) NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+                )""");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_limit_events_acct ON credit_limit_events(account_id, id)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_entries_account_at ON entries(account_id, created_at)");
         }
         // the outbox is not optional decoration: a transfer writes to it,
         // so the ledger cannot exist without it.
@@ -174,13 +205,33 @@ public final class Ledger {
 
     public static void createAccountOn(Connection c, long id, String owner, String kind, String currency) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO accounts(id, owner, balance, version, kind, currency) VALUES (?,?,0,0,?,?)")) {
+                "INSERT INTO accounts(id, owner, balance, version, kind, currency, min_balance) VALUES (?,?,0,0,?,?,?)")) {
             ps.setLong(1, id);
             ps.setString(2, owner);
             ps.setString(3, kind);
             ps.setString(4, currency);
+            ps.setBigDecimal(5, floorFor(kind));
             ps.executeUpdate();
         }
+    }
+
+    /**
+     * The SHELF-DEFAULT floor for a freshly created account of this kind ·
+     * what the old kind-branch CHECK used to say, now written into the row.
+     *
+     * NULL for external is not a shrug: the world account going negative is
+     * how money enters the bank, and a clearing account swings negative on
+     * every cross-shard arrival. Every INSERT into accounts must pass this
+     * (or a deliberate override) · relying on the column DEFAULT of 0 gives
+     * an account that fails closed, which is safe but wrong for externals.
+     */
+    static BigDecimal floorFor(String kind) {
+        return switch (kind) {
+            case KIND_EXTERNAL -> null;
+            case "credit" -> new BigDecimal("-1000");
+            case "loan" -> new BigDecimal("-100000");
+            default -> BigDecimal.ZERO;
+        };
     }
 
     // ------------------------------------------------------------------

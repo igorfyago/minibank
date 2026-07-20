@@ -130,6 +130,10 @@ public final class Shard {
             ensureSystemAccount(c, BROKER_BTC, "broker", "BTC");
             ensureSystemAccount(c, BROKER_AAPL, "broker", "AAPL");
             ensureSystemAccount(c, CAFE, "cafe", "EUR");
+            // minicredit: the other side of an interest or late-fee charge.
+            // id 2 is the last free reserved id below 10 · interest vs fees
+            // are told apart by transactions.kind, which the ledger records.
+            ensureSystemAccount(c, Credit.BANK_INCOME, "bank income", "EUR");
             // the registry, and the broker + clearing accounts of every
             // instrument listed in it · a shard is never missing the other
             // side of a trade it may be asked to settle. BTC and AAPL are
@@ -142,7 +146,13 @@ public final class Shard {
 
     private static void ensureSystemAccount(Connection c, long id, String owner, String currency) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO accounts(id, owner, balance, version, kind, currency) VALUES (?,?,0,0,?,?) ON CONFLICT (id) DO NOTHING")) {
+                // min_balance NULL, EXPLICITLY: an external account is
+                // unconstrained by design (the world going negative is how
+                // money enters the bank; a clearing account swings negative on
+                // every arrival). The column DEFAULT of 0 fails closed, which
+                // for a system account would mean bouncing legitimate money.
+                "INSERT INTO accounts(id, owner, balance, version, kind, currency, min_balance) " +
+                "VALUES (?,?,0,0,?,?,NULL) ON CONFLICT (id) DO NOTHING")) {
             ps.setLong(1, id);
             ps.setString(2, owner);
             ps.setString(3, Ledger.KIND_EXTERNAL);
