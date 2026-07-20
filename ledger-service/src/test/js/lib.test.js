@@ -616,7 +616,42 @@ const CASES = [
     steps: [{ step: 'transfer', region: 'eu' }] },
   { name: 'live vocabulary, transfer_local must mean the same as transfer',
     steps: [{ step: 'transfer_local', region: 'eu' }] },
+  /* THE SECURITIES TRADE. Products.settleFill claims ONE transaction, so this
+     is genuinely what the trace endpoint returns for a buy: a single step whose
+     kind carries the asset in the middle. It matched no FLOW key, so it drew
+     nothing · the broker boxes were on the diagram and no ball ever went near
+     them. Buy and sell and both regions are all here because the route is the
+     claim being made, and a route that quietly depended on the asset or the
+     side would be the same bug in a new place. */
+  { name: 'buy AAPL settled in eu, the whole securities loop',
+    steps: [{ step: 'settle:aapl:buy', region: 'eu' }] },
+  { name: 'sell AAPL settled in uk, the kind from the playTrace comment',
+    steps: [{ step: 'settle:aapl:sell', region: 'uk' }] },
+  { name: 'an asset nobody hardcoded, because the registry is a table',
+    steps: [{ step: 'settle:btc:buy', region: 'eu' }] },
+  /* The venue filled and the money said no. No entries are written, so the walk
+     must stop at the broker database where the compensation lands. */
+  { name: 'settlement refused, the compensation branch',
+    steps: [{ step: 'settle-refused', region: 'eu' }] },
+  /* The deprecated path. It writes the trade in the ledger itself and tells no
+     broker, so it must NOT walk the broker loop · the diagram is what makes
+     that difference visible. */
+  { name: 'tradeWithoutBroker, the deprecated local-only kind',
+    steps: [{ step: 'trade:aapl:buy', region: 'eu' }] },
+  /* What the LIVE feed shows for one buy: the shard transaction, then the relay
+     publishing that shard's outbox row onto topic settlements. Written as two
+     steps rather than one because that is two rows in two tables and the feed
+     emits them separately · and a publish is a CONTINUATION, so on its own it
+     would start at a database no ball had reached, which is the spontaneous
+     ball the contiguity invariant exists to forbid. */
+  { name: 'live trade, the settlement publish following the shard transaction',
+    steps: [{ step: 'settle:aapl:buy', region: 'eu' },
+            { step: 'published:settlements', region: 'eu' }] },
 ];
+
+/* The trade cases above, by name, so the trade-specific tests below stay
+   pointed at the right rows if the table is reordered or extended again. */
+const TRADE_CASES = CASES.filter(c => /securities loop|playTrace comment|registry is a table|refused|deprecated local-only|live trade/.test(c.name));
 
 test('every case walks only edges that exist on the map', () => {
   const g = MB.mapGraph(GRAPH_PAIRS);
@@ -708,11 +743,16 @@ test('a hop repeats only when the SYSTEM repeated it, never because we drew it t
     const j = MB.journey(c.steps, g);
     const stepCount = {};
     c.steps.forEach(s => { stepCount[MB.stepName(s.step)] = (stepCount[MB.stepName(s.step)] || 0) + 1; });
+    /* The key is joined on '|', not on ':'. It used to be ':' and then had to
+       un-split itself with a special case for the one step name that contained
+       a colon, which is a parser for a format we control · and it would have
+       silently mis-attributed every trade hop, since "settle:buy" splits into
+       "settle". A separator that cannot occur in either half needs no rule. */
     const hopCount = {};
-    j.hops.forEach(h => { const k = h.step + ':' + h.from + '>' + h.to;
+    j.hops.forEach(h => { const k = h.step + '|' + h.from + '>' + h.to;
                           hopCount[k] = (hopCount[k] || 0) + 1; });
     for (const k of Object.keys(hopCount)) {
-      const step = k.split(':')[0] === 'relocate' ? k.split('>')[0].split(':').slice(0,2).join(':') : k.split(':')[0];
+      const step = k.split('|')[0];
       assert.equal(hopCount[k], stepCount[step] || 0,
         c.name + ': ' + k + ' drawn ' + hopCount[k] + ' times for ' + (stepCount[step]||0) + ' step(s)');
     }
@@ -768,6 +808,235 @@ test('region maps to the right database, both ways round', () => {
   assert.ok(MB.journey([{ step: 'depart', region: 'uk' }], g).hops.some(h => h.to === 'shard1'));
   const odd = MB.journey([{ step: 'depart', region: 'mars' }], g);
   assert.ok(odd.unknown.length > 0 || odd.hops.length === 0, 'an unknown region is not eu by default');
+});
+
+// ==================================================== THE SECURITIES TRADE
+/**
+ * The bug these exist for: buying AAPL changed NOTHING on the map. The broker
+ * nodes had been added to the SVG and declared in MAP_PAIRS, and no FLOW step
+ * walked a single one of their edges, so the journey did not exist. It failed
+ * in the quietest way the page has · FLOW has no key, journey reports it in
+ * `unknown`, and playTrace tells the user the trade "happens off this diagram",
+ * blaming the trade for the diagram's gap.
+ *
+ * The invariants above (contiguity, lights, ordering, determinism) already run
+ * over the trade rows because they were added to CASES rather than to a table
+ * of their own. What is left here is what is specific to the trade.
+ */
+test('every trade kind resolves to hops · the bug was that they resolved to nothing', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  assert.ok(TRADE_CASES.length >= 6, 'the trade rows must actually be found in CASES');
+  for (const c of TRADE_CASES) {
+    const j = MB.journey(c.steps, g);
+    assert.ok(j.hops.length > 0, c.name + ': still animates as nothing');
+    assert.deepEqual(j.unknown, [], c.name + ': unknown ' + JSON.stringify(j.unknown));
+  }
+});
+
+test('a trade walks the whole saga · api, shard, both topics, both consumers, the broker db, and home', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const j = MB.journey([{ step: 'settle:aapl:buy', region: 'eu' }], g);
+  assert.deepEqual(j.hops.map(h => h.from + '>' + h.to), [
+    'browser>caddy',        // the click
+    'caddy>api',
+    'api>shard0',           // the money lands, four entries in two currencies
+    'shard0>ksettle',       // the shard relay publishes onto topic settlements
+    'ksettle>brokercons',   // the broker's consumer group reads it
+    'brokercons>brokerdb',  // the position, in the fifth database
+    'brokerdb>korders',     // the broker relay publishes onto topic orders
+    'korders>settle',       // the ledger's Settlement group reads it back
+    'settle>shard0',        // and the money is home
+  ]);
+});
+
+test('the trade route follows the REGION, so a uk trade never touches the eu database', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const uk = MB.journey([{ step: 'settle:aapl:sell', region: 'uk' }], g);
+  const touched = new Set(uk.hops.flatMap(h => [h.from, h.to]));
+  assert.ok(touched.has('shard1'), 'a uk trade settles in uk');
+  assert.ok(!touched.has('shard0'), 'and must not walk through eu on the way');
+  assert.ok(touched.has('ksettle') && touched.has('korders'), 'both topics either way');
+});
+
+test('buy and sell and every asset walk the identical route · the diagram is not the ledger', () => {
+  // What differs between a buy and a sell is the SIGN of the entries, which is
+  // a fact about the money and not about the topology. A route that quietly
+  // depended on the asset would mean the next listing animates as nothing,
+  // which is the whole bug, one level down.
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const route = s => MB.journey([{ step: s, region: 'eu' }], g).hops.map(h => h.from + '>' + h.to);
+  const want = route('settle:aapl:buy');
+  for (const k of ['settle:aapl:sell', 'settle:btc:buy', 'settle:msft:sell',
+                   'settle:eth:buy', 'SETTLE:AAPL:BUY'])
+    assert.deepEqual(route(k), want, k + ' walks a different route');
+});
+
+test('a refused settlement stops at the broker · no money moved, so none walks back', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const j = MB.journey([{ step: 'settle-refused', region: 'eu' }], g);
+  const last = j.hops[j.hops.length - 1];
+  assert.equal(last.to, 'brokerdb', 'the compensation lands in the broker database and stops');
+  assert.ok(!j.hops.some(h => h.from === 'settle'),
+    'nothing may travel settle -> shard: recordSettlementRefusal writes no entries, ' +
+    'and drawing money returning would show a balance change that never happened');
+  assert.ok(!j.hops.some(h => h.to === 'korders'), 'and the broker publishes no order back');
+});
+
+test('the deprecated local trade must NOT walk the broker loop', () => {
+  // tradeWithoutBroker writes the four entries in the ledger itself and tells
+  // no broker · that is the drift Reconciliation exists to catch. If the map
+  // drew it going through the broker it would be showing the very thing whose
+  // absence is the bug.
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const j = MB.journey([{ step: 'trade:aapl:buy', region: 'eu' }], g);
+  const touched = new Set(j.hops.flatMap(h => [h.from, h.to]));
+  for (const n of ['ksettle', 'brokercons', 'brokerdb', 'korders', 'settle'])
+    assert.ok(!touched.has(n), 'the broker-free path must not reach ' + n);
+  assert.deepEqual(j.hops.map(h => h.from + '>' + h.to),
+    MB.journey([{ step: 'transfer', region: 'eu' }], g).hops.map(h => h.from + '>' + h.to),
+    'it is one local ACID transaction, exactly like a local transfer');
+});
+
+test('a settlement publish goes to topic settlements, never to the payments topic', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const j = MB.journey([{ step: 'published:settlements', region: 'eu' }], g);
+  assert.deepEqual(j.hops.map(h => h.from + '>' + h.to), ['shard0>ksettle']);
+  // and the plain one is untouched, still the payments topic
+  const p = MB.journey([{ step: 'published', region: 'eu' }], g);
+  assert.deepEqual(p.hops.map(h => h.from + '>' + h.to), ['shard0>kafka']);
+});
+
+test('THE CONTIGUITY CLAIM, stated for the trade on its own', () => {
+  // The general invariant runs over every case; this says it about the nine-hop
+  // walk specifically, because a nine hop path is where a gap would first hide.
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const c of TRADE_CASES) {
+    const j = MB.journey(c.steps, g);
+    const reached = new Set(['browser']);
+    for (const h of j.hops) {
+      assert.ok(reached.has(h.from), c.name + ': ball starts at ' + h.from + ', unreached');
+      reached.add(h.to);
+    }
+    for (let i = 1; i < j.hops.length; i++)
+      assert.equal(j.hops[i].from, j.hops[i - 1].to,
+        c.name + ': the walk breaks between hop ' + (i - 1) + ' and ' + i);
+  }
+});
+
+test('the hop count is exactly the step count · every step drawn, none drawn twice', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  // legs per normalised step name, read off the FLOW paths declared in lib.js
+  const LEGS = { 'settle:buy': 9, 'settle:sell': 9, 'settle-refused': 6,
+                 'trade:buy': 3, 'trade:sell': 3, 'published:settlements': 1,
+                 transfer: 3, published: 1, notify: 1, arrive: 2, depart: 3, refund: 2,
+                 'relocate:depart': 3, 'relocate:arrive': 1 };
+  for (const c of CASES) {
+    const j = MB.journey(c.steps, g);
+    const expected = c.steps.reduce((n, s) => {
+      const legs = LEGS[MB.stepName(s.step)];
+      assert.notEqual(legs, undefined, c.name + ': no leg count declared for ' + s.step);
+      return n + legs;
+    }, 0);
+    assert.equal(j.hops.length, expected,
+      c.name + ': ' + j.hops.length + ' hops drawn for ' + expected + ' expected');
+  }
+});
+
+test('stepName collapses the asset and swallows nothing else', () => {
+  assert.equal(MB.stepName('settle:aapl:buy'), 'settle:buy');
+  assert.equal(MB.stepName('settle:btc:sell'), 'settle:sell');
+  assert.equal(MB.stepName('trade:aapl:buy'), 'trade:buy');
+  // anchored: near misses must pass straight through rather than be mangled
+  assert.equal(MB.stepName('settle-refused'), 'settle-refused');
+  assert.equal(MB.stepName('settle:aapl:short'), 'settle:aapl:short');
+  assert.equal(MB.stepName('presettle:aapl:buy'), 'presettle:aapl:buy');
+  assert.equal(MB.stepName('settle:aapl:buy:extra'), 'settle:aapl:buy:extra');
+  assert.equal(MB.stepName('settle::buy'), 'settle::buy');
+  // and the pre-existing vocabulary is untouched
+  assert.equal(MB.stepName('transfer_local'), 'transfer');
+  assert.equal(MB.stepName('bounced'), 'refund');
+  assert.equal(MB.stepName('relocate:depart'), 'relocate:depart');
+});
+
+test('an unlisted asset animates rather than falling silent · the registry is a table', () => {
+  // The failure being prevented: someone lists a new symbol, and the map goes
+  // quiet for it alone, with nothing anywhere saying so.
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  for (const sym of ['aapl', 'msft', 'btc', 'eth', 'vwce', 'brk.b', 'tsla-eu', 'x'])
+    for (const side of ['buy', 'sell']) {
+      const j = MB.journey([{ step: `settle:${sym}:${side}`, region: 'eu' }], g);
+      assert.equal(j.hops.length, 9, sym + ':' + side + ' drew ' + j.hops.length + ' hops');
+      assert.deepEqual(j.unknown, []);
+    }
+});
+
+/**
+ * THE LIVE PATH, which is a different path from the replay.
+ *
+ * playTrace feeds journey() the TRACE endpoint's steps; xrayTick feeds it
+ * eventToStep(ev) over the EVENTS feed. A trade that replays correctly can
+ * still animate as nothing live if eventToStep hands over a name FLOW has no
+ * key for, and that half lives in index.html where the journey tests cannot
+ * reach it. So it is lifted out of the page and driven with real feed rows,
+ * shaped exactly as HttpApi.xrayEvents writes them.
+ */
+function liftEventToStep() {
+  const vm = require('node:vm');
+  const start = INDEX.indexOf('function eventToStep(ev)');
+  assert.ok(start > 0, 'eventToStep must exist · it is the whole live vocabulary');
+  const close = /\r?\n\}\r?\n/.exec(INDEX.slice(start));
+  assert.ok(close, 'eventToStep must be a top level function to be liftable');
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext(INDEX.slice(start, start + close.index + close[0].length), ctx);
+  return ev => vm.runInContext('eventToStep(' + JSON.stringify(ev) + ')', ctx);
+}
+
+test('a LIVE trade animates · the events feed vocabulary reaches a real journey', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const eventToStep = liftEventToStep();
+  // exactly what xrayEvents emits for a settled buy: type IS the transaction
+  // kind, shard is the index, region is the name
+  for (const [kind, shard, node] of [['settle:aapl:buy', 0, 'shard0'],
+                                     ['settle:aapl:sell', 1, 'shard1'],
+                                     ['settle:btc:buy', 0, 'shard0'],
+                                     ['settle-refused', 0, 'shard0']]) {
+    const step = eventToStep({ type: kind, shard, region: shard ? 'uk' : 'eu', tx: 'x', ts: '2026-07-20T10:00:00Z' });
+    const j = MB.journey([step], g);
+    assert.ok(j.hops.length > 0, kind + ' animates as nothing on the LIVE path');
+    assert.deepEqual(j.unknown, [], kind + ': ' + JSON.stringify(j.unknown));
+    assert.ok(j.hops.some(h => h.to === node), kind + ' must settle in ' + node);
+    assert.ok(j.hops.some(h => h.to === 'brokerdb'), kind + ' must reach the broker database');
+  }
+});
+
+test('a settlement publish is told apart from a payments publish by its PAYLOAD', () => {
+  const g = MB.mapGraph(GRAPH_PAIRS);
+  const eventToStep = liftEventToStep();
+  const pub = payload => eventToStep({ type: 'published', shard: 0, region: 'eu', tx: 'x', payload });
+
+  // a trade settlement rode topic settlements
+  const settled = pub('{"type":"trade.settled","fillId":"f1","customer":1,"symbol":"AAPL","units":"2","cash":"400.00"}');
+  assert.equal(settled.step, 'published:settlements');
+  assert.deepEqual(MB.journey([settled], g).hops.map(h => h.from + '>' + h.to), ['shard0>ksettle']);
+
+  // so did a refusal
+  assert.equal(pub('{"type":"trade.rejected","fillId":"f1","reason":"insufficient funds"}').step,
+    'published:settlements');
+
+  // and an ordinary payment did NOT · this is the byte-identity of the payment
+  // path, asserted at the one place where a trade could have contaminated it
+  for (const p of ['{"type":"transfer.executed","tx":"t1","amount":"10.00"}',
+                   '{"type":"mortgage.approved","tx":"t2"}', undefined, null, ''])
+    assert.equal(pub(p).step, 'published', 'a payments publish must stay on the payments topic');
+});
+
+test('the live feed region rule is unchanged by any of this', () => {
+  const eventToStep = liftEventToStep();
+  assert.equal(eventToStep({ type: 'transfer_local', shard: 0 }).region, 'eu');
+  assert.equal(eventToStep({ type: 'transfer_local', shard: 1 }).region, 'uk');
+  // notifications arrive with shard -1 and must not become uk
+  assert.equal(eventToStep({ type: 'notify', shard: -1 }).region, 'eu');
 });
 
 // ====================================================== THE THREE COPIES

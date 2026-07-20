@@ -1771,10 +1771,13 @@ const MAP_PAIRS = [
   ['shard0', 'kafka'], ['shard1', 'kafka'],
   ['kafka', 'applier'], ['kafka', 'notif'],
   ['applier', 'shard0'], ['applier', 'shard1'],
-  /* Everything below here was already running and was drawn nowhere. No FLOW
-     step walks these paths yet, so no journey changes shape; they are declared
-     because the map draws them, and an edge the graph does not know about is an
-     edge the animation will one day be asked to travel and silently will not. */
+  /* Everything below here was already running and was drawn nowhere. It is
+     declared because the map draws it, and an edge the graph does not know
+     about is an edge the animation will one day be asked to travel and silently
+     will not · which is exactly what then happened. These sat here with the
+     comment "no FLOW step walks these paths yet" while every securities trade
+     the bank settled animated as nothing at all. The securities loop below is
+     now walked by the settle steps in FLOW; the issuer pair still is not. */
   ['api', 'issuer'], ['issuer', 'directory'],
   ['shard0', 'ksettle'], ['shard1', 'ksettle'],
   ['ksettle', 'brokercons'], ['brokercons', 'brokerdb'],
@@ -1797,9 +1800,27 @@ function runJourney(j) {
   return j.total;
 }
 
-/** A live event, in the shape journey() understands. */
+/** A live event, in the shape journey() understands.
+ *
+ * The feed's `type` IS the transaction kind (xrayEvents renames exactly one of
+ * them, transfer -> transfer_local), so a trade arrives here verbatim as
+ * "settle:aapl:buy" and MB.stepName normalises it. Nothing to translate.
+ *
+ * The one thing that DOES need deciding here is which topic a publish went to.
+ * The feed calls every relay publish "published" whatever the topic, and the
+ * `published` step draws shard -> kafka, which is topic payments. A trade
+ * settlement rides topic SETTLEMENTS and never goes near payments, so the
+ * default would draw a ball along a line that message did not travel · the same
+ * class of lie as an edge whose name disagrees with its endpoints. The outbox
+ * payload says which it was, and the feed already carries it. */
 function eventToStep(ev) {
-  return { step: ev.type, region: ev.shard === 1 ? 'uk' : 'eu', ts: ev.ts };
+  const settlementTopic = ev.type === 'published' && ev.payload &&
+    /"type"\s*:\s*"trade\.(settled|rejected)"/.test(ev.payload);
+  return {
+    step: settlementTopic ? 'published:settlements' : ev.type,
+    region: ev.shard === 1 ? 'uk' : 'eu',
+    ts: ev.ts,
+  };
 }
 function animateEvent(ev, delay = 0) {
   const j = MB.journey([eventToStep(ev)], MAP);
@@ -2594,11 +2615,13 @@ function playTrace(tr) {
   // drawing it and narrating it.
   const j = MB.journey(steps, MAP);
   if (!j.hops.length) {
-    /* Nothing on this map corresponds to what happened. A broker settlement is
-       the real case: one step, kind "settle:aapl:sell", which touches no node
-       the topology draws. Returning silently left a trace card showing replay
-       and loop buttons that did nothing at all when pressed, with no
-       explanation, which is a control that lies about being a control. */
+    /* Nothing on this map corresponds to what happened. Returning silently left
+       a trace card showing replay and loop buttons that did nothing at all when
+       pressed, with no explanation, which is a control that lies about being a
+       control. The case this was written for · one step, kind
+       "settle:aapl:sell" · is no longer one of them: the nodes were always
+       drawn, it was FLOW that had no key shaped like that, so it fell through
+       to this branch and reported the map's own gap as the trade's fault. */
     $('#play-wrap').hidden = false;
     $('#play-caption').textContent = steps.length
       ? `no map animation for this one · ${steps.map(s => s.step).join(', ')} happens off this diagram`

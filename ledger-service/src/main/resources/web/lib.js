@@ -390,6 +390,32 @@
    * entering the in-transit account is a state the depart step creates, not
    * somewhere a ball travels to.
    */
+  /* THE SECURITIES SAGA, as one walk.
+   *
+   * A trade is ONE row on the customer's shard · Products.settleFill claims
+   * exactly one transaction · so the trace hands the map a single step and that
+   * step has to carry the entire loop, or the loop is not on the map at all.
+   * The nodes, in the order the map draws them:
+   *
+   *   api        the click reaches /api/trade
+   *   shard      the money lands, four entries in two currencies
+   *   ksettle    the shard's relay publishes onto topic settlements
+   *   brokercons the broker's consumer group reads it
+   *   brokerdb   the position is written, the fifth database
+   *   korders    the broker's relay publishes onto topic orders
+   *   settle     the ledger's Settlement group reads it back
+   *   shard      and the money is home
+   *
+   * Nine hops, and every one of them is an edge the map already drew and no
+   * step had ever walked. Declared once here because buy and sell travel the
+   * identical route · what differs between them is the SIGN of the entries,
+   * which is a fact about the ledger and not about the diagram.
+   */
+  function tradeLoop(r) {
+    return ['browser', 'caddy', 'api', r, 'ksettle', 'brokercons', 'brokerdb',
+            'korders', 'settle', r];
+  }
+
   var FLOW = {
     // one ACID transaction. It never touches Kafka, and that is the lesson.
     transfer:  { path: function (r) { return ['browser', 'caddy', 'api', r]; } },
@@ -418,6 +444,42 @@
        (Relocation.java calls arrive() itself for promptness), so it comes from
        the API, which the departing leg has already reached. */
     'relocate:arrive': { path: function (r) { return ['api', r]; } },
+
+    /* THE TRADE. Same disease the relocation legs had, one size worse: the
+       kind carries the ASSET in the middle · "settle:aapl:buy" · so no fixed
+       key could ever have matched it, and every securities trade this bank has
+       ever settled animated as absolutely nothing. The broker boxes were on the
+       diagram; nothing walked to them. stepName() collapses the asset out
+       (assets are rows in a registry table, not constants this file is allowed
+       to know) and both sides land here. */
+    'settle:buy':  { path: tradeLoop },
+    'settle:sell': { path: tradeLoop },
+
+    /* THE REFUSAL, and it is deliberately NOT the loop. The venue already
+       filled, then the money said no, so Products.recordSettlementRefusal
+       writes a claim and an outbox row and MOVES NOTHING. The message still
+       travels to the broker, which compensates in its own database · and then
+       it stops. Walking back to the shard would draw money returning to a
+       customer whose balance never changed. */
+    'settle-refused': { path: function (r) {
+      return ['browser', 'caddy', 'api', r, 'ksettle', 'brokercons', 'brokerdb'];
+    } },
+
+    /* The deprecated path, kept animatable because it is still reachable from
+       the reconciliation lesson. tradeWithoutBroker writes the four entries in
+       the ledger itself and tells no broker, which is exactly why it walks the
+       short local route and never reaches a broker node. The diagram saying so
+       is the point: this is the drift the securities loop above exists to end. */
+    'trade:buy':  { path: function (r) { return ['browser', 'caddy', 'api', r]; } },
+    'trade:sell': { path: function (r) { return ['browser', 'caddy', 'api', r]; } },
+
+    /* A publish onto topic SETTLEMENTS. The events feed calls every relay
+       publish "published" regardless of topic, and the plain `published` step
+       above draws shard -> kafka, which is topic payments. A trade settlement
+       never goes near that topic, so drawing it there would put a ball on a
+       line the message did not travel. eventToStep reads the outbox payload and
+       routes it here instead. */
+    'published:settlements': { path: function (r) { return [r, 'ksettle']; } },
   };
 
   /* The live feed and the trace endpoint name the same things differently.
@@ -434,8 +496,27 @@
    * Pure: same steps in, same journey out, no DOM, no clock. Everything the
    * animation needs is decided here and unit tested, which is the point.
    */
+  /**
+   * Transaction kinds with a VARIABLE middle segment.
+   *
+   * "settle:aapl:buy", "settle:btc:sell", "trade:msft:buy" · the asset is a row
+   * in the registry, and the registry is a table someone can insert into
+   * without touching this file. Listing the assets here would mean every new
+   * listing silently animates as nothing, which is precisely the bug being
+   * fixed, one level up. So the shape is MATCHED and the asset is dropped:
+   * what the map draws depends on settle-versus-trade and buy-versus-sell, and
+   * on nothing else. Anchored both ends so it can swallow nothing it was not
+   * aimed at · "settle-refused" has no colons and passes straight through.
+   */
+  var ASSET_KIND = /^(settle|trade):[a-z0-9._-]+:(buy|sell)$/i;
+
   /** The one true name for a step, whichever vocabulary it arrived in. */
-  function stepName(s) { return STEP_ALIAS[s] || s; }
+  function stepName(s) {
+    var k = String(s == null ? '' : s);
+    if (STEP_ALIAS[k]) return STEP_ALIAS[k];
+    var m = k.match(ASSET_KIND);
+    return m ? m[1].toLowerCase() + ':' + m[2].toLowerCase() : k;
+  }
 
   function journey(steps, graph, opts) {
     var o = opts || {};
@@ -450,7 +531,12 @@
 
     for (var i = 0; i < steps.length; i++) {
       var st = steps[i];
-      var name = STEP_ALIAS[st.step] || st.step;
+      /* stepName(), not a second copy of the alias lookup. The inline version
+         that used to be here knew about STEP_ALIAS and nothing else, so the
+         asset-bearing kinds normalised correctly for the caller reading
+         MB.stepName and not for the journey itself · the two would have
+         disagreed about what a trade step is called. One function, one answer. */
+      var name = stepName(st.step);
       var flow = FLOW[name];
       if (!flow) { unknown.push(st.step); continue; }
 
