@@ -154,6 +154,32 @@ jobs:
           --health-interval 3s --health-timeout 3s
           --health-retries 20 --health-start-period 3s
 
+      # TraceCausalOrderLessonTest boots the SHARDS, not just the control
+      # database: it reproduces a cross-region saga while holding IN_TRANSIT,
+      # so this job carries the same two shard servers the ledger job does.
+      shard0:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: minibank
+          POSTGRES_PASSWORD: minibank
+          POSTGRES_DB: minibank
+        ports: ['5434:5432']
+        options: >-
+          --health-cmd "pg_isready -U minibank -d minibank"
+          --health-interval 3s --health-timeout 3s
+          --health-retries 20 --health-start-period 3s
+      shard1:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: minibank
+          POSTGRES_PASSWORD: minibank
+          POSTGRES_DB: minibank
+        ports: ['5435:5432']
+        options: >-
+          --health-cmd "pg_isready -U minibank -d minibank"
+          --health-interval 3s --health-timeout 3s
+          --health-retries 20 --health-start-period 3s
+
       # Deliberately NO health check on the broker.
       #
       # Actions blocks the first step until every health-checked service is
