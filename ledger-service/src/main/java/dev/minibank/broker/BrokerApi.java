@@ -57,16 +57,6 @@ public final class BrokerApi {
     private Long caller(HttpExchange ex, Long requested) {
         Optional<Long> identified = identity.customerFor(ex.getRequestHeaders().getFirst("Authorization"));
         if (identified.isPresent()) return identified.get();
-        // The parameter is about to stand, so it has to earn it · an account
-        // somebody has claimed is not explorable by typing its number. Same
-        // rule, same table and the same reasoning as the bank one service over
-        // (dev.minibank.ledger.Access), because a book that is private on
-        // bank.b4rruf3t.com and public on broker.b4rruf3t.com is not private.
-        //
-        // This covers the writes too, without a second thought being needed
-        // about each of them: orders, watchlist and link all resolve their
-        // customer through this method.
-        dev.minibank.ledger.Access.guard(requested == null ? null : requested.toString());
         return requested;
     }
 
@@ -745,19 +735,6 @@ public final class BrokerApi {
         server.createContext(path, ex -> {
             try (InputStream ignored = ex.getRequestBody()) {
                 h.handle(ex);
-            } catch (dev.minibank.ledger.Access.Denied d) {
-                // 403 for "that book is not yours", 503 for "we could not find
-                // out whose it is" · see the same split in HttpApi.handle. A
-                // refusal must not come back as the 500 the generic branch
-                // below would give it: a 500 reads as a bug in the broker and
-                // is exactly what a client retries.
-                try {
-                    json(ex, d.unavailable ? 503 : 403,
-                            "{\"error\":\"" + Json.esc(d.getMessage())
-                            + (d.unavailable ? "" : " · sign in as its owner to open it") + "\"}");
-                } catch (IOException io) {
-                    ex.close();
-                }
             } catch (Exception e) {
                 try {
                     json(ex, 500, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");

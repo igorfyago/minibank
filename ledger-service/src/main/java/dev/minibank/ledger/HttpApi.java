@@ -93,15 +93,6 @@ public final class HttpApi {
     private static Response accounts(HttpExchange ex) throws Exception {
         StringBuilder b = new StringBuilder("[");
         boolean first = true;
-        // THE ROSTER HAS TO SAY WHICH DOORS ARE LOCKED, or the page picks one
-        // at random and lands on a 403 it cannot explain. Read once for the
-        // whole list rather than per row · it is one in-memory set.
-        //
-        // null (directory unreachable) renders every account private, which is
-        // the honest answer to "we cannot tell": a lock the user can see beats
-        // an invitation that fails when they accept it.
-        java.util.Set<Long> claimedIds = Access.claimedOrNull();
-        Long me = CALLER.get();
         for (Shard s : Shards.all()) {
             try (Connection c = s.open(); var st = c.createStatement();
                  ResultSet rs = st.executeQuery(
@@ -124,15 +115,7 @@ public final class HttpApi {
                      .append("\",\"kind\":\"").append(rs.getString(3))
                      .append("\",\"balance\":\"").append(plain(rs.getBigDecimal(4)))
                      .append("\",\"shard\":").append(s.index)
-                     .append(",\"region\":\"").append(Shards.regionName(s.index)).append('"')
-                     // somebody has claimed this one · anonymous callers are
-                     // refused, and the UI draws a lock instead of a link
-                     .append(",\"private\":").append(claimedIds == null || claimedIds.contains(id))
-                     // and this one is YOURS · carried on the row rather than
-                     // in an envelope so the response stays the array every
-                     // existing caller already parses
-                     .append(",\"you\":").append(me != null && me == id)
-                     .append('}');
+                     .append(",\"region\":\"").append(Shards.regionName(s.index)).append("\"}");
                 }
             }
         }
@@ -1115,18 +1098,7 @@ public final class HttpApi {
      */
     private static String caller(String requested) {
         Long identified = CALLER.get();
-        if (identified != null) return identified.toString();
-        // NOBODY WAS IDENTIFIED, so the parameter is about to stand · and this
-        // is the one line that decides whether that is still allowed.
-        //
-        // An identified caller cannot reach here, which is the whole asymmetry:
-        // a token resolves to its OWN customer id above, so an authenticated
-        // request is structurally incapable of naming somebody else's account
-        // however the URL is written. Only the anonymous path can, and only for
-        // an account nobody has claimed. See Access for why "claimed" rather
-        // than a list of demo ids.
-        Access.guard(requested);
-        return requested;
+        return identified == null ? requested : identified.toString();
     }
 
     /**
@@ -1255,27 +1227,6 @@ public final class HttpApi {
                     CALLER.remove();
                 }
             }
-        } catch (Access.Denied d) {
-            // THE REFUSAL, and it is deliberately not a 500 and not a 401.
-            //
-            // 403, not 401: a 401 means "authenticate and try again", which is
-            // advice a WWW-Authenticate header is supposed to make actionable.
-            // The anonymous demo has no login button to send anybody to, so a
-            // 401 here would be an instruction nobody can follow.
-            //
-            // 503 when we could not check at all, because answering "forbidden"
-            // to a caller whose real problem is our unreachable directory sends
-            // them to fix a credential that was never the issue.
-            //
-            // The body names the account and says nothing about who holds it.
-            // That is not an oracle: the roster at /api/accounts is a public
-            // cast list and always has been, so which ids exist is not a
-            // secret. What is secret is what is INSIDE them, and that is what
-            // this refusal keeps.
-            r = d.unavailable
-                    ? Response.json(503, "{\"error\":\"" + Json.esc(d.getMessage()) + "\"}")
-                    : Response.json(403, "{\"error\":\"" + Json.esc(d.getMessage())
-                            + " · sign in as its owner to open it\"}");
         } catch (Exception e) {
             r = Response.json(500, "{\"error\":\"" + Json.esc(String.valueOf(e.getMessage())) + "\"}");
         }
