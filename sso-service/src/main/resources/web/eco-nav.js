@@ -16,6 +16,7 @@
     { id: 'pay',    label: 'Pay',    href: 'https://pay.b4rruf3t.com' },
     { id: 'desk',   label: 'Trade',  href: 'https://desk.b4rruf3t.com' },
     { id: 'gex',    label: 'Data',   href: 'https://gex.b4rruf3t.com' },
+    { id: 'stats',  label: 'Stats',  href: 'https://analytics.b4rruf3t.com' },
     { id: 'obs',    label: 'Agents', href: 'https://obs.b4rruf3t.com' }
   ];
 
