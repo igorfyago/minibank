@@ -682,6 +682,8 @@
 </style>
 </head>
 <body>
+<!-- Estate bar: cross-app tabs + the one signed-in user, served by auth. -->
+<script src="https://auth.b4rruf3t.com/eco-nav.js" defer></script>
 <header>
   <h1 id="homelink">mini<span>bank</span></h1>
   <nav>
@@ -693,7 +695,7 @@
          Show are how the thing works. An anchor rather than a tab because the
          broker is a separate service on its own origin, which is what keeps its
          four fetches same-origin against itself. -->
-    <a class="tab-btn" id="nav-invest" href="/portfolio">Invest</a>
+    <a class="tab-btn" id="nav-invest" href="https://broker.b4rruf3t.com/portfolio">Invest</a>
     <button class="tab-btn" data-tab="xray">X-ray</button>
     <button class="tab-btn" data-tab="console">Console</button>
     <button class="tab-btn" data-tab="quiz">Quiz</button>
@@ -1280,6 +1282,13 @@ const usdFmt = (v, d) => '$' + Number(v).toLocaleString('en-US', { minimumFracti
 async function loadAccounts() {
   accounts = await api('/api/accounts');
   const customers = accounts.filter(a => a.kind === 'customer');
+  if (me === null) {
+    // ?customer=N is the estate's identity handoff: the broker's Bank pill
+    // arrives with it, so landing here must mean the same person, not a
+    // silent reset to the first demo account. Unknown ids fall through.
+    const asked = Number(new URLSearchParams(location.search).get('customer'));
+    if (asked && customers.some(a => a.id === asked)) me = asked;
+  }
   if (me === null) me = customers[0]?.id;
   $('#who').innerHTML = customers.map(a =>
     `<button class="ghost ${a.id === me ? 'on' : ''}" onclick="switchUser(${a.id})">${a.owner} <span style="opacity:.55;font-size:11px">· ${a.region}</span></button>`).join('')
