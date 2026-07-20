@@ -53,6 +53,11 @@ public final class Outbox {
                     published_at TIMESTAMPTZ
                 )""");
             st.execute("CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox(id) WHERE published_at IS NULL");
+            // Statement clock, not transaction clock · see db/shard/V7. The CREATE
+            // above is a no-op on an existing database, so the default is moved here
+            // explicitly. published_at is unaffected: the relay passes that instant
+            // in from the JVM that observed the ack (markPublishedOn).
+            st.execute("ALTER TABLE outbox ALTER COLUMN created_at SET DEFAULT clock_timestamp()");
         }
     }
 

@@ -113,6 +113,26 @@ public final class Ledger {
                 )""");
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_account ON entries(account_id, id)");
             st.execute("ALTER TABLE entries ALTER COLUMN amount TYPE NUMERIC(20,8)");
+            // WHEN IT HAPPENED, NOT WHEN ITS TRANSACTION OPENED.
+            //
+            // now() is transaction_timestamp(): frozen at BEGIN and identical for
+            // every statement afterwards, however long the transaction runs. That
+            // is the wrong reading for a column whose whole job is to say when this
+            // row came to be. Shard.arrive() BEGINs, claims the txId, then queues on
+            // FOR UPDATE against IN_TRANSIT · the row every saga on the shard has to
+            // pass through · and commits whenever it gets there. Stamped with now()
+            // it reported the instant it started waiting, which is how the X-ray came
+            // to draw money landing in uk before eu had published it.
+            //
+            // clock_timestamp() is the statement clock and advances inside the
+            // transaction. CREATE TABLE IF NOT EXISTS above is a no-op on every
+            // database that already exists, so the default is moved explicitly here.
+            // Existing rows keep the instants they were given; only new ones improve.
+            //
+            // This makes the numbers honest. It does NOT by itself make them
+            // ORDERABLE across regions · see HttpApi.causalDepth for why no clock can.
+            st.execute("ALTER TABLE transactions ALTER COLUMN created_at SET DEFAULT clock_timestamp()");
+            st.execute("ALTER TABLE entries ALTER COLUMN created_at SET DEFAULT clock_timestamp()");
             // COMPLIANCE IS SCHEMA TOO: the ledger is append-only, enforced by
             // the database, not by politeness. Corrections are REVERSING
             // entries · history is never edited, which is what an auditor

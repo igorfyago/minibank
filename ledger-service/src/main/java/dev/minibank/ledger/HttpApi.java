@@ -734,10 +734,67 @@ public final class HttpApi {
         return b.append("]}").toString();
     }
 
+    /**
+     * THE CAUSAL DEPTH OF A TRACE STEP · why this exists instead of a better clock.
+     *
+     * The trace used to be ordered by the recorded instants alone, and it kept
+     * printing the arrival BEFORE the publish that caused it. The first repair was
+     * to published_at: it had been now() at the moment the outbox row was MARKED,
+     * one round trip after the ack, so it was moved to the instant the relay
+     * observes producer.send().get() return (see Outbox.markPublishedOn and
+     * OutboxRelay). That repair was correct and it is still in place. It was not
+     * enough, for two reasons that have nothing to do with each other.
+     *
+     * ONE · the OTHER side of the comparison was still lying. transactions.created_at
+     * defaulted to now(), and Postgres now() is transaction_timestamp(): the instant
+     * the transaction BEGAN, frozen for its whole life. Shard.arrive() BEGINs, claims
+     * the txId, then takes FOR UPDATE on IN_TRANSIT · the one row every saga on the
+     * shard serialises through · and on a busy region it waits there. The row commits
+     * late and records the instant it started. That is fixed alongside this, with
+     * clock_timestamp() (Ledger.createSchemaOn, db/shard/V7), and it narrows the
+     * window a lot. It does not close it, because of:
+     *
+     * TWO · "the broker acked" and "the consumer can see the message" are different
+     * instants with NO guaranteed order between them. Both race away from the same
+     * broker-side commit in opposite directions: the ack travels back to the eu
+     * producer, the record travels out to the uk applier. Nothing makes the return
+     * leg shorter than the delivery leg, so the applier can legitimately begin AND
+     * COMMIT before send().get() has returned in eu. On top of that the publish
+     * instant is read from the eu JVM's clock and the arrival instant from the uk
+     * database server's clock · two machines, two clocks, and in a real fleet two
+     * regions. There is no single clock these events can be ordered on, and pretending
+     * otherwise is what produced the bug twice.
+     *
+     * So the order is not discovered from timestamps at all. It is DECLARED, because
+     * it is already known from the code: the depart commits the outbox row, the relay
+     * publishes it, the consumers act on it. Each step gets its causal depth, the
+     * trace sorts on that, and the recorded instant is kept and shown but demoted to
+     * a tiebreaker within a depth. Steps that share a depth are genuinely CONCURRENT
+     * (the applier and the notifications consumer are separate consumer groups reading
+     * the same message), so any order between them is honest and the clock may pick.
+     *
+     *   0  transfer · depart          the money commits locally
+     *   1  published(tx | departed:)  the broker has it; consumers may now see it
+     *   2  arrive · refund · notify   whatever acted on that message
+     *   3  published(bounced:)        the compensation's own event
+     *   4  notify(bounced:)           the echo of the compensation
+     */
+    private static int causalDepth(String step, String key) {
+        boolean bounce = key != null && key.startsWith("bounced:");
+        return switch (step) {
+            case "transfer", "depart" -> 0;
+            case "published" -> bounce ? 3 : 1;
+            case "arrive", "refund" -> 2;
+            case "notify" -> bounce ? 4 : 2;
+            default -> 2;
+        };
+    }
+
     /** One transaction's whole journey, assembled from the timestamps the
      *  system already wrote: commits on each region, the relay's publish,
      *  the notification's insert. Distributed tracing from first principles
-     *  · no agent injected anything; the ledger IS the trace. */
+     *  · no agent injected anything; the ledger IS the trace. Ordered by
+     *  causal depth (see causalDepth), never by the clocks alone. */
     private static Response xrayTrace(HttpExchange ex) throws Exception {
         String q = ex.getRequestURI().getQuery();
         String tx = null;
@@ -746,7 +803,7 @@ public final class HttpApi {
         UUID id = UUID.fromString(tx);
         UUID refundId = UUID.nameUUIDFromBytes(("refund:" + id).getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
-        record Step(java.time.Instant ts, String step, String region, String detail) {}
+        record Step(java.time.Instant ts, int seq, String step, String region, String detail) {}
         java.util.List<Step> steps = new java.util.ArrayList<>();
         String payer = null, payee = null, amount = null;
 
@@ -775,7 +832,8 @@ public final class HttpApi {
                                 case "refund" -> "refunded · the compensating transaction";
                                 default -> kind;
                             };
-                            steps.add(new Step(rs.getTimestamp(3).toInstant(), kind, region, label));
+                            steps.add(new Step(rs.getTimestamp(3).toInstant(),
+                                    causalDepth(kind, null), kind, region, label));
                             if (payer == null || "depart".equals(kind) || "transfer".equals(kind)) {
                                 payer = rs.getString(4);
                                 if (rs.getString(5) != null && !"in_transit".equals(rs.getString(5))) payee = rs.getString(5);
@@ -793,8 +851,9 @@ public final class HttpApi {
                     try (ResultSet rs = ps.executeQuery()) {
                         while (rs.next()) {
                             if (rs.getTimestamp(3) != null) {
-                                steps.add(new Step(rs.getTimestamp(3).toInstant(), "published", region,
-                                        "relay -> Kafka (broker acked, then marked)"));
+                                steps.add(new Step(rs.getTimestamp(3).toInstant(),
+                                        causalDepth("published", rs.getString(1)), "published", region,
+                                        "relay -> Kafka (broker acked)"));
                             }
                         }
                     }
@@ -809,13 +868,16 @@ public final class HttpApi {
             ps.setString(3, "bounced:" + tx);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    steps.add(new Step(rs.getTimestamp(2).toInstant(), "notify", "notifications",
+                    steps.add(new Step(rs.getTimestamp(2).toInstant(),
+                            causalDepth("notify", rs.getString(1)), "notify", "notifications",
                             "notification stored (idempotent consumer)"));
                 }
             }
         }
 
-        steps.sort(java.util.Comparator.comparing(Step::ts));
+        // Causal depth first, the clock only to break ties WITHIN a depth · where
+        // the steps are concurrent anyway and no order between them is a claim.
+        steps.sort(java.util.Comparator.comparingInt(Step::seq).thenComparing(Step::ts));
         StringBuilder b = new StringBuilder("{\"tx\":\"").append(tx).append('"');
         if (payer != null) b.append(",\"payer\":\"").append(Json.esc(payer)).append('"');
         if (payee != null) b.append(",\"payee\":\"").append(Json.esc(payee)).append('"');
@@ -825,8 +887,12 @@ public final class HttpApi {
         for (Step st : steps) {
             if (!first) b.append(',');
             first = false;
+            // ts is what some clock recorded; seq is what actually caused what.
+            // A reader that needs an ORDER must use seq · across regions the
+            // instants come from different machines and cannot be compared.
             b.append("{\"ts\":\"").append(st.ts())
-             .append("\",\"step\":\"").append(st.step())
+             .append("\",\"seq\":").append(st.seq())
+             .append(",\"step\":\"").append(st.step())
              .append("\",\"region\":\"").append(st.region())
              .append("\",\"detail\":\"").append(Json.esc(st.detail())).append("\"}");
         }
