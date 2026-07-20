@@ -38,6 +38,12 @@ function newPage() {
     console,
     document: { getElementById: el, querySelector: () => null, querySelectorAll: () => [] },
     location: { search: '?customer=10', hostname: 'localhost', protocol: 'http:' },
+    // The page persists the sort preference asynchronously, and this fake
+    // browser had document and location but no localStorage, so every test
+    // passed and then an after-test rejection fired on the missing global.
+    // A harness that fakes a browser owes the page the WHOLE surface the page
+    // touches; remembering nothing (getItem null) is the honest default.
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
     history: {}, navigator: {}, URLSearchParams,
     setTimeout: () => 0,
     crypto: { randomUUID: () => 'test-uuid' },
