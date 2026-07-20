@@ -111,11 +111,34 @@ public final class Credit {
     // ------------------------------------------------------------------
     // the primitive · a balance BEFORE an instant, out of the ledger
     // ------------------------------------------------------------------
-    /** SUM of entries before t · stable forever, because entries are
-     *  append-only and created_at never changes after insert */
+    /**
+     * Where an entry sits on the time line FOR FOLD PURPOSES. For ordinary
+     * money that is created_at, immutably. For the two SYSTEM postings
+     * (interest, late fee) it is the DUE INSTANT of the cycle their
+     * deterministic id names · the instant an on-time close would have
+     * posted them · because the close is LAZY: it runs whenever somebody
+     * happens to read a past-due statement, and a statement's numbers must
+     * not depend on when that was. Without this, a slow reader made
+     * identical customers get different bills, and interest-on-interest
+     * went quietly uncollected. The cycle key rides in transactions.kind
+     * (interest:YYYY-MM · late-fee:YYYY-MM), so the fold can compute the
+     * due instant in SQL; entries themselves stay append-only and their
+     * created_at stays the honest posting time.
+     */
+    private static final String EFFECTIVE_AT =
+            "CASE WHEN t.kind LIKE 'interest:%' OR t.kind LIKE 'late-fee:%' " +
+            "THEN ((split_part(t.kind, ':', 2) || '-01')::timestamp " +
+            "      + interval '1 month' + interval '" + GRACE_DAYS + " days') AT TIME ZONE 'UTC' " +
+            "ELSE e.created_at END";
+
+    /** SUM of entries effectively before t · stable forever, because entries
+     *  are append-only, created_at never changes after insert, and a system
+     *  posting's effective instant is a pure function of its recorded kind */
     public static BigDecimal balanceAt(Connection c, long accountId, Instant t) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "SELECT COALESCE(SUM(amount), 0) FROM entries WHERE account_id = ? AND created_at < ?")) {
+                "SELECT COALESCE(SUM(e.amount), 0) FROM entries e " +
+                "JOIN transactions t ON t.id = e.tx_id " +
+                "WHERE e.account_id = ? AND " + EFFECTIVE_AT + " < ?")) {
             ps.setLong(1, accountId);
             ps.setTimestamp(2, Timestamp.from(t));
             try (ResultSet rs = ps.executeQuery()) {
@@ -148,13 +171,18 @@ public final class Credit {
      * statement copy says so rather than letting anyone discover it.
      */
     private static BigDecimal paymentsBetween(Connection c, long customerId,
-                                              Instant after, Instant upTo) throws SQLException {
+                                              Instant from, Instant upTo) throws SQLException {
+        // [from, upTo) · the SAME convention as every balance fold, where an
+        // instant's own entries sit strictly after a balance-before-it. The
+        // window used to be (from, upTo], which made a payment at exactly
+        // the due instant visible here and invisible to the debt fold · two
+        // measurements of one moment disagreeing about whether money arrived.
         try (PreparedStatement ps = c.prepareStatement(
                 "SELECT COALESCE(SUM(e.amount), 0) FROM entries e " +
-                "WHERE e.account_id = ? AND e.amount > 0 AND e.created_at > ? AND e.created_at <= ? " +
+                "WHERE e.account_id = ? AND e.amount > 0 AND e.created_at >= ? AND e.created_at < ? " +
                 "AND NOT EXISTS (SELECT 1 FROM entries h WHERE h.tx_id = e.tx_id AND h.account_id = ?)")) {
             ps.setLong(1, customerId + Products.CARD);
-            ps.setTimestamp(2, Timestamp.from(after));
+            ps.setTimestamp(2, Timestamp.from(from));
             ps.setTimestamp(3, Timestamp.from(upTo));
             ps.setLong(4, customerId + Products.HOLDS);
             try (ResultSet rs = ps.executeQuery()) {
@@ -171,12 +199,26 @@ public final class Credit {
         return debtAt(c, customerId, cycle.end());
     }
 
-    /** min of two caps IS the grace rule: capping at debtAtDue means what
-     *  was repaid inside the 21 days is never charged (full repayment =>
-     *  zero); capping at statementDebt means new spending during grace can
-     *  never inflate the base. */
+    /**
+     * THE GRACE RULE: interest is charged on the portion of STATEMENT debt
+     * not repaid by the due instant, with repayments measured directly from
+     * the ledger (hold releases already excluded by paymentsBetween).
+     *
+     * This used to be min(statementDebt, debtAtDue), which looks like two
+     * caps and is actually a confusion: debt at due mixes repayments with
+     * NEW spending during grace, so buying anything inside the window kept
+     * the figure high and repaid principal accrued interest anyway · and
+     * the same money could be billed again at the next close, because the
+     * new spending is the next statement's principal too. Subtracting the
+     * measured repayments cannot make either mistake: new spending is
+     * invisible to this rule by construction (it belongs to the NEXT
+     * statement), and what was repaid can never be charged. Full repayment
+     * inside the 21 days still means zero, for free.
+     */
     static BigDecimal carried(Connection c, long customerId, CycleId cycle) throws SQLException {
-        return statementDebt(c, customerId, cycle).min(debtAt(c, customerId, cycle.due()));
+        return statementDebt(c, customerId, cycle)
+                .subtract(paymentsBetween(c, customerId, cycle.end(), cycle.due()))
+                .max(BigDecimal.ZERO);
     }
 
     static BigDecimal minimumDue(BigDecimal statementDebt) {
@@ -217,9 +259,13 @@ public final class Credit {
         try (Connection c = home.open()) {
             BigDecimal carried = carried(c, customerId, cycle);
             BigDecimal interestAmt = MONTHLY_RATE.multiply(carried).setScale(2, RoundingMode.HALF_UP);
+            // the kind carries the cycle the charge settles · that is how
+            // the folds pin a lazily-posted charge to its own month rather
+            // than to whenever somebody read the statement (EFFECTIVE_AT)
             interest = interestAmt.signum() == 0
                     ? new Posting(BigDecimal.ZERO, "none", null)
-                    : charge(c, customerId, interestTxId(customerId, cycle), "interest", interestAmt);
+                    : charge(c, customerId, interestTxId(customerId, cycle),
+                             "interest:" + cycle.key(), interestAmt);
 
             BigDecimal stmtDebt = statementDebt(c, customerId, cycle);
             BigDecimal minimum = minimumDue(stmtDebt);
@@ -227,7 +273,8 @@ public final class Credit {
             boolean missed = stmtDebt.signum() > 0 && paid.compareTo(minimum) < 0;
             lateFee = !missed
                     ? new Posting(BigDecimal.ZERO, "none", null)
-                    : charge(c, customerId, lateFeeTxId(customerId, cycle), "late-fee", LATE_FEE);
+                    : charge(c, customerId, lateFeeTxId(customerId, cycle),
+                             "late-fee:" + cycle.key(), LATE_FEE);
         }
         return new CloseResult(cycle, interest, lateFee);
     }
@@ -295,7 +342,9 @@ public final class Credit {
             if (interest == null) {
                 // inside grace: the charge has not happened and may never ·
                 // what it WOULD be if the clock stopped now, said as pending
-                BigDecimal wouldCarry = stmtDebt.min(debtAt(c, customerId, now));
+                // and projected by the SAME rule the close will use · the
+                // statement debt not yet repaid, measured from the ledger
+                BigDecimal wouldCarry = stmtDebt.subtract(paid).max(BigDecimal.ZERO);
                 BigDecimal projected = MONTHLY_RATE.multiply(wouldCarry).setScale(2, RoundingMode.HALF_UP);
                 interest = new Posting(projected, projected.signum() == 0 ? "none" : "pending",
                         interestTxId(customerId, cycle));
@@ -306,10 +355,14 @@ public final class Credit {
                         : new Posting(LATE_FEE, "pending", lateFeeTxId(customerId, cycle));
             }
             List<Line> lines = new ArrayList<>();
+            // the lines live where the FOLD says they live: a system posting
+            // appears on the statement of the cycle its id names, stamped at
+            // its effective instant, however late the close actually ran
             try (PreparedStatement ps = c.prepareStatement(
-                    "SELECT e.tx_id, e.created_at, e.amount, t.kind FROM entries e " +
+                    "SELECT e.tx_id, " + EFFECTIVE_AT + " AS at, e.amount, t.kind FROM entries e " +
                     "JOIN transactions t ON t.id = e.tx_id " +
-                    "WHERE e.account_id = ? AND e.created_at >= ? AND e.created_at < ? ORDER BY e.created_at, e.id")) {
+                    "WHERE e.account_id = ? AND " + EFFECTIVE_AT + " >= ? AND " + EFFECTIVE_AT + " < ? " +
+                    "ORDER BY 2, e.id")) {
                 ps.setLong(1, customerId + Products.CARD);
                 ps.setTimestamp(2, Timestamp.from(cycle.start()));
                 ps.setTimestamp(3, Timestamp.from(cycle.end()));

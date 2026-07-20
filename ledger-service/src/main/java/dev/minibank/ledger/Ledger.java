@@ -92,16 +92,55 @@ public final class Ledger {
             // a creation path that forgets the column gets an account that is
             // too strict, never too loose. Mirrors db/shard/V8__minicredit.sql.
             st.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS min_balance NUMERIC(20,8) DEFAULT 0");
+            // The audit table is created BEFORE the repair below because the
+            // repair consults it · and every path that moves a limit writes
+            // to it, so nothing changes a limit without a trace.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS credit_limit_events (
+                    id         BIGSERIAL PRIMARY KEY,
+                    account_id BIGINT NOT NULL REFERENCES accounts(id),
+                    old_floor  NUMERIC(20,8) NOT NULL,
+                    new_floor  NUMERIC(20,8) NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+                )""");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_limit_events_acct ON credit_limit_events(account_id, id)");
             // The backfill, as a REPAIR rather than a one-shot: any code path
             // that inserted an account without the column left the DEFAULT of
-            // 0 behind, and for external/credit/loan rows a 0 floor is never
-            // a legitimate state (external is unconstrained by design; a card
-            // or loan with a 0 floor is one nobody can use). Repairing only
-            // those three shapes means a customer's CHANGED limit · any floor
-            // other than 0 · is never flattened back to the shelf default.
+            // 0 behind, and for external/credit/loan rows a 0 floor is only a
+            // legitimate state when somebody CHOSE it. So the repair runs
+            // under two rules, learned the hard way:
+            //
+            //   1. rows with a credit_limit_events history are NEVER touched ·
+            //      an explicit limit change is authoritative forever. Without
+            //      this, a card the bank deliberately froze (limit 0, which IS
+            //      min_balance 0) silently regained 1000 of credit on every
+            //      restart, bypassing the audit that exists to prevent exactly
+            //      that.
+            //   2. the repair WRITES the audit event itself when it does act,
+            //      so even the repair cannot change a limit without a trace ·
+            //      and its own event makes it fire at most once per row.
+            //
+            // External floors stay NULL by design (unconstrained: the world
+            // going negative is how money enters the bank) and have no limit
+            // to audit; changeLimit refuses non-credit accounts, so an
+            // external row can never carry an event.
             st.execute("UPDATE accounts SET min_balance = NULL WHERE kind = 'external' AND min_balance IS NOT NULL");
-            st.execute("UPDATE accounts SET min_balance = -1000 WHERE kind = 'credit' AND min_balance = 0");
-            st.execute("UPDATE accounts SET min_balance = -100000 WHERE kind = 'loan' AND min_balance = 0");
+            st.execute("""
+                WITH repaired AS (
+                    UPDATE accounts a SET min_balance = -1000
+                    WHERE a.kind = 'credit' AND a.min_balance = 0
+                      AND NOT EXISTS (SELECT 1 FROM credit_limit_events ev WHERE ev.account_id = a.id)
+                    RETURNING a.id)
+                INSERT INTO credit_limit_events(account_id, old_floor, new_floor)
+                SELECT id, 0, -1000 FROM repaired""");
+            st.execute("""
+                WITH repaired AS (
+                    UPDATE accounts a SET min_balance = -100000
+                    WHERE a.kind = 'loan' AND a.min_balance = 0
+                      AND NOT EXISTS (SELECT 1 FROM credit_limit_events ev WHERE ev.account_id = a.id)
+                    RETURNING a.id)
+                INSERT INTO credit_limit_events(account_id, old_floor, new_floor)
+                SELECT id, 0, -100000 FROM repaired""");
             st.execute("ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_balance_check");
             st.execute("ALTER TABLE accounts ADD CONSTRAINT accounts_balance_check " +
                        "CHECK (min_balance IS NULL OR balance >= min_balance)");
@@ -166,18 +205,10 @@ public final class Ledger {
             st.execute("DROP TRIGGER IF EXISTS transactions_immutable ON transactions");
             st.execute("CREATE TRIGGER transactions_immutable BEFORE UPDATE OR DELETE ON transactions " +
                        "FOR EACH ROW EXECUTE FUNCTION ledger_immutable()");
-            // MINICREDIT (V8 mirror, continued): limit changes are auditable
-            // facts · not money, so not entries · and the statement fold reads
-            // entries by account and time, which wants its own index.
-            st.execute("""
-                CREATE TABLE IF NOT EXISTS credit_limit_events (
-                    id         BIGSERIAL PRIMARY KEY,
-                    account_id BIGINT NOT NULL REFERENCES accounts(id),
-                    old_floor  NUMERIC(20,8) NOT NULL,
-                    new_floor  NUMERIC(20,8) NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
-                )""");
-            st.execute("CREATE INDEX IF NOT EXISTS idx_limit_events_acct ON credit_limit_events(account_id, id)");
+            // MINICREDIT (V8 mirror, continued): the statement fold reads
+            // entries by account and time, which wants its own index. (The
+            // credit_limit_events audit table is created further up, before
+            // the min_balance repair that consults it.)
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_account_at ON entries(account_id, created_at)");
         }
         // the outbox is not optional decoration: a transfer writes to it,

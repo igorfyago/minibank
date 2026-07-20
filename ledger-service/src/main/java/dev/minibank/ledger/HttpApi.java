@@ -290,7 +290,13 @@ public final class HttpApi {
 
                     String label, tag, detail = null;
                     boolean cross = false, pending = false;
-                    switch (kind) {
+                    // minicredit's charge kinds carry the cycle they settle
+                    // (interest:YYYY-MM · how the ledger folds pin a late
+                    // close to its own month) · for LABELLING they collapse
+                    // to the family
+                    String kindFamily = kind.startsWith("interest:") ? "interest"
+                            : kind.startsWith("late-fee:") ? "late-fee" : kind;
+                    switch (kindFamily) {
                         case "depart" -> {
                             cross = true;
                             String to = outboxField(c, tx, "to");
@@ -2109,6 +2115,12 @@ public final class HttpApi {
             }
             BigDecimal limit = Credit.limit(id);
             BigDecimal available = limit.add(cardBal);
+            // utilization is SERVED so the tile never recomputes it · the row
+            // CHECK guarantees it can never exceed 100
+            BigDecimal utilization = limit.signum() > 0
+                    ? cardBal.negate().max(BigDecimal.ZERO)
+                        .multiply(new BigDecimal("100")).divide(limit, 1, java.math.RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
             BigDecimal spent = Credit.spentBetween(id, cycle.start(), now);
             // the PREVIOUS cycle's minimum, while its grace window is open ·
             // what the tile nags about. Zero once paid, gone once due.
@@ -2123,6 +2135,7 @@ public final class HttpApi {
                     + "\",\"held\":\"" + plain(held)
                     + "\",\"limit\":\"" + plain(limit)
                     + "\",\"available\":\"" + plain(available)
+                    + "\",\"utilization\":\"" + utilization.toPlainString()
                     + "\",\"spentThisCycle\":\"" + plain(spent)
                     + "\",\"closesAt\":\"" + cycle.end()
                     + "\",\"minimumDueCarried\":\"" + plain(minCarried)

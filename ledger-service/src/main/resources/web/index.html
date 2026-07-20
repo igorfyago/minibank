@@ -1738,8 +1738,9 @@ async function loadCreditTile() {
     const [cur, stmt] = await Promise.all([
       creditOf('cur:' + me, '/api/credit/current?customer=' + me),
       creditOf('stmt:' + me, '/api/credit/statement?customer=' + me)]);
-    const lim = Number(cur.limit), avail = Number(cur.available);
-    const pct = lim > 0 ? Math.min(100, Math.max(0, 100 * (lim - avail) / lim)) : 0;
+    /* utilization is the SERVER's figure · the same fold that owns every
+       other number here, not parallel arithmetic in the browser */
+    const pct = Number(cur.utilization) || 0;
     // cycle labels and the due date render in UTC · cycles ARE UTC months,
     // and a viewer west of Greenwich must not see the boundary day drift
     const [cy, cm] = cur.cycle.split('-').map(Number);
