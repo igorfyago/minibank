@@ -1197,10 +1197,16 @@ test('a live event arriving while an animation runs is queued and drawn later', 
   let now = 10_000, seq = 0;
   const timers = [];
   const ctx = {
-    liveQueue: [], drainTimer: null, playingUntil: 0, drawn: [], Math,
+    liveQueue: [], drainTimer: null, playingUntil: 0, drawn: [], selected: [], Math,
     Date: { now: () => now },
     setTimeout: (fn, ms) => { timers.push({ id: ++seq, at: now + Math.max(0, ms), fn }); return seq; },
     runJourney: j => ctx.drawn.push(j.name),
+    noteLiveSelection: tx => ctx.selected.push(tx),
+    // the page asks lib.js who owns the map · here the real function, driven by
+    // a state the test controls, so the scheduler is tested against the real rule
+    tabVisible: true, hasSelection: false,
+    livePolicy: () => MB.liveEventPolicy({
+      tabVisible: ctx.tabVisible, running: now < ctx.playingUntil, hasSelection: ctx.hasSelection }),
   };
   vm.createContext(ctx);
   vm.runInContext(src, ctx);
@@ -1253,4 +1259,343 @@ test('the live poller hands its events to the queue rather than drawing directly
     'xrayTick must ask the queue to drain');
   assert.ok(!/runJourney\(/.test(tick),
     'xrayTick must not animate directly · that is how it used to race replays');
+});
+
+/* ==========================================================================
+ * SELECTING A TRANSACTION MUST PLAY IT.
+ *
+ * The reported bug: clicking a row highlighted it and the map sat still. The
+ * cause was a step COUNT test standing in for a drawability test · a trace
+ * with one step was assumed to be unanimatable, but the securities saga puts
+ * its whole nine hop loop inside a single step, so every settlement selected
+ * without ever moving. Worse, that branch also skipped the teardown, so the
+ * previous journey kept flying under a panel describing a new transaction.
+ *
+ * The decision is now one pure function. What the page keeps is the drawing.
+ * ======================================================================== */
+const SEL_MAP = MB.mapGraph([
+  ['browser', 'caddy'], ['caddy', 'api'], ['api', 'shard0'], ['api', 'shard1'],
+  ['shard0', 'kafka'], ['shard1', 'kafka'], ['kafka', 'applier'],
+  ['applier', 'shard0'], ['applier', 'shard1'], ['kafka', 'notif'],
+  ['shard0', 'ksettle'], ['shard1', 'ksettle'], ['ksettle', 'brokercons'],
+  ['brokercons', 'brokerdb'], ['brokerdb', 'korders'],
+  ['korders', 'settle'], ['settle', 'shard0'], ['settle', 'shard1'],
+]);
+const oneStep = kind => [{ step: kind, region: 'eu', ts: '2026-07-20T10:00:00Z', detail: 'x' }];
+
+test('a ONE STEP trace that the map can draw still plays · the reported bug', () => {
+  const d = MB.playDecision({ steps: oneStep('settle:aapl:buy'), graph: SEL_MAP, auto: true });
+  assert.equal(d.play, true,
+    'a securities settle carries nine hops in ONE step · counting steps called it undrawable');
+  assert.equal(d.canDraw, true);
+});
+
+test('a one step LOCAL transfer plays too · step count is not drawability', () => {
+  const d = MB.playDecision({ steps: oneStep('transfer'), graph: SEL_MAP, auto: true });
+  assert.equal(d.play, true);
+});
+
+test('every selection decision tears down the previous journey first', () => {
+  for (const steps of [oneStep('transfer'), oneStep('settle:aapl:buy'), [], oneStep('nonsense:kind')]) {
+    const d = MB.playDecision({ steps, graph: SEL_MAP, auto: true });
+    assert.equal(d.stopFirst, true,
+      'the old balls must go even when the new trace cannot be drawn · otherwise ' +
+      'the map shows one transaction while the panel describes another');
+  }
+});
+
+test('an undrawable trace does not play and says why, rather than looking ignored', () => {
+  const d = MB.playDecision({ steps: oneStep('nonsense:kind'), graph: SEL_MAP, auto: true });
+  assert.equal(d.play, false);
+  assert.equal(d.canDraw, false);
+  assert.ok(d.reason && /nonsense:kind/.test(d.reason), 'the reason must name what happened');
+});
+
+test('a trace with no steps at all is a stated empty, not a silent return', () => {
+  const d = MB.playDecision({ steps: [], graph: SEL_MAP, auto: true });
+  assert.equal(d.play, false);
+  assert.equal(d.stopFirst, true);
+  assert.ok(/no recorded steps/.test(d.reason));
+});
+
+test('a non auto selection still refuses to play but keeps the teardown', () => {
+  const d = MB.playDecision({ steps: oneStep('transfer'), graph: SEL_MAP, auto: false });
+  assert.equal(d.play, false, 'auto false is an explicit "select without playing"');
+  assert.equal(d.canDraw, true, 'drawability is a fact about the trace, not about the caller');
+  assert.equal(d.stopFirst, true);
+});
+
+// ------------------------------------------------------- controls tell truth
+test('replay and loop are disabled until a drawable trace is selected', () => {
+  const none = MB.controlState({ hasSelection: false, canDraw: false });
+  assert.equal(none.replay, false); assert.equal(none.loop, false);
+  assert.ok(none.reason, 'a disabled control must carry a reason for its hover');
+
+  const dead = MB.controlState({ hasSelection: true, canDraw: false });
+  assert.equal(dead.replay, false); assert.equal(dead.loop, false);
+  assert.ok(/nothing to animate|no map/i.test(dead.reason));
+
+  const live = MB.controlState({ hasSelection: true, canDraw: true });
+  assert.equal(live.replay, true); assert.equal(live.loop, true);
+  assert.equal(live.reason, '');
+});
+
+// ------------------------------------------------------- live event autoplay
+test('a live event auto plays only on an idle, VISIBLE x-ray tab', () => {
+  assert.deepEqual(
+    MB.liveEventPolicy({ tabVisible: true, running: false, hasSelection: false }),
+    { animate: true, select: true, keep: true });
+});
+
+test('a live event never animates onto a hidden x-ray tab', () => {
+  const p = MB.liveEventPolicy({ tabVisible: false, running: false, hasSelection: false });
+  assert.equal(p.animate, false, 'no animation runs while the tab is hidden');
+  assert.equal(p.select, false, 'and it must not force a selection nobody can see');
+  assert.equal(p.keep, false,
+    'nor is the animation OWED · it must not fire on return to the tab');
+});
+
+test('a live event never hijacks a running replay', () => {
+  const p = MB.liveEventPolicy({ tabVisible: true, running: true, hasSelection: true });
+  assert.equal(p.animate, false);
+  assert.equal(p.select, false);
+  assert.equal(p.keep, true, 'it waits its turn rather than being dropped');
+});
+
+test('a live event does not paint over a trace the visitor deliberately chose', () => {
+  const p = MB.liveEventPolicy({ tabVisible: true, running: false, hasSelection: true });
+  assert.equal(p.animate, false,
+    'an idle SELECTED path must not have another transaction balls drawn across it');
+  assert.equal(p.select, false, 'explicit selection outranks live traffic');
+  assert.equal(p.keep, false,
+    'nor owed later · closing the panel must not release a burst of stored traffic');
+});
+
+// -------------------------------------------------------------- auto pick
+test('auto pick fires once per visit and never over an explicit selection', () => {
+  assert.equal(MB.autoPickPlan({ autoPicked: false, hasSelection: false }).pick, true);
+  assert.equal(MB.autoPickPlan({ autoPicked: true, hasSelection: false }).pick, false);
+  assert.equal(MB.autoPickPlan({ autoPicked: false, hasSelection: true }).pick, false);
+});
+
+test('auto pick stands down for a deep linked tx and for a payment being followed', () => {
+  assert.equal(MB.autoPickPlan({ autoPicked: false, hasSelection: false, deepLinkTx: 'abc' }).pick, false,
+    'a deep link is an explicit request · auto pick must not race it');
+  assert.equal(MB.autoPickPlan({ autoPicked: false, hasSelection: false, following: 'abc' }).pick, false,
+    'followTx clicks the x-ray tab itself · auto pick used to steal the visitor own payment');
+});
+
+test('auto pick gives up on an empty feed with a stated empty, not silence', () => {
+  const p = MB.autoPickPlan({ autoPicked: false, hasSelection: false, rows: 0, attempt: 6 });
+  assert.equal(p.pick, false);
+  assert.equal(p.retry, false);
+  assert.ok(/no traces yet/i.test(p.reason));
+  assert.equal(MB.autoPickPlan({ autoPicked: false, hasSelection: false, rows: 0, attempt: 1 }).retry, true);
+});
+
+// ---------------------------------------------------------------- deep link
+test('a deep link can carry a transaction id', () => {
+  assert.deepEqual(MB.parseXrayHash('#xray?tx=abc123'), { tab: 'xray', tx: 'abc123' });
+  assert.deepEqual(MB.parseXrayHash('#xray/abc123'), { tab: 'xray', tx: 'abc123' });
+  assert.deepEqual(MB.parseXrayHash('#xray'), { tab: 'xray', tx: null });
+  assert.deepEqual(MB.parseXrayHash('#quiz'), { tab: 'quiz', tx: null });
+  assert.deepEqual(MB.parseXrayHash('#nope'), { tab: null, tx: null });
+  assert.deepEqual(MB.parseXrayHash(''), { tab: null, tx: null });
+});
+
+// ------------------------------------------------------------- map clicks
+test('clicking a map node that resolves to exactly one transaction plays it', () => {
+  const p = MB.mapClickPlan({ node: 'shard0', txs: ['t1'] });
+  assert.equal(p.mode, 'play'); assert.equal(p.tx, 't1');
+});
+
+test('clicking a map node with several candidates filters and leaves the balls alone', () => {
+  const p = MB.mapClickPlan({ node: 'kafka', txs: ['t1', 't2'] });
+  assert.equal(p.mode, 'filter');
+  assert.deepEqual(p.txs, ['t1', 't2']);
+  assert.equal(p.tx, null, 'filtering must never cancel a running journey');
+});
+
+test('clicking a map node nothing has touched inspects rather than animating', () => {
+  assert.equal(MB.mapClickPlan({ node: 'issuer', txs: [] }).mode, 'inspect');
+});
+
+test('a repeated transaction id resolves to one candidate, so the node plays it', () => {
+  assert.equal(MB.mapClickPlan({ node: 'shard0', txs: ['t1', 't1', 't1'] }).mode, 'play');
+});
+
+// ------------------------------------------------- leaving and returning
+test('leaving the x-ray tab stops playback but remembers the selection', () => {
+  const s = MB.tabLeavePlan({ looping: true });
+  assert.equal(s.stop, true, 'nothing may burn frames on a tab nobody is looking at');
+  assert.equal(s.keepSelection, true);
+  assert.equal(s.loopArmed, true, 'loop is an explicit standing request · remember it');
+});
+
+test('returning restores rather than replaying, unless loop was left on', () => {
+  assert.equal(MB.tabEnterPlan({ hasSelection: true, loopArmed: false }).play, false,
+    'a restored selection must sit at rest with replay offered, not replay itself');
+  assert.equal(MB.tabEnterPlan({ hasSelection: true, loopArmed: false }).autoPick, false,
+    'an explicit selection always beats auto pick');
+  assert.equal(MB.tabEnterPlan({ hasSelection: true, loopArmed: true }).play, true,
+    'loop on means keep playing');
+  assert.equal(MB.tabEnterPlan({ hasSelection: false, loopArmed: false }).autoPick, true);
+});
+
+/*
+ * THE DRAIN SCHEDULER OBEYS THE OWNERSHIP RULE.
+ *
+ * The lifted-function technique from the queue test above, pointed at the gate
+ * rather than at the ordering. The scheduler used to consult only playingUntil,
+ * so live traffic animated onto a hidden x-ray tab (burning frames nobody was
+ * watching) and drew another transaction's balls across a path the visitor had
+ * deliberately selected. Both are now decisions of MB.liveEventPolicy, and the
+ * real function is what this drives the scheduler with.
+ */
+function liftDrain() {
+  const vm = require('node:vm');
+  const start = INDEX.indexOf('function drainLiveQueue()');
+  const close = /\r?\n\}\r?\n/.exec(INDEX.slice(start));
+  const src = INDEX.slice(start, start + close.index + close[0].length);
+  let now = 10_000, seq = 0;
+  const timers = [];
+  const ctx = {
+    liveQueue: [], drainTimer: null, playingUntil: 0, drawn: [], selected: [], Math,
+    tabVisible: true, hasSelection: false,
+    Date: { now: () => now },
+    setTimeout: (fn, ms) => { timers.push({ id: ++seq, at: now + Math.max(0, ms), fn }); return seq; },
+    runJourney: j => ctx.drawn.push(j.name),
+    noteLiveSelection: tx => ctx.selected.push(tx),
+    livePolicy: () => MB.liveEventPolicy({
+      tabVisible: ctx.tabVisible, running: now < ctx.playingUntil, hasSelection: ctx.hasSelection }),
+  };
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx);
+  ctx.run = () => vm.runInContext('drainLiveQueue()', ctx);
+  ctx.advance = ms => {
+    const target = now + ms;
+    for (;;) {
+      const due = timers.filter(t => t.at <= target).sort((a, b) => a.at - b.at)[0];
+      if (!due) break;
+      timers.splice(timers.indexOf(due), 1);
+      now = due.at; due.fn();
+    }
+    now = target;
+  };
+  return ctx;
+}
+
+test('live traffic does not animate onto a hidden x-ray tab, and is not owed later', () => {
+  const ctx = liftDrain();
+  ctx.tabVisible = false;
+  ctx.liveQueue.push({ name: 'a', total: 300 }, { name: 'b', total: 300 });
+  ctx.run();
+  assert.deepEqual(ctx.drawn, [], 'no animation runs while the x-ray tab is hidden');
+  assert.equal(ctx.liveQueue.length, 0,
+    'and the backlog is dropped · returning to the tab must not fire a burst of ' +
+    'journeys the visitor was never waiting for');
+});
+
+test('live traffic does not paint over the trace the visitor chose', () => {
+  const ctx = liftDrain();
+  ctx.hasSelection = true;
+  ctx.liveQueue.push({ name: 'a', total: 300 });
+  ctx.run();
+  ctx.advance(10_000);
+  assert.deepEqual(ctx.drawn, [],
+    'the selected path owns the map · this is the selection-matches-map invariant');
+});
+
+test('live traffic resumes normally on a visible, unselected, idle map', () => {
+  const ctx = liftDrain();
+  ctx.liveQueue.push({ name: 'a', total: 300 }, { name: 'b', total: 300 });
+  ctx.run();
+  ctx.advance(10_000);
+  assert.deepEqual(ctx.drawn, ['a', 'b']);
+  assert.equal(ctx.drainTimer, null, 'an empty queue must not hold a live timer');
+});
+
+/*
+ * THE WIRING THAT THE LIFTED TESTS CANNOT REACH.
+ *
+ * Deliberately narrow, and each one names a specific regression rather than a
+ * spelling. The false-green this repo has already had came from asserting that
+ * a line of source text existed; these assert that a decision is DELEGATED to
+ * the tested function, which is the only thing a source read can honestly say.
+ */
+test('traceTx decides by drawability, never by counting steps', () => {
+  const i = INDEX.indexOf('async function traceTx(');
+  assert.ok(i > 0, 'traceTx must still be findable in the page');
+  const body = INDEX.slice(i, INDEX.indexOf('\n}', i));
+  assert.ok(/MB\.playDecision\(/.test(body),
+    'the play-or-not decision must come from the tested pure function');
+  assert.ok(!/steps\.length > 1/.test(body),
+    'a step COUNT is not drawability · this exact test is the reported bug, ' +
+    'because a securities settle carries nine hops inside ONE step');
+});
+
+test('the loop guard reads the panel the tab switcher actually hides', () => {
+  const i = INDEX.indexOf('function loopAgain()');
+  const body = INDEX.slice(i, INDEX.indexOf('\n}', i));
+  assert.ok(!/#trace-card'\)\.hidden/.test(body),
+    'loopAgain used to test #trace-card.hidden, which the tab switcher never ' +
+    'sets · .hidden goes on the ancestor #tab-xray, so a loop cycled invisibly forever');
+  assert.ok(/xrayVisible\(\)/.test(body), 'it must ask whether the map is on screen');
+});
+
+test('a cancelled journey cannot leave a ball spawn timer behind', () => {
+  const i = INDEX.indexOf('function pulse(');
+  const body = INDEX.slice(i, INDEX.indexOf('\nfunction glow', i));
+  assert.ok(/playTimers\.push\(setTimeout\(/.test(body),
+    'pulse used to spawn its ball on a bare setTimeout invisible to stopPlay, ' +
+    'so up to nine balls of a cancelled trade loop still landed on the next run');
+});
+
+test('stopping a journey also resets the bar and hands back the in-flight box', () => {
+  const i = INDEX.indexOf('function stopPlay()');
+  const body = INDEX.slice(i, INDEX.indexOf('\n}', i));
+  assert.ok(/#play-fill/.test(body),
+    'the bar used to freeze wherever its transition had reached and reappear ' +
+    'at the previous transaction position on the next selection');
+  assert.ok(/showReplayInFlight\(null\)/.test(body),
+    'the null timer lived INSIDE playTimers, so a stop between depart and ' +
+    'arrive left replayInFlight set and blocked every future live update');
+});
+
+test('a live event on an idle map SELECTS what it animates', () => {
+  const ctx = liftDrain();
+  ctx.liveQueue.push({ name: 'a', total: 300, tx: 't-a' });
+  ctx.run();
+  ctx.advance(5_000);
+  assert.deepEqual(ctx.drawn, ['a']);
+  assert.deepEqual(ctx.selected, ['t-a'],
+    'the live path used to be animation-only · the map moved while the panel ' +
+    'and the row still described whatever was there before');
+});
+
+test('a live event arriving mid-replay selects nothing', () => {
+  const ctx = liftDrain();
+  ctx.playingUntil = 20_000;
+  ctx.liveQueue.push({ name: 'a', total: 300, tx: 't-a' });
+  ctx.run();
+  ctx.advance(1_000);
+  assert.deepEqual(ctx.selected, [], 'passive data never steals the selection');
+  assert.deepEqual(ctx.drawn, []);
+});
+
+test('an auto-picked selection is treated as explicit and outranks live traffic', () => {
+  const i = INDEX.indexOf('async function traceTx(');
+  const body = INDEX.slice(i, INDEX.indexOf('\n}', i));
+  assert.ok(/selectionExplicit = true/.test(body),
+    'every path through traceTx is somebody asking for THAT transaction');
+  const n = INDEX.indexOf('function noteLiveSelection(');
+  const note = INDEX.slice(n, INDEX.indexOf('\n}', n));
+  assert.ok(/selectionExplicit = false/.test(note),
+    'a selection live traffic made for you must not then silence the next event');
+});
+
+test('the page settles its controls before anything is selected', () => {
+  assert.ok(/setReplayable\(false\);\s*\/\/ nothing is selected yet/.test(INDEX),
+    'setReplayable used to run only from renderTrace and playTrace, so at load ' +
+    'replay was a silent no-op and loop lit up while playing nothing');
 });

@@ -587,7 +587,147 @@
     return { hops: hops, lights: lights, unknown: unknown, total: Math.round(cursor) };
   }
 
+  // ======================================================= what a click MEANS
+  /*
+   * SELECTING A TRANSACTION IS A REQUEST TO SEE IT MOVE.
+   *
+   * The page used to decide this inline, with `auto && steps.length > 1`. A
+   * step COUNT was standing in for drawability, and it is not the same
+   * question: the securities saga is one row on the customer's shard, so
+   * Products.settleFill claims a single transaction and the whole nine hop
+   * loop arrives as ONE step. Every settlement therefore selected, highlighted
+   * a row, and sat perfectly still. So did every purely local transfer.
+   *
+   * The honest test is "does this trace produce hops on this graph", which is
+   * exactly what journey() already answers. Asking it is the fix.
+   *
+   * The second half matters as much: stopFirst is unconditional. The old
+   * branch skipped teardown whenever it skipped play, so choosing an
+   * undrawable transaction left the PREVIOUS journey's balls flying under a
+   * panel describing the new one · the map and the panel disagreeing is the
+   * one state this view must never be in.
+   */
+  function playDecision(opts) {
+    var o = opts || {};
+    var steps = o.steps || [];
+    if (!steps.length) {
+      return { play: false, stopFirst: true, canDraw: false,
+               reason: 'no recorded steps for this transaction' };
+    }
+    var canDraw = journey(steps, o.graph).hops.length > 0;
+    if (!canDraw) {
+      return { play: false, stopFirst: true, canDraw: false,
+               reason: 'no map animation for this one · ' +
+                       steps.map(function (s) { return s.step; }).join(', ') +
+                       ' happens off this diagram' };
+    }
+    return { play: !!o.auto, stopFirst: true, canDraw: true, reason: '' };
+  }
+
+  /** A control that cannot act says so, rather than being a silent no-op. */
+  function controlState(opts) {
+    var o = opts || {};
+    if (!o.hasSelection) {
+      return { replay: false, loop: false, reason: 'select a transaction first' };
+    }
+    if (!o.canDraw) {
+      return { replay: false, loop: false,
+               reason: 'nothing to animate · this transaction has no drawable hops' };
+    }
+    return { replay: true, loop: true, reason: '' };
+  }
+
+  /*
+   * WHO OWNS THE MAP WHEN A LIVE EVENT LANDS.
+   *
+   * Three rules, and the page had none of them in one place:
+   *   a hidden tab is not watched, so nothing animates and nothing is owed,
+   *   a running journey is being watched, so the event waits its turn,
+   *   an explicit selection outranks passing traffic, so live events do not
+   *   paint another transaction's balls across the path the visitor chose.
+   * Only the idle, visible, unselected map auto plays.
+   */
+  function liveEventPolicy(opts) {
+    var o = opts || {};
+    if (!o.tabVisible) return { animate: false, select: false, keep: false };
+    if (o.running)     return { animate: false, select: false, keep: true };
+    /* An idle map with a trace OPEN belongs to that trace. Keeping these to
+       replay later would mean the visitor closes the panel and is immediately
+       shown a burst of unrelated traffic, so they are not owed either. */
+    if (o.hasSelection) return { animate: false, select: false, keep: false };
+    return { animate: true, select: true, keep: true };
+  }
+
+  /** Auto pick opens the tab on something, and yields to every explicit intent. */
+  function autoPickPlan(opts) {
+    var o = opts || {};
+    if (o.autoPicked)   return { pick: false, retry: false, reason: '' };
+    if (o.hasSelection) return { pick: false, retry: false, reason: '' };
+    if (o.deepLinkTx)   return { pick: false, retry: false, reason: '' };
+    if (o.following)    return { pick: false, retry: false, reason: '' };
+    if (o.rows === 0) {
+      var attempt = o.attempt || 0;
+      return attempt >= 6
+        ? { pick: false, retry: false, reason: 'no traces yet · send some money on the App tab' }
+        : { pick: false, retry: true, reason: '' };
+    }
+    return { pick: true, retry: false, reason: '' };
+  }
+
+  /* A deep link is a request to SEE a thing, and the thing may be a specific
+     transaction. `#xray` alone behaves as an ordinary tab switch. */
+  var HASH_TABS = ['xray', 'quiz', 'console', 'app'];
+  function parseXrayHash(hash) {
+    var h = String(hash || '').replace(/^#/, '');
+    if (!h) return { tab: null, tx: null };
+    var tx = null;
+    var q = h.indexOf('?');
+    if (q >= 0) {
+      var m = /(?:^|&)tx=([^&]+)/.exec(h.slice(q + 1));
+      if (m) tx = decodeURIComponent(m[1]);
+      h = h.slice(0, q);
+    }
+    var slash = h.indexOf('/');
+    if (slash >= 0) { if (!tx && h.slice(slash + 1)) tx = decodeURIComponent(h.slice(slash + 1)); h = h.slice(0, slash); }
+    return { tab: HASH_TABS.indexOf(h) >= 0 ? h : null, tx: tx };
+  }
+
+  /* Clicking a box on the map is an INSPECT gesture that becomes a play only
+     when it is unambiguous. One transaction touching the node is a journey the
+     visitor plainly means; several is a filter, and filtering must never stop
+     the balls that are already flying. */
+  function mapClickPlan(opts) {
+    var o = opts || {};
+    var uniq = [];
+    (o.txs || []).forEach(function (t) { if (t && uniq.indexOf(t) < 0) uniq.push(t); });
+    if (uniq.length === 1) return { mode: 'play', tx: uniq[0], txs: uniq };
+    if (uniq.length > 1)   return { mode: 'filter', tx: null, txs: uniq };
+    return { mode: 'inspect', tx: null, txs: [] };
+  }
+
+  /* Leaving is a STOP, not a pause with a backlog: the queued remainder of an
+     old run must never fire on return. What survives is the selection and the
+     visitor's standing request to keep looping. */
+  function tabLeavePlan(opts) {
+    var o = opts || {};
+    return { stop: true, keepSelection: true, loopArmed: !!o.looping };
+  }
+
+  function tabEnterPlan(opts) {
+    var o = opts || {};
+    if (o.hasSelection) return { play: !!o.loopArmed, autoPick: false };
+    return { play: false, autoPick: true };
+  }
+
   return {
+    playDecision: playDecision,
+    controlState: controlState,
+    liveEventPolicy: liveEventPolicy,
+    autoPickPlan: autoPickPlan,
+    parseXrayHash: parseXrayHash,
+    mapClickPlan: mapClickPlan,
+    tabLeavePlan: tabLeavePlan,
+    tabEnterPlan: tabEnterPlan,
     makeApi: makeApi,
     mapGraph: mapGraph,
     journey: journey,

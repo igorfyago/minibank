@@ -227,6 +227,10 @@
     cursor:pointer; font-size:12px; }
   .tick-ic { width:24px !important; height:24px !important; font-size:12px !important; }
   .tick-item.new { animation:slidein .25s ease; }
+  /* a node click that resolves to several transactions FILTERS rather than
+     playing · the rows it did not match recede instead of disappearing, so
+     the list keeps its shape and nothing jumps under the cursor */
+  .tick-item.dim { opacity:.28; }
   .tick-item:hover { background:rgba(255,255,255,.04); }
   /* Which row you are looking at on the left. The map animates the SELECTED
      transaction, so the list has to say which one that is: without it the
@@ -1202,13 +1206,35 @@ const $ = s => document.querySelector(s);
 const api = MB.makeApi(fetch);
 
 /* ---------------- tabs ---------------- */
+/* LEAVING THE X-RAY TAB IS A STOP.
+ *
+ * It used to be nothing at all: the handler toggled classes and returned, so a
+ * loop kept cycling into an off screen SVG forever (loopAgain's guard read the
+ * wrong element, see xrayVisible) and balls kept spawning where nobody was
+ * looking. Leaving is a stop, not a pause with a backlog · the queued
+ * remainder of an old run must never fire on return. What survives is the
+ * selection, the panel, the row highlight and, because it is an explicit
+ * standing request, whether loop was on. Both plans are in lib.js, tested. */
 document.querySelectorAll('.tab-btn[data-tab]').forEach(b => b.onclick = () => {
+  const leavingXray = !$('#tab-xray').classList.contains('hidden') && b.dataset.tab !== 'xray';
+  if (leavingXray) {
+    const plan = MB.tabLeavePlan({ looping });
+    loopArmed = plan.loopArmed;
+    if (plan.stop) { clearTimeout(loopTimer); loopTimer = null; stopPlay(); }
+  }
   document.querySelectorAll('.tab-btn').forEach(x => x.classList.toggle('on', x === b));
   ['app','xray','console','quiz'].forEach(t => $('#tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
   history.replaceState(null, '', '#' + b.dataset.tab);
-  if (b.dataset.tab === 'xray') { xrayTick(); autoPickLatest(); }
+  if (b.dataset.tab === 'xray') {
+    xrayTick();
+    const plan = MB.tabEnterPlan({ hasSelection: !!activeTrace, loopArmed });
+    if (plan.autoPick) autoPickLatest();
+    else if (plan.play && activeTrace) playTrace(activeTrace);
+  }
   if (b.dataset.tab === 'console') { initStudio(); kafkaTick(); }
 });
+/** Whether loop was running when the visitor last left the x-ray tab. */
+let loopArmed = false;
 
 
 /* ---------------- app tab ---------------- */
@@ -1698,7 +1724,7 @@ async function loadStatement() {
       <div class="tx-right"><div class="tx-amt ${x.in ? 'in' : ''}">${x.in ? '+' : '−'}${fmt(abs)}</div>
         <div class="tx-after">${fmt(x.after)}</div></div>
     </div>
-    <div class="tx-detail hidden">tx ${x.tx}<br>${strat}<br>the grey number is your balance right after this transaction, recomputed from the ledger itself · <a href="#xray" style="color:var(--accent)" onclick="traceTx('${x.tx}', true);document.querySelector('[data-tab=&quot;xray&quot;]').click()">watch it on the map →</a></div>`;
+    <div class="tx-detail hidden">tx ${x.tx}<br>${strat}<br>the grey number is your balance right after this transaction, recomputed from the ledger itself · <a href="#xray" style="color:var(--accent)" onclick="selectTx('${x.tx}')">watch it on the map →</a></div>`;
   }
   $('#txlist').innerHTML = html || '<span class="muted">no transactions yet · add money or send some</span>';
 }
@@ -1733,9 +1759,15 @@ const EDGES = {
    steps 450, so a step's bullets were still in the air two steps later and the
    map showed three hops happening at once. A replay is a claim about ORDER, so
    a hop has to land before the next one leaves. */
+/* THE SPAWN TIMER IS REGISTERED, and that is not a detail.
+   This used to be a bare setTimeout, invisible to stopPlay, so every hop of a
+   cancelled journey whose delay had not yet elapsed still created its ball ·
+   up to nine of them for a trade loop · on the map of whatever was playing
+   next. The comment on stopPlay claimed the previous journey leaves nothing
+   behind; this is what makes that true. */
 function pulse(edge, color = 'var(--accent)', delay = 0, dur = 700) {
   const e = EDGES[edge]; if (!e) return;
-  setTimeout(() => {
+  playTimers.push(setTimeout(() => {
     const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     c.setAttribute('r', 4.5); c.setAttribute('class', 'pulse-dot'); c.style.color = color; c.setAttribute('fill', color);
     $('#pulse-layer').appendChild(c);
@@ -1746,7 +1778,7 @@ function pulse(edge, color = 'var(--accent)', delay = 0, dur = 700) {
       c.setAttribute('cy', e[1] + (e[3] - e[1]) * k);
       if (k < 1) requestAnimationFrame(step); else c.remove();
     })(t0);
-  }, delay);
+  }, delay));
 }
 function glow(node, cls = 'hot', ms = 1000) {
   const n = document.querySelector(`.node[data-node="${node}"]`); if (!n) return;
@@ -2063,10 +2095,40 @@ document.querySelectorAll('#guide .guide-tabs button').forEach(b => b.onclick = 
   document.querySelectorAll('#guide .guide-tabs button').forEach(x => x.classList.toggle('on', x === b));
   gShow(gSubject, gCtx);
 });
+/* CLICKING A BOX ON THE MAP.
+ *
+ * It used to be gShow + inspect and nothing else, so a node click never
+ * reached a trace and the map · the thing the whole tab is about · was the one
+ * surface from which you could not start a journey. It is an inspect gesture
+ * that becomes a play only when it is UNAMBIGUOUS: exactly one recent
+ * transaction touching the node is plainly the one meant, several is a filter,
+ * and a filter must never stop balls that are already flying. The rule is
+ * MB.mapClickPlan, unit tested. */
+function txsTouching(node) {
+  const want = { shard0: 'eu', shard1: 'uk', notif: 'notifications' }[node];
+  return (latestEvents || []).filter(e => {
+    if (want) return e.region === want;
+    if (node === 'kafka') return e.type === 'published' || e.type === 'notify';
+    if (node === 'applier') return e.type === 'arrive' || e.type === 'refund';
+    if (node === 'api' || node === 'caddy' || node === 'browser') return true;
+    return false;
+  }).map(e => e.tx);
+}
 document.querySelectorAll('.node').forEach(n => n.onclick = () => {
   const k = n.dataset.node;
   if (k && k.indexOf('scale:') === 0) { openConcept(k); return; }
-  gShow(k); inspect(k);
+  gShow(k);
+  const plan = MB.mapClickPlan({ node: k, txs: txsTouching(k) });
+  if (plan.mode === 'play') { traceTx(plan.tx, true); return; }
+  if (plan.mode === 'filter') {
+    // emphasise, list, and leave whatever is running alone
+    document.querySelectorAll('#ticker .tick-item').forEach(el =>
+      el.classList.toggle('dim', plan.txs.indexOf(el.dataset.tx) < 0));
+    inspect(k);
+    return;
+  }
+  document.querySelectorAll('#ticker .tick-item.dim').forEach(el => el.classList.remove('dim'));
+  inspect(k);
 });
 
 /* ---- the inspector: click a component, see ITS real rows ---- */
@@ -2326,6 +2388,9 @@ async function xrayTick() {
      is free. */
   fresh.slice().reverse().forEach(e => {          // oldest first · that is the order it happened
     const j = MB.journey([eventToStep(e)], MAP);
+    // the tx travels with the journey · the drain needs it to make the panel
+    // and the row agree with the balls it is about to draw
+    j.tx = e.tx;
     if (j.hops.length) liveQueue.push(j);
   });
   if (liveQueue.length > 12) liveQueue.splice(0, liveQueue.length - 12);  // a backlog nobody will watch
@@ -2368,7 +2433,7 @@ async function xrayTick() {
       const ic = isAsset ? (/btc/i.test(g.kind) ? '₿' : '🍏') : (KICON[g.kind] || '·');
       const label = isAsset ? g.kind.split(':').slice(1).join(' ') : g.kind;
       const sum = g.legs.length > 1 ? g.legs.reduce((a, l) => a + Number(l.amount), 0) : null;
-      return `<div class="txg" style="cursor:pointer" onclick="gShow('entry',{});traceTx('${g.tx}', true)">
+      return `<div class="txg" style="cursor:pointer" onclick="gShow('entry',{});selectTx('${g.tx}')">
         <div class="txg-head"><span>${ic} ${label}</span>
           <span class="muted">${new Date(g.at).toLocaleTimeString()} · ${Shard0Name(g.shard)} · tx ${g.tx.slice(0, 8)}…</span>
           ${g.legs.length > 1 ? `<span class="txg-zero">Σ ${Math.abs(sum) < 1e-9 ? '= 0 ✓' : '≠ 0 ✗'}</span>` : ''}</div>
@@ -2427,15 +2492,47 @@ async function xrayTick() {
  *   retries a few times at a widening interval and then gives up quietly
  *   rather than looping forever against a bank that has never been used.
  */
-let autoPicked = false, autoPickTimer = null;
+let autoPicked = false, autoPickTimer = null, deepLinkTx = null;
 function autoPickLatest(attempt = 0) {
   clearTimeout(autoPickTimer); autoPickTimer = null;
-  if (autoPicked || activeTrace) return;              // already showing something
   const row = document.querySelector('#ticker .tick-item');
-  if (row) { autoPicked = true; row.click(); return; }
-  if (attempt >= 6) return;                           // an empty bank is a fine reason to stop
-  autoPickTimer = setTimeout(() => autoPickLatest(attempt + 1), 250 + attempt * 250);
+  /* Every reason to stand down in one tested place. `following` and
+     `deepLinkTx` are new and they matter: followTx clicks the x-ray tab
+     itself, and a deep link switches tabs the same way, so this fired 250ms
+     later while activeTrace was still null (the trace fetch is async) and
+     auto pick clicked a DIFFERENT row · stealing the visitor's own payment
+     and starting a second animation beside it. */
+  const plan = MB.autoPickPlan({
+    autoPicked, hasSelection: !!activeTrace, following, deepLinkTx,
+    rows: row ? 1 : 0, attempt,
+  });
+  if (plan.pick) { autoPicked = true; row.click(); return; }
+  if (plan.retry) { autoPickTimer = setTimeout(() => autoPickLatest(attempt + 1), 250 + attempt * 250); return; }
+  // giving up is fine · giving up SILENTLY is not
+  if (plan.reason && !activeTrace) {
+    $('#trace-card').hidden = false;
+    $('#trace-head').textContent = plan.reason;
+    $('#trace-steps').innerHTML = '';
+    $('#trace-tx').textContent = '—';
+    setReplayable(false);
+  }
 }
+
+/* ONE ENTRY POINT FOR "SHOW ME THIS TRANSACTION", from any list on any tab.
+ *
+ * The entry point must not change the behaviour, and it used to: each caller
+ * hand-rolled its own order of "switch tab" and "fetch trace", and switching
+ * the tab runs autoPickLatest. Because the fetch is async, activeTrace was
+ * still null 250ms later, auto pick passed its guard, clicked the newest row
+ * and STOLE the selection · then both animations ran. Claiming the intent
+ * before the tab switch is what makes auto pick stand down (MB.autoPickPlan
+ * treats it exactly like a deep link, and both are tested). */
+window.selectTx = tx => {
+  deepLinkTx = tx;
+  const btn = document.querySelector('[data-tab="xray"]');
+  if (btn && $('#tab-xray').classList.contains('hidden')) btn.click();
+  return traceTx(tx, true).finally(() => { if (deepLinkTx === tx) deepLinkTx = null; });
+};
 
 window.tickClick = evJson => { const e = JSON.parse(evJson);
   const subj = (e.type.indexOf('trade:') === 0 || e.type.indexOf('settle:') === 0) ? 'ev:trade'
@@ -2452,13 +2549,11 @@ function renderTrace(tr, tx) {
      dead. Whether a control works is a property of what is selected, so it is
      settled the moment the selection changes. */
   {
-    const canDraw = tr.steps && tr.steps.length && MB.journey(tr.steps, MAP).hops.length > 0;
-    setReplayable(!!canDraw);
-    if (!canDraw) {
+    const d = MB.playDecision({ steps: tr.steps, graph: MAP, auto: false });
+    setReplayable(d.canDraw);
+    if (!d.canDraw) {
       $('#play-wrap').hidden = false;
-      $('#play-caption').textContent = tr.steps && tr.steps.length
-        ? `no map animation for this one · ${tr.steps.map(s => s.step).join(', ')} happens off this diagram`
-        : 'no recorded steps for this transaction';
+      $('#play-caption').textContent = d.reason;
     }
   }
   // the list must show the new selection immediately · waiting for the next
@@ -2487,12 +2582,48 @@ function renderTrace(tr, tx) {
   return total;
 }
 
+/* SELECTING IS PLAYING.
+ *
+ * The old line here was
+ *   if (auto && tr.steps.length > 1) playTrace(tr);
+ *   else if (!auto) { stopPlay(); $('#play-wrap').hidden = true; }
+ * and it is the whole reported bug. A step COUNT was standing in for
+ * drawability, which are different questions: Products.settleFill claims one
+ * transaction, so a securities settlement arrives as ONE step carrying the
+ * entire nine hop loop. Every settlement, and every purely local transfer,
+ * therefore selected, lit its row, and never moved. The second clause made it
+ * worse: guarded on !auto, it never ran on a click, so the teardown was
+ * skipped too and the PREVIOUS journey kept flying under a panel describing
+ * the new transaction.
+ *
+ * MB.playDecision answers "can this trace be drawn on this graph" by asking
+ * journey() rather than counting, and its stopFirst is unconditional, so the
+ * map is always emptied before it is repainted. Unit tested in lib.test.js.
+ */
 async function traceTx(tx, auto = false) {
   const tr = await api('/api/xray/trace?tx=' + tx);
-  if (!tr.steps || !tr.steps.length) return;
+  const d = MB.playDecision({ steps: tr && tr.steps, graph: MAP, auto });
+  // teardown first, always · the pending lap of the OLD trace must not land on
+  // the new one. Loop's on/off is a mode of the view and survives; only its
+  // armed timer dies here.
+  if (d.stopFirst) { clearTimeout(loopTimer); loopTimer = null; stopPlay(); }
+  if (!tr || !tr.steps || !tr.steps.length) {
+    if (looping) setLooping(false);
+    selectionExplicit = false;
+    // a transaction the read model cannot describe is a stated empty, not a
+    // silent return · returning here used to leave the panel on the last one
+    activeTrace = null;
+    setReplayable(false);
+    $('#play-wrap').hidden = false;
+    $('#play-caption').textContent = d.reason;
+    document.querySelectorAll('#ticker .tick-item.picked').forEach(el => el.classList.remove('picked'));
+    return;
+  }
   const total = renderTrace(tr, tx);
+  selectionExplicit = true;                   // somebody asked for THIS one
   gShow('trace', { tr, total });
-  if (auto && tr.steps.length > 1) playTrace(tr); else if (!auto) { stopPlay(); $('#play-wrap').hidden = true; }
+  if (d.play) playTrace(tr);
+  else if (!d.canDraw && looping) setLooping(false);
 }
 
 /* ---- the player: a 3-second museum replay of a payment's real journey ---- */
@@ -2531,6 +2662,18 @@ function stopPlay() {
   if (layer) while (layer.firstChild) layer.removeChild(layer.firstChild);
   document.querySelectorAll('.node.visited, .node.hot, .node.hot-amber')
     .forEach(el => el.classList.remove('visited', 'hot', 'hot-amber'));
+  /* THE BAR AND THE BOX ARE PART OF THE JOURNEY, so they go with it.
+     Stopping used to leave #play-fill frozen wherever its CSS transition had
+     reached, so the next selection opened showing the previous transaction's
+     progress until something happened to reset it. And showReplayInFlight(null)
+     was scheduled INSIDE playTimers, which stopPlay clears · so a stop landing
+     between the depart and arrive timers left replayInFlight non-null forever,
+     and the guard in xrayTick then blocked every future live update of that
+     box. A stop that leaves state behind is not a stop. */
+  const fill = $('#play-fill');
+  if (fill) { fill.style.transition = 'none'; fill.style.width = '0%'; }
+  showReplayInFlight(null);
+  document.querySelectorAll('.trace-step.active').forEach(el => el.classList.remove('active'));
 }
 
 /* LOOPING A REPLAY.
@@ -2554,8 +2697,13 @@ function setLooping(on) {
   // stop means stop: sweep whatever is still in flight rather than letting the
   // last hops finish crossing after the button says the loop has ended
   if (!on) stopPlay();
+  loopArmed = on;
   const b = $('#loop-btn');
   if (b) { b.classList.toggle('on', on); b.textContent = on ? '⏹ stop' : '↻ loop'; }
+  /* The pressed state has to match whether a loop is actually running. Turning
+     it on with nothing selected used to light the button and play nothing,
+     because setReplayable had never run and so had never disabled it. */
+  if (on && !activeTrace) { looping = false; loopArmed = false; if (b) { b.classList.remove('on'); b.textContent = '↻ loop'; } return; }
   if (on && activeTrace) playTrace(activeTrace);
 }
 
@@ -2564,17 +2712,56 @@ function setLooping(on) {
    consequence of the event being animated. */
 let liveQueue = [];
 let drainTimer = null;
+/* Whether the open trace was CHOSEN or merely landed there because live
+   traffic arrived on an idle map. Only a chosen one outranks the next event;
+   without the distinction, the first live event to auto play would select
+   itself and permanently silence every event after it. */
+let selectionExplicit = false;
+/** The one place the page asks lib.js who owns the map right now. */
+function livePolicy() {
+  return MB.liveEventPolicy({
+    tabVisible: xrayVisible(),
+    running: Date.now() < playingUntil,
+    hasSelection: !!activeTrace && selectionExplicit,
+  });
+}
+/** Reflect a live journey in the panel and the list, without claiming it as a
+ *  deliberate choice and without replaying what is already on screen. */
+function noteLiveSelection(tx) {
+  api('/api/xray/trace?tx=' + tx).then(tr => {
+    if (!tr || !tr.steps || !tr.steps.length) return;
+    if (selectionExplicit) return;            // a real choice landed while we fetched
+    renderTrace(tr, tx);
+    selectionExplicit = false;
+    gShow('trace', { tr, total: 0 });
+  }).catch(() => {});
+}
 function drainLiveQueue() {
   if (drainTimer) return;                       // already draining
   const step = () => {
     drainTimer = null;
     if (!liveQueue.length) return;
-    if (Date.now() < playingUntil) {            // a replay owns the map · wait, do not drop
-      drainTimer = setTimeout(step, Math.max(120, playingUntil - Date.now()));
+    /* WHO OWNS THE MAP. This used to be only the playingUntil check, so live
+       traffic animated onto a hidden x-ray tab and painted its balls straight
+       across a path the visitor had deliberately selected. The rule is in
+       lib.js and unit tested: hidden means nothing animates and nothing is
+       owed, an open selection outranks passing traffic, and only a running
+       journey is worth waiting for. */
+    const pol = livePolicy();
+    if (!pol.keep) { liveQueue.length = 0; return; }
+    if (!pol.animate) {                         // a replay owns the map · wait, do not drop
+      drainTimer = setTimeout(step, Math.max(120, playingUntil - Date.now()) || 120);
       return;
     }
     const j = liveQueue.shift();
     runJourney(j);
+    /* An idle map plus new traffic equals SHOW IT · and showing it means the
+       panel and the row agree with the balls, not balls alone. This used to
+       animate and select nothing at all, so the map moved while the panel sat
+       on whatever was there before. The selection it makes is marked
+       non-explicit, so it does not then outrank the next live event the way a
+       chosen trace does. */
+    if (pol.select && j.tx) noteLiveSelection(j.tx);
     playingUntil = Date.now() + j.total + 120;
     // come back for the next one the moment this journey is done
     drainTimer = setTimeout(step, j.total + 180);
@@ -2584,20 +2771,36 @@ function drainLiveQueue() {
 
 /** A journey the map cannot draw gets no replay controls, rather than dead ones. */
 function setReplayable(can) {
-  ['#replay-btn', '#loop-btn'].forEach(sel => {
+  /* The reason travels with the disabled state. A greyed control with no
+     explanation is only marginally better than one that silently does nothing,
+     and this is also called at load with nothing selected · which the page
+     never used to do, so the very first press of replay was a silent no op
+     through the `if (activeTrace)` guard and loop lit up while playing nothing. */
+  const st = MB.controlState({ hasSelection: !!activeTrace, canDraw: !!can });
+  [['#replay-btn', st.replay], ['#loop-btn', st.loop]].forEach(([sel, on]) => {
     const b = $(sel); if (!b) return;
-    b.disabled = !can;
-    b.style.opacity = can ? '' : '.35';
-    b.style.pointerEvents = can ? '' : 'none';
+    b.disabled = !on;
+    b.style.opacity = on ? '' : '.35';
+    b.style.pointerEvents = on ? '' : 'none';
+    b.title = st.reason;
   });
-  if (!can && looping) setLooping(false);
+  if (!st.loop && looping) setLooping(false);
 }
 
 /** Called when a replay finishes. Queues the next one, if we still should. */
+/** Is the x-ray map actually on screen? The tab switcher puts .hidden on the
+ *  PANEL, #tab-xray, never on #trace-card · so the old `$('#trace-card').hidden`
+ *  guard below was reading an element whose hidden property is always false,
+ *  and a loop left running kept cycling invisibly forever after a tab switch. */
+function xrayVisible() {
+  const p = $('#tab-xray');
+  return !!p && !p.classList.contains('hidden') && !document.hidden;
+}
+
 function loopAgain() {
   if (!looping || !activeTrace) return;
   if (document.hidden) return;                       // resumes on visibilitychange
-  if ($('#trace-card').hidden) { setLooping(false); return; }
+  if (!xrayVisible()) return;                        // resumes when the tab comes back
   loopTimer = setTimeout(() => { if (looping && activeTrace) playTrace(activeTrace); }, LOOP_PAUSE_MS);
 }
 
@@ -2717,7 +2920,17 @@ function playTrace(tr) {
 
 /* ---- live follow: after YOU send money, watch it actually happen ---- */
 async function followTx(tx) {
-  stopPlay(); following = tx; playedSteps = 0;
+  /* THE VISITOR'S OWN PAYMENT WINS, and it used to lose a race to auto pick.
+     stopPlay() clears `following`, so setting it BEFORE the tab click was not
+     enough on its own · the click runs autoPickLatest, activeTrace was still
+     null because the trace fetch had not returned, and 250ms later auto pick
+     clicked the newest ticker row and started a second animation beside this
+     one. Order matters here: stop first, then claim, then switch. */
+  stopPlay();
+  following = tx; playedSteps = 0; deepLinkTx = tx;
+  // loop is a mode of the view, not of a trace · if it was on, it follows the
+  // visitor to their own payment rather than being silently dropped
+  clearTimeout(loopTimer); loopTimer = null;
   document.querySelector('[data-tab="xray"]').click();
   $('#trace-card').hidden = false;
   $('#play-wrap').hidden = false;
@@ -2760,14 +2973,14 @@ async function followPoll(tx, tries) {
       fill.style.width = '100%';
       $('#play-caption').textContent = `✓ settled · ${t1 - t0}ms end to end, every part you just saw really ran`;
       document.querySelectorAll('.trace-step').forEach(el => el.classList.remove('active'));
-      following = null;
+      following = null; if (deepLinkTx === tx) deepLinkTx = null;
       gShow('trace', { tr, total: t1 - t0 });
       return;
     }
   }
   if (tries > 60) {
     $('#play-caption').textContent = 'still in flight · the pipe holds it safely (consumers may be rebalancing); it will settle';
-    following = null;
+    following = null; if (deepLinkTx === tx) deepLinkTx = null;
     return;
   }
   playTimers.push(setTimeout(() => followPoll(tx, tries + 1), 700));
@@ -2808,7 +3021,12 @@ $('#eco-pg').onclick = () => { gShow('shard0'); inspect('shard0'); };
 $('#eco-kafka').onclick = () => { gShow('kafka'); inspect('kafka'); };
 $('#eco-k8s').onclick = () => gShow('deploy');
 
-$('#trace-clear').onclick = () => { setLooping(false); stopPlay(); activeTrace = null;
+$('#trace-clear').onclick = () => { setLooping(false); loopArmed = false; stopPlay(); activeTrace = null; selectionExplicit = false;
+  // the queued live journeys belonged to a map that had a selection · they are
+  // not a backlog to be released the moment the panel closes
+  liveQueue.length = 0; clearTimeout(drainTimer); drainTimer = null;
+  document.querySelectorAll('#ticker .tick-item.dim').forEach(el => el.classList.remove('dim'));
+  setReplayable(false);
   // closing is a deliberate act · do not immediately undo it, but re-arm so
   // that leaving the tab and coming back opens on something again
   autoPicked = false; clearTimeout(autoPickTimer); autoPickTimer = null;
@@ -2912,7 +3130,7 @@ function tapePush(tr, tx) {
   tr.d.forEach(d => bits.push('<span class="tp-' + d[2] + '">' + d[0] + ' ' + d[1] + '</span>'));
   if (tx) bits.push('<span class="tp-x">' + tx.slice(0, 8) + '</span>');
   el.innerHTML = bits.join(' ');
-  if (tx) el.onclick = () => { switchTab('xray'); traceTx(tx, true); };
+  if (tx) el.onclick = () => selectTx(tx);
   // measure ONCE, here, off the animation path · then place it absolutely so
   // retiring the train ahead of it can never shift it. The belt is measured
   // here too (a few times a second at most, never per frame): at parse time
@@ -3692,9 +3910,38 @@ dashTick();
    two seconds later almost always succeeds. That is the whole recovery. */
 const tick = fn => { try { const p = fn(); if (p && p.catch) p.catch(() => {}); } catch (e) {} };
 
+setReplayable(false);   // nothing is selected yet, and the buttons must say so
 tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); renderQuiz(); gShow('welcome');
 $('#homelink').onclick = () => switchTab('app');
-if (['#xray', '#quiz', '#console'].includes(location.hash)) document.querySelector('[data-tab="' + location.hash.slice(1) + '"]').click();
+/* DEEP LINKS.
+ *
+ * This used to be an exact match of location.hash against three strings, so a
+ * link carrying a transaction · #xray?tx=… · did not match anything and did
+ * not even switch the tab. There was no hashchange listener either, so
+ * changing the hash within the session did nothing at all. MB.parseXrayHash
+ * separates the tab from the id and is unit tested; deepLinkTx is what stops
+ * auto pick from racing the trace fetch and choosing something else, so the
+ * hash and the tab entry together produce exactly ONE animation. */
+function applyHash() {
+  const { tab, tx } = MB.parseXrayHash(location.hash);
+  if (!tab) return;
+  deepLinkTx = tx;
+  const btn = document.querySelector('[data-tab="' + tab + '"]');
+  if (btn) btn.click();
+  if (tx) {
+    // a deep link is an explicit request and outranks anything already running
+    traceTx(tx, true).catch(() => {
+      // an id nobody knows is an honest message, not a silent fall back to
+      // auto picking something else the visitor did not ask for
+      $('#trace-card').hidden = false;
+      $('#trace-head').textContent = 'transaction not found · nothing to draw for ' + tx.slice(0, 13) + '…';
+      $('#trace-steps').innerHTML = ''; $('#trace-tx').textContent = '—';
+      activeTrace = null; setReplayable(false);
+    }).finally(() => { deepLinkTx = null; });
+  }
+}
+applyHash();
+window.addEventListener('hashchange', applyHash);
 if (location.hash === '#send') { $('#send-panel').classList.remove('hidden'); segPaint(); }
 setInterval(() => { tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); tick(renderExt); if (!$('#tab-xray').classList.contains('hidden')) tick(xrayTick); if (!$('#tab-console').classList.contains('hidden')) tick(kafkaTick); }, 2000);
 </script>
