@@ -392,6 +392,63 @@ class SsoIdentityLessonTest {
         return b;
     }
 
+    // ------------------------------------------------------------------
+    @Test
+    @DisplayName("lesson 6: the estate phonebook answers a name, and a stranger is null, never an error")
+    void lesson6_whoisIsAHonestPhonebook() throws Exception {
+        // THE CIRCLE'S LOOKUP. The mart asks "which customer is the person
+        // named X" and gets the bank's own answer. The names are unique to
+        // this fixture: a lookup by name must never collide with the demo
+        // cast or with another suite's leavings, because a name is not a key.
+        Directory.register(90, "phon_alice", 0);   // a name this fixture owns outright
+        HttpResponse<String> hit = send("/api/whois?name=phon_alice", null);
+        assertEquals(200, hit.statusCode());
+        assertTrue(hit.body().contains("\"customer\":90"),
+                "the name the bank knows answers its customer · got " + hit.body());
+
+        HttpResponse<String> stranger = send("/api/whois?name=nobody", null);
+        assertEquals(200, stranger.statusCode(),
+                "a stranger is a 200 with null — the mart's anonymous fallback, not an error");
+        assertTrue(stranger.body().contains("\"customer\":null"));
+
+        assertEquals(400, status("/api/whois", null), "no name is a 400, like every missing parameter here");
+    }
+
+    // ------------------------------------------------------------------
+    @Test
+    @DisplayName("lesson 7: signup with a token BINDS the subject · the estate knows the person from then on")
+    void lesson7_signupBindsTheSubject() throws Exception {
+        // The write that creates an identity. A fresh name, a real signup —
+        // and the subject on the token is linked to the id that comes back.
+        // The name must be unique ACROSS RUNS: signup's first-write-wins
+        // means a stale row from yesterday's run binds the subject to a
+        // corpse and the assertion below reads the stale id, not today's.
+        String name = freshName("crl");
+        String body = post("/api/signup", token(AUDIENCE, "sso|carol-0003"),
+                "{\"name\":\"" + name + "\",\"region\":\"eu\"}");
+        assertTrue(body.contains("\"result\":\"ok\""), "the signup itself succeeded · got " + body);
+        long id = Long.parseLong(body.replaceAll(".*\"id\":(\\d+).*", "$1"));
+
+        assertEquals(id, Directory.customerForSso("sso|carol-0003"),
+                "the subject is bound to the minted customer — every app gets the same answer");
+
+        // and the same signup ANONYMOUSLY links nothing (the demo's path)
+        String name2 = freshName("dvx");
+        String body2 = post("/api/signup", null, "{\"name\":\"" + name2 + "\",\"region\":\"eu\"}");
+        assertTrue(body2.contains("\"result\":\"ok\""));
+        assertNull(Directory.customerForSso("sso|never-present"),
+                "an anonymous signup creates no identity");
+    }
+
+    /** a signup-legal name (3-12 chars, a-z) no earlier run of this test
+     *  could have claimed: prefix + the epoch, each digit a letter. */
+    private static String freshName(String prefix) {
+        StringBuilder tail = new StringBuilder();
+        for (char c : String.valueOf(System.currentTimeMillis()).toCharArray())
+            tail.append((char) ('a' + c - '0'));
+        return prefix + tail.substring(tail.length() - 9);
+    }
+
     private static HttpResponse<String> send(String path, String token) throws Exception {
         return HTTP.send(req(path, token).build(), HttpResponse.BodyHandlers.ofString());
     }

@@ -64,6 +64,8 @@ public final class HttpApi {
         server.createContext("/issuer/v1/authorizations", ex -> handle(ex, HttpApi::issuerAuthorize));
         server.createContext("/issuer/v1/clearing", ex -> handle(ex, HttpApi::issuerClearing));
         server.createContext("/api/signup", ex -> handle(ex, HttpApi::signup));
+        server.createContext("/api/whois", ex -> handle(ex, HttpApi::whois));
+        server.createContext("/api/card/charge", ex -> handle(ex, HttpApi::cardCharge));
         server.createContext("/api/support", ex -> handle(ex, HttpApi::support));
         server.createContext("/api/prices/history", ex -> handle(ex, HttpApi::priceHistory));
         // Prometheus scrapes this · plain text exposition, no client library
@@ -1854,16 +1856,20 @@ public final class HttpApi {
     /* DELIBERATELY NOT caller()-WRAPPED. Signup MINTS a customer id rather
        than reading one, so there is nothing here for a token to override ·
        an identity override on this route would mean "sign up as somebody who
-       already exists", which is not a thing. What belongs here eventually is
-       the opposite direction: after Directory.register succeeds, bind the
-       token's subject to the fresh id with Directory.linkSso(sub, id), which
-       is the only write that ever creates an identity. It is not wired yet
-       because the seam (SsoIdentity) answers "which customer" and not "which
-       subject" · deliberately, since which customer is the only question the
-       nine reading routes have. Extending it to hand back the subject is a
-       one-method change, and the day it happens this is the line it lands on. */
+       already exists", which is not a thing. What happens instead is the
+       opposite direction: a signed-in caller's subject is bound to the fresh
+       id with Directory.linkSso(sub, id), the only write that ever creates
+       an identity. From then on every app in the estate that asks "which
+       customer is this person" — this bank, the mart, the desk — gets the
+       same answer, which is what makes a mart purchase visible in the bank. */
     private static Response signup(HttpExchange ex) throws Exception {
         if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
+        // A token presented at signup is a request to BE that person: bind the
+        // subject to the id this route mints. ABSENT (the public demo) and
+        // Rejected (a credential we will not act on) both mint unlinked, which
+        // is exactly the pre-SSO behaviour.
+        SsoIdentity.Verdict who = authenticate(ex);
+        String sub = who instanceof SsoIdentity.Verdict.Known k ? k.subject() : null;
         String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         String name = Json.str(body, "name"), region = Json.str(body, "region");
         if (name == null || region == null) return Response.json(400, "{\"error\":\"need name, region\"}");
@@ -1898,7 +1904,31 @@ public final class HttpApi {
         home.createCustomer(id, name);
         home.transferLocal(UUID.randomUUID(), Shard.WORLD, id, new BigDecimal("500.00"));
         Products.ensureFor(id);
+        if (sub != null) Directory.linkSso(sub, id);   // the estate knows this person from now on
         return Response.json(200, "{\"result\":\"ok\",\"id\":" + id + ",\"region\":\"" + Shards.regionName(shard) + "\"}");
+    }
+
+    /**
+     * THE ESTATE'S PHONEBOOK · "which customer is this name". The mart calls
+     * it server-side when a signed-in shopper arrives: their SSO token
+     * carries a name, the bank's directory knows which customer that person
+     * already is, and the mart then shops AS that customer — which is what
+     * makes a mart purchase show up in this bank's ledger.
+     *
+     * Null is the whole answer set: nobody here by that name, no customer
+     * derived from thin air. The mart's anonymous-shopper fallback takes it
+     * from there. GET, no token needed — it answers the same fact any app's
+     * own sso_customers table would, and a name is not a credential.
+     */
+    private static Response whois(HttpExchange ex) throws Exception {
+        if (!"GET".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"GET only\"}");
+        String q = ex.getRequestURI().getQuery();
+        String name = null;
+        if (q != null) for (String p : q.split("&")) if (p.startsWith("name="))
+            name = java.net.URLDecoder.decode(p.substring(5), StandardCharsets.UTF_8);
+        if (name == null || name.isBlank()) return Response.json(400, "{\"error\":\"need name\"}");
+        Long id = Directory.customerForOwner(name);
+        return Response.json(200, "{\"customer\":" + (id == null ? "null" : id) + "}");
     }
 
     /**
@@ -1964,6 +1994,50 @@ public final class HttpApi {
     /** the card network's three verbs: authorize (hold), capture, release */
 
     // ------------------------------------------------------------- the issuer
+
+    /**
+     * THE SHOP'S TILL · one call that turns a known customer into a captured
+     * card charge. This is the full circle's last inch: the mart has already
+     * sold the goods; this moves the money, visibly, on the customer's real
+     * card — authorize (the hold on their limit) then capture (the charge),
+     * inside the issuer's own idempotency rules.
+     *
+     * The card is found or issued silently: a customer with a shelf gets a
+     * card by construction (Products.ensureFor at signup), so "no card" is
+     * a state the bank fixes, not one it reports. The authorization_id is
+     * minted BY THE CALLER and is the idempotency key: a mart that retries
+     * checkout re-asks the same reference and gets the same money, never a
+     * second hold. The card network's rule, applied to the shop.
+     *
+     * Deliberately NOT on /issuer/v1: that family is the acquirer's and
+     * answers in the acquirer's vocabulary. This is a cardholder-shaped
+     * action invoked server-side by an estate service that already resolved
+     * WHO the customer is — the trust boundary is that hop, not this route.
+     */
+    private static Response cardCharge(HttpExchange ex) throws Exception {
+        if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
+        String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String customer = Json.num(body, "customer"), amount = Json.str(body, "amount");
+        String reference = Json.str(body, "authorization_id");
+        if (customer == null || amount == null || reference == null)
+            return Response.json(400, "{\"error\":\"need customer, amount, authorization_id\"}");
+        long customerId = Long.parseLong(customer);
+        try {
+            Issuer.Instrument card = Issuer.cardOf(customerId);
+            if (card == null) card = Issuer.issueCard(customerId);
+            UUID ref = UUID.fromString(reference);
+            Instant at = Instant.now();
+            Issuer.Decision d = Issuer.authorize(ref, card.token(), new java.math.BigDecimal(amount), "EUR", at);
+            if (!d.approved())
+                return Response.json(200, "{\"charged\":false,\"reason\":\"" + Json.esc(
+                        d.reason() == null ? "declined" : d.reason()) + "\"}");
+            boolean captured = Issuer.capture(ref, at);
+            return Response.json(200, "{\"charged\":" + captured
+                    + ",\"authorization\":\"" + ref + "\",\"last4\":\"" + Json.esc(card.last4()) + "\"}");
+        } catch (NumberFormatException e) {
+            return Response.json(400, "{\"error\":\"amount must be a number\"}");
+        }
+    }
 
     /**
      * What an acquirer may know about an instrument, which is deliberately

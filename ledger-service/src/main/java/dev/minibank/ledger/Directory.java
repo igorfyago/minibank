@@ -192,6 +192,29 @@ public final class Directory {
         }
     }
 
+    /** customer id <- the human's name (owner), or null. The mart's link
+     *  path: an SSO token carries name+email but not a bank customer id, so
+     *  a signed-in shopper is matched to the bank customer they already are.
+     *  Null, never an exception — "nobody here by that name" is an answer,
+     *  and the mart falls back to its own anonymous shopper.
+     *
+     *  A NAME IS NOT A KEY, and pretending otherwise leaks: two people can
+     *  share one. First-registered wins (deterministic; in practice a demo
+     *  cast where names are unique) and product accounts are excluded, or
+     *  "card" and "savings" would answer as shoppers. */
+    public static Long customerForOwner(String owner) throws SQLException {
+        if (owner == null || owner.isBlank()) return null;
+        try (Connection c = openOwnDb();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT customer_id FROM customers WHERE owner = ? AND customer_id < 100"
+                             + " ORDER BY customer_id LIMIT 1")) {
+            ps.setString(1, owner.trim().toLowerCase());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getLong(1) : null;
+            }
+        }
+    }
+
     public static void setMoving(long customerId, boolean moving) throws SQLException {
         try (Connection c = openOwnDb();
              PreparedStatement ps = c.prepareStatement("UPDATE customers SET moving = ? WHERE customer_id = ?")) {
