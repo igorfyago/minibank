@@ -45,6 +45,7 @@ public final class SsoServer {
         server.createContext("/v1/tokens/refresh", ex -> handle(ex, this::refresh));
         server.createContext("/v1/tokens/revoke", ex -> handle(ex, this::revoke));
         server.createContext("/v1/users/me", ex -> handle(ex, this::me));
+        server.createContext("/v1/whoami", ex -> handle(ex, this::whoami));
         server.createContext("/.well-known/jwks.json", ex -> handle(ex, this::jwks));
         server.createContext("/health", ex -> handle(ex, this::health));
         server.createContext("/login", ex -> handle(ex, this::loginPage));
@@ -196,6 +197,44 @@ public final class SsoServer {
     private Response jwks(HttpExchange ex) {
         if (!"GET".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"method not allowed\"}");
         return Response.json(200, keys.toJwksJson());
+    }
+
+    /**
+     * WHO WAS HERE LAST · the estate cookie's own question.
+     *
+     * /v1/users/me answers a BEARER token — an app asking "is this request
+     * authenticated". whoami answers the COOKIE — a page asking "which user
+     * signed in on this browser most recently". The mart asks it so a
+     * signed-in estate user shops as HIMSELF, not as a freshly minted
+     * anonymous number: he buys something, and the bank usage is visible
+     * because every app agrees it was the same person.
+     *
+     * Deliberately NOT /v1/users/me: a cookie is a credential a browser
+     * sends on any request the page makes, so the response must be scoped
+     * to "who the browser is", and this route leans on the estate-wide CORS
+     * rule in handle() (only *.b4rruf3t.com origins, with credentials) to
+     * keep the answer inside the family. Signed out is 401 with a bare
+     * object, same shape as the other auth refusals — the page treats any
+     * non-200 as "anonymous" and must not act differently on the variants.
+     */
+    private Response whoami(HttpExchange ex) throws IOException {
+        if (!"GET".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"method not allowed\"}");
+        String refreshToken = cookieValue(ex, "b4rruf3t_refresh");
+        if (refreshToken == null) {
+            return Response.json(401, "{\"error\":\"not signed in\"}");
+        }
+        Optional<String> userId = sessions.validate(refreshToken);
+        if (userId.isEmpty()) {
+            return Response.json(401, "{\"error\":\"not signed in\"}");
+        }
+        Optional<UserDirectory.User> user = users.findById(userId.get());
+        if (user.isEmpty()) {
+            return Response.json(401, "{\"error\":\"not signed in\"}");
+        }
+        return Response.json(200, String.format(
+            "{\"sub\":\"%s\",\"email\":\"%s\",\"name\":\"%s\"}",
+            user.get().id(), escapeJson(user.get().email()),
+            escapeJson(user.get().displayName() != null ? user.get().displayName() : "")));
     }
 
     private Response health(HttpExchange ex) {

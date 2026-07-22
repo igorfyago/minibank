@@ -117,6 +117,25 @@ class SsoEndToEndTest {
         assertEquals(200, cookieRefresh.statusCode(),
             "the cookie path is what greets you when you arrive at mart from bank");
 
+        // whoami answers the COOKIE's question: who signed in here last.
+        // The cookie just rotated, so the live one is on the refresh reply.
+        String liveRefresh = jsonField(cookieRefresh.body(), "refresh_token");
+        var who = http.send(HttpRequest.newBuilder(URI.create(BASE + "/v1/whoami"))
+                .header("Cookie", "b4rruf3t_refresh=" + liveRefresh).GET().build(),
+            HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, who.statusCode(), "the estate cookie names its user");
+        assertTrue(who.body().contains("igor@b4rruf3t.com"));
+        assertTrue(who.body().contains("\"sub\":\"usr_"), "whoami hands back the subject apps link from");
+
+        // no cookie and a dead cookie are the same answer: not signed in
+        var nobody = http.send(HttpRequest.newBuilder(URI.create(BASE + "/v1/whoami")).GET().build(),
+            HttpResponse.BodyHandlers.ofString());
+        assertEquals(401, nobody.statusCode());
+        var staleWho = http.send(HttpRequest.newBuilder(URI.create(BASE + "/v1/whoami"))
+                .header("Cookie", "b4rruf3t_refresh=" + refreshToken).GET().build(),
+            HttpResponse.BodyHandlers.ofString());
+        assertEquals(401, staleWho.statusCode(), "a rotated-out cookie must not name a user");
+
         // logout clears the cookie
         var logout = post("/v1/tokens/revoke", "{\"refresh_token\":\"" + jsonField(cookieRefresh.body(), "refresh_token") + "\"}");
         assertEquals(200, logout.statusCode());
