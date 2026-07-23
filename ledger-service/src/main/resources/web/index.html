@@ -1977,7 +1977,9 @@ async function loadStatement() {
       : `<div class="tx-av" style="background:hsl(${hue(name)},40%,30%)">${ic}</div>`;
     const sub = x.pending
       ? `<span class="pend-dot"></span><span style="color:var(--amber)">Pending</span> · ${time} · settling across regions`
-      : `${SUB[x.tag] || ''}${x.detail ? ' ' + x.detail : ''} · ${time}${x.cross ? ' · cross-region' : ''}`;
+      : `${SUB[x.tag] || ''}${x.detail ? ' ' + x.detail : ''} · ${time}${x.cross ? ' · cross-region' : ''}`
+      + (x.tag === 'sent' && /minimart/i.test(x.label)
+         ? ` · <a href="https://mart.b4rruf3t.com/?order=${x.tx}" style="color:var(--accent)">view order →</a>` : '');
     const strat = x.tag === 'relocation'
       ? 'strategy: RELOCATION · the whole balance as one standard saga, then the directory pointer flips; write-pause of milliseconds, every step idempotent'
       : x.tag === 'refund'
@@ -2017,7 +2019,8 @@ async function loadCardActivity() {
   el.innerHTML = items.map(x => `<div class="tx-row">
       <div class="tx-av" style="background:hsl(${[...x.merchant].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 0)},40%,30%)">${x.merchant[0].toUpperCase()}</div>
       <div class="tx-main"><div class="tx-name">${x.merchant}</div>
-        <div class="tx-sub">card ··${x.last4} · ${x.state} · ${fmtT(x.at)}</div></div>
+        <div class="tx-sub">card ··${x.last4} · ${x.state} · ${fmtT(x.at)}${/minimart/i.test(x.merchant)
+          ? ` · <a href="https://mart.b4rruf3t.com/?order=${x.id}" style="color:var(--accent)">view order →</a>` : ''}</div></div>
       <div class="tx-right"><div class="tx-amt" style="color:${STATE_STYLE[x.state] || 'inherit'}">−${fmt(x.amount)}</div></div>
     </div>`).join('');
 }
