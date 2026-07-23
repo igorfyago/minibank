@@ -3961,6 +3961,18 @@ function tapePush(tr, tx) {
   tape.beltWidth = tapeBelt.clientWidth || tape.beltWidth;
   el.style.left = tape.place(el.offsetWidth) + 'px';
   $('#ticker-bar').classList.add('on');
+  /* THE ESTATE FEEDS ON THE BANK · every money event that crosses this tape
+   * is also an estate event, so the shop (or any app on the shared bar)
+   * shows the bank's moments in its own markee. The bank keeps its own
+   * train-tape: it is the operations room, the shared tape is the headline. */
+  try {
+    const lead = tr.d.length ? tr.d[0] : null;
+    document.dispatchEvent(new CustomEvent('eco:tick', { detail: {
+      icon: tr.h, text: 'minibank · ' + tr.s.join(' → '),
+      amount: lead ? lead[0] + ' ' + lead[1] : undefined,
+      tone: lead ? (lead[2] === 'pos' ? 'pos' : lead[2] === 'neg' ? 'neg' : 'amb') : 'amb',
+      hold: 5000 } }));
+  } catch (e) { /* the tape is a garnish, never a fault */ }
 }
 
 function tapeFrame(now) {

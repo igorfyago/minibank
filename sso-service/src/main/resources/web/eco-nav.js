@@ -56,8 +56,61 @@
     '#eco-nav .eco-user a:hover{text-decoration:underline}',
     '#eco-nav .eco-avatar{width:24px;height:24px;border-radius:50%;',
     'background:#58a6ff;color:#fff;display:flex;align-items:center;',
-    'justify-content:center;font-size:11px;font-weight:600}'
+    'justify-content:center;font-size:11px;font-weight:600}',
+    /* THE ESTATE TAPE · the bank's markee, shared. Docked at the bottom of
+     * every app that loads this bar, silent and hidden until an event
+     * arrives, and fed by the host app through a DOM event ("eco:tick",
+     * detail {icon, text, amount?, tone?}) — each app puts its own money
+     * moments on it in its own words, and an app with nothing to say
+     * advertises nothing. */
+    '#eco-tape{display:flex;align-items:center;gap:10px;overflow:hidden;',
+    'background:rgba(7,12,16,.96);border-top:1px solid #143024;backdrop-filter:blur(8px);',
+    "font:11.5px 'Cascadia Code',Consolas,monospace;box-sizing:border-box;padding:0 14px;",
+    'transform:translateY(110%);transition:transform .45s ease}',
+    '#eco-tape.on{transform:none}',
+    '#eco-tape .tp-i{font-size:13px}',
+    '#eco-tape .tp-t{color:#5da878;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '#eco-tape .tp-a{margin-left:auto;font-weight:750;white-space:nowrap}',
+    '#eco-tape .tp-a.pos{color:#31e981;text-shadow:0 0 11px rgba(49,233,129,.5)}',
+    '#eco-tape .tp-a.neg{color:#ff5d6c;text-shadow:0 0 11px rgba(255,93,108,.4)}',
+    '#eco-tape .tp-a.amb{color:#d29922}'
   ].join('');
+
+  /* The tape lives beside the bar: one fixture, one look, every app. Events
+   * queue so a burst paints in order; the tape dims itself back to silence a
+   * few seconds after the last one, exactly like the bank's own. */
+  var TAPE_H = 34, tapeEl = null, tapeTimer = null;
+  function buildTape() {
+    if (tapeEl || !document.body) return;
+    /* A host with its own money tape keeps the floor: the bank's train-tape
+     * IS its operations room, and two markees on one screen is one too many.
+     * There the bank's events still feed OTHER apps through eco:tick. */
+    if (document.getElementById('ticker-bar')) return;
+    tapeEl = document.createElement('div');
+    tapeEl.id = 'eco-tape';
+    tapeEl.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:' + TAPE_H + 'px;' +
+      'z-index:2147482999;transform:translateY(110%)';
+    document.body.appendChild(tapeEl);
+    document.addEventListener('eco:tick', function (ev) {
+      var d = (ev && ev.detail) || {};
+      if (!d.text) return;
+      tapeEl.replaceChildren();
+      var icon = document.createElement('span');
+      icon.className = 'tp-i'; icon.textContent = d.icon || '💸';
+      var text = document.createElement('span');
+      text.className = 'tp-t'; text.textContent = d.text;
+      tapeEl.appendChild(icon); tapeEl.appendChild(text);
+      if (d.amount) {
+        var amt = document.createElement('span');
+        amt.className = 'tp-a ' + (d.tone === 'pos' || d.tone === 'neg' || d.tone === 'amb' ? d.tone : 'amb');
+        amt.textContent = d.amount;
+        tapeEl.appendChild(amt);
+      }
+      tapeEl.classList.add('on');
+      if (tapeTimer) clearTimeout(tapeTimer);
+      tapeTimer = setTimeout(function () { tapeEl.classList.remove('on'); }, d.hold || 6000);
+    });
+  }
 
   function build() {
     if (document.getElementById('eco-nav')) return;
@@ -96,6 +149,7 @@
     nav.appendChild(user);
 
     document.body.insertBefore(nav, document.body.firstChild);
+    buildTape();
     paintUser(user, nav);
   }
 
