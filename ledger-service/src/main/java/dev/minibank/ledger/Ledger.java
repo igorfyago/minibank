@@ -278,6 +278,12 @@ public final class Ledger {
      *  this unchanged against whichever SHARD both accounts live on. The
      *  logic did not change when the bank sharded; only the address did. */
     public static TransferResult transferOn(Connection conn, UUID txId, long fromId, long toId, BigDecimal amount) throws SQLException {
+        return transferOn(conn, txId, fromId, toId, amount, "transfer");
+    }
+
+    /** As transferOn, naming what the movement IS. The statement labels the
+     *  row from this kind — a purchase says "charge:minimart", not "transfer". */
+    public static TransferResult transferOn(Connection conn, UUID txId, long fromId, long toId, BigDecimal amount, String txKind) throws SQLException {
         if (amount.signum() <= 0) throw new IllegalArgumentException("amount must be positive");
         if (fromId == toId) throw new IllegalArgumentException("cannot transfer to self");
 
@@ -286,7 +292,7 @@ public final class Ledger {
             try {
                 // 1. IDEMPOTENCY GATE. Claim the transaction id first. If it
                 //    already exists, this transfer already happened: do nothing.
-                if (!claimTx(conn, txId, "transfer")) {
+                if (!claimTx(conn, txId, txKind)) {
                     conn.rollback();
                     return new AlreadyProcessed();
                 }

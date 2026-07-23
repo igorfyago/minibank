@@ -806,6 +806,10 @@
         <div class="prod-grid" id="prods"><div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div><div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div><div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div><div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div><div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div><div class="sk-tile"><div class="sk" style="width:45%;height:11px"></div><div class="sk" style="width:60%;height:20px;margin:9px 0 7px"></div><div class="sk" style="width:80%;height:10px"></div></div></div>
       </div>
       <div class="card tx-card">
+        <h2>Card</h2>
+        <div id="cardlist"><span class="muted">nothing on your card yet</span></div>
+      </div>
+      <div class="card tx-card">
         <h2>Transactions</h2>
         <div id="txlist"><div class="sk-row"><div class="sk" style="width:42px;height:42px;border-radius:50%;flex:none"></div><div style="flex:1"><div class="sk" style="width:35%;height:12px;margin-bottom:7px"></div><div class="sk" style="width:55%;height:10px"></div></div><div class="sk" style="width:70px;height:14px"></div></div><div class="sk-row"><div class="sk" style="width:42px;height:42px;border-radius:50%;flex:none"></div><div style="flex:1"><div class="sk" style="width:35%;height:12px;margin-bottom:7px"></div><div class="sk" style="width:55%;height:10px"></div></div><div class="sk" style="width:70px;height:14px"></div></div><div class="sk-row"><div class="sk" style="width:42px;height:42px;border-radius:50%;flex:none"></div><div style="flex:1"><div class="sk" style="width:35%;height:12px;margin-bottom:7px"></div><div class="sk" style="width:55%;height:10px"></div></div><div class="sk" style="width:70px;height:14px"></div></div><div class="sk-row"><div class="sk" style="width:42px;height:42px;border-radius:50%;flex:none"></div><div style="flex:1"><div class="sk" style="width:35%;height:12px;margin-bottom:7px"></div><div class="sk" style="width:55%;height:10px"></div></div><div class="sk" style="width:70px;height:14px"></div></div><div class="sk-row"><div class="sk" style="width:42px;height:42px;border-radius:50%;flex:none"></div><div style="flex:1"><div class="sk" style="width:35%;height:12px;margin-bottom:7px"></div><div class="sk" style="width:55%;height:10px"></div></div><div class="sk" style="width:70px;height:14px"></div></div></div>
       </div>
@@ -1393,7 +1397,7 @@ async function loadAccounts() {
     if (keep) $('#send-to').value = keep;
   }
 }
-window.switchUser = id => { me = id; lastTx = null; prevStmtSig = ''; prevPortSig = ''; prevNwSig = ''; chatLog = []; if (!$('#chat-panel').classList.contains('hidden')) chatHello(); loadAccounts(); loadStatement(); loadPortfolio(); loadNetworth(); };
+window.switchUser = id => { me = id; lastTx = null; prevStmtSig = ''; prevPortSig = ''; prevNwSig = ''; chatLog = []; if (!$('#chat-panel').classList.contains('hidden')) chatHello(); loadAccounts(); loadStatement(); loadCardActivity(); loadPortfolio(); loadNetworth(); };
 
 function uuid() { return crypto.randomUUID(); }
 
@@ -1935,6 +1939,7 @@ function refreshAll() {
   refreshTimers.forEach(clearTimeout); refreshTimers = [];
   REFRESH_TAIL_MS.forEach(delay => refreshTimers.push(setTimeout(() => {
     loadAccounts(); prevStmtSig = ''; loadStatement(); prevPortSig = ''; loadPortfolio();
+    loadCardActivity();   // the card rail's own screen, same money
     prevNwSig = ''; loadNetworth();   // the strip is a view of the same money
     // the map and the feed are views of the same money · refresh them whether
     // or not their tab happens to be the one in front
@@ -1994,6 +1999,27 @@ async function loadStatement() {
     <div class="tx-detail hidden">tx ${x.tx}<br>${strat}<br>the grey number is your balance right after this transaction, recomputed from the ledger itself · <a href="#xray" style="color:var(--accent)" onclick="selectTx('${x.tx}')">watch it on the map →</a></div>`;
   }
   $('#txlist').innerHTML = html || '<span class="muted">no transactions yet · add money or send some</span>';
+}
+
+/* the card screen · what the main statement can never show: the card rail's
+   own life, told the cardholder's way — whose shop, how much, what became of
+   it. The mart's "credit card" choice lands here; "main acct" lands above. */
+async function loadCardActivity() {
+  if (me === null) return;
+  let items;
+  try { items = await api('/api/card/activity?customer=' + me); }
+  catch (e) { return; }   // an older bank has no such route: the panel stays quiet
+  const el = $('#cardlist');
+  if (!el) return;
+  if (!items.length) { el.innerHTML = '<span class="muted">nothing on your card yet</span>'; return; }
+  const fmtT = ts => new Date(ts).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const STATE_STYLE = { captured: 'var(--green)', approved: 'var(--amber)', declined: 'var(--red)', voided: 'var(--muted)' };
+  el.innerHTML = items.map(x => `<div class="tx-row">
+      <div class="tx-av" style="background:hsl(${[...x.merchant].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 0)},40%,30%)">${x.merchant[0].toUpperCase()}</div>
+      <div class="tx-main"><div class="tx-name">${x.merchant}</div>
+        <div class="tx-sub">card ··${x.last4} · ${x.state} · ${fmtT(x.at)}</div></div>
+      <div class="tx-right"><div class="tx-amt" style="color:${STATE_STYLE[x.state] || 'inherit'}">−${fmt(x.amount)}</div></div>
+    </div>`).join('');
 }
 
 /* ---------------- x-ray tab: the living map ---------------- */

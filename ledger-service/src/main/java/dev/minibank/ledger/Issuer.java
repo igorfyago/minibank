@@ -7,6 +7,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -138,7 +140,14 @@ public final class Issuer {
      * wrong under concurrency in exactly the way a credit limit must never be.
      */
     public static Decision authorize(UUID authorizationId, String token, BigDecimal amount,
-                                     String currency, Instant businessAt) throws SQLException {
+                                      String currency, Instant businessAt) throws SQLException {
+        return authorize(authorizationId, token, amount, currency, "card", businessAt);
+    }
+
+    /** As authorize, naming the merchant whose shop is taking the money. The
+     *  cardholder's own activity view reads this back; an acquirer never sees it. */
+    public static Decision authorize(UUID authorizationId, String token, BigDecimal amount,
+                                      String currency, String merchant, Instant businessAt) throws SQLException {
         Existing prior = load(authorizationId);
         if (prior != null) {
             // THE SAME REFERENCE MUST MEAN THE SAME MONEY.
@@ -162,7 +171,7 @@ public final class Issuer {
         }
 
         if (amount == null || amount.signum() <= 0) {
-            return record(authorizationId, token, 0, amount, currency, "declined", "amount must be positive", businessAt);
+            return record(authorizationId, token, 0, amount, currency, "declined", "amount must be positive", merchant, businessAt);
         }
 
         long customerId;
@@ -171,7 +180,7 @@ public final class Issuer {
         } catch (UnknownInstrument e) {
             // a frozen or cancelled card lands here too, and the acquirer is
             // told only that it was declined
-            return record(authorizationId, token, 0, amount, currency, "declined", "instrument not usable", businessAt);
+            return record(authorizationId, token, 0, amount, currency, "declined", "instrument not usable", merchant, businessAt);
         }
 
         Ledger.TransferResult result = Products.authorize(authorizationId, customerId, amount);
@@ -187,7 +196,7 @@ public final class Issuer {
         Metrics.inc("minibank_ledger_events_total",
                 approved ? "kind=\"card_authorized\"" : "kind=\"card_declined\"");
         return record(authorizationId, token, customerId, amount, currency,
-                approved ? "approved" : "declined", reason, businessAt);
+                approved ? "approved" : "declined", reason, merchant, businessAt);
     }
 
     /** Take the money that was held. */
@@ -253,6 +262,39 @@ public final class Issuer {
 
     // ------------------------------------------------------------- internals
 
+    /** A line on the cardholder's own statement: whose shop, how much, what
+     *  became of it, which card. Everything an acquirer must NOT see is absent. */
+    public record Activity(UUID id, String merchant, BigDecimal amount, String currency,
+                           String state, String last4, Instant businessAt) {}
+
+    /**
+     * THE CARDHOLDER'S OWN QUESTION · "what happened on my card", newest first.
+     *
+     * This is the surface the 2026-07-23 break exposed as missing: the mart
+     * charge was authorized and captured perfectly, and the customer saw
+     * nothing anywhere. The money was on the books; only the QUESTION was.
+     */
+    public static List<Activity> activity(long customerId, int limit) throws SQLException {
+        try (Connection c = Directory.openForRead();
+             PreparedStatement ps = c.prepareStatement("""
+                     SELECT a.id, a.merchant, a.amount, a.currency, a.state, i.last4, a.business_at
+                     FROM card_authorizations a
+                     JOIN card_instruments i ON i.token = a.token
+                     WHERE a.customer_id = ?
+                     ORDER BY a.business_at DESC, a.created_at DESC
+                     LIMIT ?""")) {
+            ps.setLong(1, customerId);
+            ps.setInt(2, Math.max(1, Math.min(limit, 100)));
+            List<Activity> out = new ArrayList<>();
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next())
+                    out.add(new Activity((UUID) rs.getObject(1), rs.getString(2), rs.getBigDecimal(3),
+                            rs.getString(4), rs.getString(5), rs.getString(6), rs.getTimestamp(7).toInstant()));
+            }
+            return out;
+        }
+    }
+
     private record Existing(String state, String reason, long customerId,
                             BigDecimal amount, String currency) {}
 
@@ -291,17 +333,19 @@ public final class Issuer {
     }
 
     private static Decision record(UUID id, String token, long customerId, BigDecimal amount,
-                                   String currency, String state, String reason, Instant businessAt)
+                                   String currency, String state, String reason, String merchant,
+                                   Instant businessAt)
             throws SQLException {
         try (Connection c = Directory.openForRead();
              PreparedStatement ps = c.prepareStatement("""
-                     INSERT INTO card_authorizations(id, token, customer_id, amount, currency, state, reason, business_at)
-                     VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING""")) {
+                     INSERT INTO card_authorizations(id, token, customer_id, amount, currency, state, reason, merchant, business_at)
+                     VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING""")) {
             ps.setObject(1, id); ps.setString(2, token); ps.setLong(3, customerId);
             ps.setBigDecimal(4, amount == null ? BigDecimal.ZERO : amount);
             ps.setString(5, currency == null ? "EUR" : currency);
             ps.setString(6, state); ps.setString(7, reason);
-            ps.setTimestamp(8, java.sql.Timestamp.from(businessAt));
+            ps.setString(8, merchant == null || merchant.isBlank() ? "card" : merchant);
+            ps.setTimestamp(9, java.sql.Timestamp.from(businessAt));
             ps.executeUpdate();
         }
         return new Decision(id, "approved".equals(state), reason);

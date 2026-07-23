@@ -187,6 +187,21 @@ public final class Products {
                 .transferLocal(releaseId, customerId + HOLDS, customerId + CARD, amt);
     }
 
+    // main-account charge: the shop's second rail
+    // ------------------------------------------------------------------
+    // A main-account purchase is ONE moment, not two: the EUR leaves the
+    // customer's statement account for the merchant's, and the statement is
+    // where the customer sees it. The caller's reference IS the transaction
+    // id, so a retried checkout re-asks the same money and the ledger's own
+    // idempotency answers AlreadyProcessed — one debit, however the network
+    // behaves. The kind names the merchant because the statement labels the
+    // debit from it: "minimart", never "cafe".
+    public static Ledger.TransferResult chargeMain(UUID reference, long customerId,
+                                                   BigDecimal amount, String merchant) throws SQLException {
+        return Shards.forCustomer(customerId)
+                .transferLocal(reference, customerId, Shard.CAFE, amount, "charge:" + merchant);
+    }
+
     /** the authorization's own entry says how much was held · the ledger is
      *  the source of truth for the hold, like for everything else */
     private static BigDecimal heldAmount(UUID authTx, long customerId) throws SQLException {

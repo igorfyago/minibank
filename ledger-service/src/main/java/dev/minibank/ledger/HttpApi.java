@@ -66,6 +66,8 @@ public final class HttpApi {
         server.createContext("/api/signup", ex -> handle(ex, HttpApi::signup));
         server.createContext("/api/whois", ex -> handle(ex, HttpApi::whois));
         server.createContext("/api/card/charge", ex -> handle(ex, HttpApi::cardCharge));
+        server.createContext("/api/card/activity", ex -> handle(ex, HttpApi::cardActivity));
+        server.createContext("/api/main/charge", ex -> handle(ex, HttpApi::mainCharge));
         server.createContext("/api/support", ex -> handle(ex, HttpApi::support));
         server.createContext("/api/prices/history", ex -> handle(ex, HttpApi::priceHistory));
         // Prometheus scrapes this · plain text exposition, no client library
@@ -303,8 +305,13 @@ public final class HttpApi {
                     // close to its own month) · for LABELLING they collapse
                     // to the family
                     String kindFamily = kind.startsWith("interest:") ? "interest"
-                            : kind.startsWith("late-fee:") ? "late-fee" : kind;
+                            : kind.startsWith("late-fee:") ? "late-fee"
+                            : kind.startsWith("charge:") ? "charge" : kind;
                     switch (kindFamily) {
+                        // a shop purchase on the main account: the kind carries
+                        // the merchant ("charge:minimart") because the statement
+                        // is the receipt — name the shop, never the till account
+                        case "charge" -> { label = capitalize(kind.substring("charge:".length())); tag = "sent"; }
                         case "depart" -> {
                             cross = true;
                             String to = outboxField(c, tx, "to");
@@ -2027,13 +2034,69 @@ public final class HttpApi {
             if (card == null) card = Issuer.issueCard(customerId);
             UUID ref = UUID.fromString(reference);
             Instant at = Instant.now();
-            Issuer.Decision d = Issuer.authorize(ref, card.token(), new java.math.BigDecimal(amount), "EUR", at);
+            String merchant = Json.str(body, "merchant");
+            Issuer.Decision d = Issuer.authorize(ref, card.token(), new java.math.BigDecimal(amount), "EUR",
+                    merchant == null ? "card" : merchant, at);
             if (!d.approved())
                 return Response.json(200, "{\"charged\":false,\"reason\":\"" + Json.esc(
                         d.reason() == null ? "declined" : d.reason()) + "\"}");
             boolean captured = Issuer.capture(ref, at);
             return Response.json(200, "{\"charged\":" + captured
                     + ",\"authorization\":\"" + ref + "\",\"last4\":\"" + Json.esc(card.last4()) + "\"}");
+        } catch (NumberFormatException e) {
+            return Response.json(400, "{\"error\":\"amount must be a number\"}");
+        }
+    }
+
+    /**
+     * THE CARDHOLDER'S OWN CARD SCREEN · "what happened on my card", from the
+     * customer's side of the wall. Same trust shape as /api/card/charge: an
+     * estate surface that already knows WHO is asking.
+     */
+    private static Response cardActivity(HttpExchange ex) throws Exception {
+        if (!"GET".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"GET only\"}");
+        String q = ex.getRequestURI().getQuery();
+        String customer = q == null ? null : java.util.Arrays.stream(q.split("&"))
+                .filter(p -> p.startsWith("customer=")).map(p -> p.substring(9)).findFirst().orElse(null);
+        if (customer == null) return Response.json(400, "{\"error\":\"need customer\"}");
+        StringBuilder b = new StringBuilder("[");
+        boolean first = true;
+        for (Issuer.Activity a : Issuer.activity(Long.parseLong(customer), 20)) {
+            if (!first) b.append(',');
+            first = false;
+            b.append("{\"id\":\"").append(a.id())
+             .append("\",\"merchant\":\"").append(Json.esc(a.merchant()))
+             .append("\",\"amount\":\"").append(a.amount().stripTrailingZeros().toPlainString())
+             .append("\",\"state\":\"").append(a.state())
+             .append("\",\"last4\":\"").append(Json.esc(a.last4()))
+             .append("\",\"at\":\"").append(a.businessAt()).append("\"}");
+        }
+        return Response.json(200, b.append(']').toString());
+    }
+
+    /**
+     * THE MAIN-ACCOUNT RAIL · the shop's other choice. One debit on the EUR
+     * statement, named for the merchant, idempotent on the caller's
+     * reference. Same server-side trust boundary as /api/card/charge.
+     */
+    private static Response mainCharge(HttpExchange ex) throws Exception {
+        if (!"POST".equals(ex.getRequestMethod())) return Response.json(405, "{\"error\":\"POST only\"}");
+        String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String customer = Json.num(body, "customer"), amount = Json.str(body, "amount");
+        String reference = Json.str(body, "reference");
+        String merchant = Json.str(body, "merchant");
+        if (customer == null || amount == null || reference == null)
+            return Response.json(400, "{\"error\":\"need customer, amount, reference\"}");
+        try {
+            Ledger.TransferResult r = Products.chargeMain(UUID.fromString(reference),
+                    Long.parseLong(customer), new java.math.BigDecimal(amount),
+                    merchant == null ? "shop" : merchant);
+            return switch (r) {
+                case Ledger.Ok ok -> Response.json(200, "{\"charged\":true}");
+                case Ledger.AlreadyProcessed a -> Response.json(200, "{\"charged\":true,\"replay\":true}");
+                case Ledger.InsufficientFunds i -> Response.json(200, "{\"charged\":false,\"reason\":\"insufficient funds\"}");
+                case Ledger.NoSuchAccount n -> Response.json(200, "{\"charged\":false,\"reason\":\"no such account\"}");
+            };
         } catch (NumberFormatException e) {
             return Response.json(400, "{\"error\":\"amount must be a number\"}");
         }

@@ -176,6 +176,13 @@ public final class Shard {
         }
     }
 
+    /** As transferLocal, naming what the movement IS (see Ledger.transferOn). */
+    public Ledger.TransferResult transferLocal(UUID txId, long fromId, long toId, BigDecimal amount, String txKind) throws SQLException {
+        try (Connection c = open()) {
+            return Ledger.transferOn(c, txId, fromId, toId, amount, txKind);
+        }
+    }
+
     // ------------------------------------------------------------------
     // the saga, half one: money leaves the payer INTO the pipe
     // ------------------------------------------------------------------
