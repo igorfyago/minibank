@@ -176,16 +176,112 @@
   .who .on { background:var(--violet); border-color:var(--violet); color:#fff; }
   .acct-card, .tx-card { border-radius:18px; }
   .acct-label { color:var(--dim); font-size:12px; font-weight:600; }
-  /* the net worth strip · the whole customer in one server-summed number,
-     wearing the same tokens as the balance it generalizes */
-  .nw-card { border-radius:18px; margin-bottom:16px; }
-  .nw-num { font-size:32px; font-weight:750; margin-top:2px; letter-spacing:-.4px;
-            font-variant-numeric:tabular-nums; line-height:1.2; }
-  .nw-break { display:flex; gap:14px; flex-wrap:wrap; margin-top:5px; color:var(--dim);
-              font-size:12px; font-variant-numeric:tabular-nums; }
-  .nw-break b { color:var(--text); font-weight:650; }
-  .nw-break b.amount-neg { color:var(--red); }
   .balance-num { font-size:46px; font-weight:750; margin:4px 0 10px; letter-spacing:-.5px; }
+
+  /* ===================== THE WEALTH CARD ================================
+     The whole customer in one server-summed number, then where it came from.
+
+     Three faults were being fixed here.
+
+     1. HIERARCHY INVERSION. Net worth summarizes the entire customer and used
+        to render 32px while a single account rendered 46px, so the summary
+        looked junior to its own component. The total now WEARS .balance-num
+        itself, the same declaration, not a copy of it. That is deliberate:
+        a second 46px rule can drift from the first, a shared token cannot,
+        and the existing phone step (.balance-num 38px at 760px) governs both
+        for free. .nw-num only adds tabular figures and the two modifier
+        states, so a 2s repaint cannot make a 46px number twitch sideways.
+     2. PROSE-SHAPED DATA. The breakdown was a wrapping flex run of label and
+        value pairs, so it read as a sentence and orphaned its last leg onto a
+        line of its own. It is now one grid ROW per leg, fixed columns, the
+        amounts landing on one right edge in tabular figures. There is no wrap
+        surface left, at any width or any number of legs, so the orphan is
+        structurally impossible rather than carefully avoided.
+     3. NO ASSET/LIABILITY GROUPING. A minus sign and red text carried the
+        whole semantic load. There are now two declared groups, driven by the
+        server's kind field and never by reading a sign, plus a split bar that
+        says "you owe more than you own" before a digit is parsed.
+     ===================================================================== */
+  .nw-card { border-radius:18px; margin-bottom:16px; }
+  .nw-head { display:flex; align-items:flex-start; gap:10px; }
+  .nw-head .acct-label { flex:1; min-width:0; }
+  /* the slot a wealth screen usually gives a 1D/1W/1M/1Y selector. This bank
+     has no net worth history and /api/networth takes no time parameter, so a
+     selector would be three lies and one truth. It holds the one time fact the
+     server does report: how old the marks behind this number are. On the
+     header, not in the figures, so it survives a withheld total and can never
+     be read as one more leg of the breakdown. */
+  .nw-asof { flex:none; background:var(--bg); border:1px solid var(--line); border-radius:999px;
+             padding:3px 10px; font:600 11px system-ui; color:var(--dim); white-space:nowrap; }
+  .nw-asof.stale { color:var(--amber); border-color:rgba(210,153,34,.45); }
+  /* the total rides .balance-num · this adds only figures and states */
+  .nw-num { font-variant-numeric:tabular-nums; line-height:1.1; }
+  .nw-num.neg { color:var(--red); }
+  .nw-num.unknown { font-size:21px; font-weight:650; letter-spacing:0; color:var(--dim);
+                    line-height:1.5; }
+
+  /* THE SPLIT. Segment widths are geometry, never a reported figure: each leg
+     as a share of the gross magnitude. The server sums money; this sizes a
+     box. Assets left, liabilities right, one gap between, so a wider red side
+     means underwater before a digit is read. One shared tone variable drives
+     both the segment and its row dot, so bar and list cannot disagree about
+     which colour means which product. */
+  .t-accent { --tone:var(--accent); }
+  .t-green  { --tone:var(--green); }
+  .t-violet { --tone:var(--violet); }
+  .t-red    { --tone:var(--red); }
+  .t-red2   { --tone:var(--red); --tone-a:.5; }
+  .nw-bar  { display:flex; gap:5px; height:8px; margin:2px 0 4px;
+             background:#1b2230; border-radius:999px; }
+  .nw-side { display:flex; gap:2px; flex-basis:0; min-width:0; transition:flex-grow .4s ease; }
+  .nw-seg  { flex-basis:0; min-width:3px; border-radius:999px;
+             background:var(--tone, var(--dim)); opacity:var(--tone-a, 1);
+             transition:flex-grow .4s ease; }
+  /* an unvalued holding has no honest width · hatched and fixed, so it takes
+     up room without claiming a size the server just refused to state */
+  .nw-seg.unknown { flex:0 0 26px; min-width:26px; border:1px solid var(--line); opacity:1;
+    background:repeating-linear-gradient(45deg, #2a3140 0 3px, transparent 3px 7px); }
+
+  .nw-group { margin-top:14px; }
+  /* :not(.hidden) so a rule can never float above a group that is not there ·
+     a customer with no debt gets no empty "What you owe" heading */
+  .nw-group:not(.hidden) + .nw-group:not(.hidden) { margin-top:12px; padding-top:12px;
+                                                    border-top:1px solid var(--line); }
+  .nw-gh    { display:flex; align-items:baseline; gap:8px; color:var(--dim);
+              font:700 10.5px system-ui; letter-spacing:.08em; text-transform:uppercase; }
+  /* rendered ONLY if the server sends the subtotal · this file does not sum
+     money to fill a header, and /api/networth has no assets/liabilities key
+     today, so today these headers stand on their own */
+  .nw-gsum  { margin-left:auto; font:650 12.5px system-ui; letter-spacing:0; color:var(--text);
+              font-variant-numeric:tabular-nums; }
+  .nw-gh.owe .nw-gsum { color:var(--red); }
+  .nw-rows  { margin-top:2px; }
+  /* ONE ALIGNMENT SYSTEM, FIXED COLUMNS, NO REFLOW. The column count is the
+     same from 320px to the 540px .phone cap; only type steps at a breakpoint.
+     Every amount lands on one right edge, and nothing can wrap. */
+  .nw-row { display:grid; grid-template-columns:10px minmax(0,1fr) auto 12px; align-items:center;
+            gap:10px; width:100%; margin:0; padding:9px 6px; appearance:none; background:none;
+            border:none; border-top:1px solid rgba(255,255,255,.05); border-radius:10px;
+            color:var(--text); font:inherit; text-align:left; transition:background .15s; }
+  .nw-rows .nw-row:first-child { border-top:none; }
+  .nw-row[data-go] { cursor:pointer; }
+  .nw-row[data-go]:hover { background:rgba(255,255,255,.04); }
+  .nw-row[data-go]:hover .nw-chev { color:var(--violet); opacity:1; }
+  .nw-dot  { width:10px; height:10px; border-radius:50%;
+             background:var(--tone, var(--dim)); opacity:var(--tone-a, 1); }
+  .nw-name { font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis;
+             white-space:nowrap; }
+  .nw-amt  { font-size:14px; font-weight:650; font-variant-numeric:tabular-nums;
+             white-space:nowrap; }
+  .nw-row.owe .nw-amt { color:var(--red); }
+  /* a zero balance and an unvalued leg both recede · after .owe on purpose, so
+     an untouched card does not sit there glowing red */
+  .nw-row.quiet .nw-name, .nw-row.quiet .nw-amt { color:var(--dim); font-weight:600; }
+  .nw-chev { color:var(--dim); font:600 15px system-ui; opacity:.5; transition:color .15s, opacity .15s; }
+  .nw-flag { margin-left:7px; font:600 10.5px system-ui; color:var(--dim); }
+  .nw-flag.stale { color:var(--amber); }
+  .nw-why  { color:var(--dim); font-size:12px; line-height:1.5; margin-top:12px;
+             border-top:1px solid var(--line); padding-top:10px; }
   .actions { display:flex; gap:22px; margin:6px 0 4px; }
   .action { background:none; border:none; color:var(--text); display:flex; flex-direction:column; align-items:center;
             gap:7px; font:600 11.5px system-ui; cursor:pointer; padding:0; }
@@ -699,8 +795,16 @@
     #xsvg { min-width:620px; }
     #scalesvg { min-width:780px; }
     main { padding:12px; }
+    /* .balance-num governs BOTH the account balance and the net worth total,
+       because the total wears that class rather than a copy of its numbers.
+       There is deliberately no .nw-num size here: the summary tracks the
+       balance on a phone exactly as it does on a desktop, which is the whole
+       point of sharing the token. */
     .balance-num { font-size:38px; }
-    .nw-num { font-size:27px; }
+    .nw-num.unknown { font-size:19px; }
+    .nw-row  { padding:10px 4px; }
+    .nw-name { font-size:13px; }
+    .nw-amt  { font-size:13.5px; }
     .actions { gap:14px; }
     .action-ic { width:42px; height:42px; }
     .hero-title { font-size:42px; }
@@ -748,16 +852,40 @@
   <section id="tab-app">
     <div class="phone">
       <div class="who" id="who"></div>
-      <!-- NET WORTH · the Revolut moment. One number for the whole customer,
-           summed by the SERVER from the ledger at request time
-           (/api/networth): main + savings + holdings at the marks + card
-           debt + loan, debts already negative. The browser only formats ·
-           the sum lives where it can be audited, and the stale-mark age
-           rides along exactly as it does on the Investments tile. -->
-      <div class="card nw-card" id="nw-card">
-        <div class="acct-label">Net worth</div>
-        <div class="nw-num" id="nw-total"><span class="sk" style="display:inline-block;width:170px;height:32px;border-radius:10px;vertical-align:middle"></span></div>
-        <div class="nw-break" id="nw-break"></div>
+      <!-- THE WEALTH CARD · one number for the whole customer, summed by the
+           SERVER from the ledger at request time (/api/networth): main +
+           savings + holdings at the marks + card debt + loan, debts already
+           negative and kind:"asset"|"liability" DECLARED. The browser formats,
+           and computes exactly one thing: how wide each segment of the bar is,
+           which is a width and never a figure.
+
+           This is now the ONLY total on the screen. The "Total wealth" tile
+           that used to sit in the Products grid summed the same five legs out
+           of five JS floats while /api/networth was already folding them in
+           BigDecimal over the ledger · two answers to one question, one of
+           them in floating point, roughly 200px apart on one scroll. It is
+           gone, which also leaves the product grid a clean 2x2.
+
+           It carries .acct-card so the surface cannot rank a component above
+           the summary that contains it, and its total wears .balance-num, the
+           same declaration the account balance below uses. -->
+      <div class="card acct-card nw-card" id="nw-card">
+        <div class="nw-head">
+          <div class="acct-label">Total wealth</div>
+          <span class="nw-asof hidden" id="nw-asof"></span>
+        </div>
+        <div class="balance-num nw-num" id="nw-total"><span class="sk" style="display:inline-block;width:210px;height:44px;border-radius:12px;vertical-align:middle"></span></div>
+        <!-- decorative: every segment is named and valued in the rows below,
+             so a screen reader is told the split once, in words, not twice -->
+        <div class="nw-bar" id="nw-bar" aria-hidden="true"></div>
+        <div id="nw-groups">
+          <div class="nw-group"><div class="sk" style="width:96px;height:10px"></div>
+            <div class="nw-rows">
+              <div class="nw-row"><span class="sk" style="width:10px;height:10px;border-radius:50%"></span><span class="sk" style="width:64px;height:12px"></span><span class="sk" style="width:78px;height:12px"></span><span></span></div>
+              <div class="nw-row"><span class="sk" style="width:10px;height:10px;border-radius:50%"></span><span class="sk" style="width:52px;height:12px"></span><span class="sk" style="width:70px;height:12px"></span><span></span></div>
+            </div></div>
+        </div>
+        <div class="nw-why hidden" id="nw-why"></div>
       </div>
       <div class="card acct-card hidden" id="signup-panel" style="margin-bottom:16px">
         <h2>New customer</h2>
@@ -771,7 +899,9 @@
           (data residency, the stage-6 lesson). The world funds you €500.</div>
         <div id="su-result" style="margin-top:6px; font-size:13px; min-height:18px"></div>
       </div>
-      <div class="card acct-card">
+      <!-- The card Igor approved, untouched but for this id: the wealth card's
+           "Main" row scrolls here, and it had nothing to aim at. -->
+      <div class="card acct-card" id="acct-card">
         <div class="acct-label" id="acct-label">Main · EUR</div>
         <div class="balance-num" id="balance"><span class="sk" style="display:inline-block;width:190px;height:44px;border-radius:12px;vertical-align:middle"></span></div>
         <div class="actions">
@@ -1541,7 +1671,9 @@ const fxWho = src => src === 'live' ? 'via fx-service'
 let openProd = null;
 const sliderVals = {};
 const lastAuth = {};   // the most recent card authorization per user (this session)
-window.prodOpen = k => { if (k === 'total') return; openProd = openProd === k ? null : k; prevPortSig = ''; loadPortfolio(); };
+/* the 'total' guard is gone with the tile it guarded · every remaining tile is
+   expandable, so there is no inert key left to swallow */
+window.prodOpen = k => { openProd = openProd === k ? null : k; prevPortSig = ''; loadPortfolio(); };
 // THE PORTFOLIO APP LIVES ON ITS OWN HOSTNAME, not under a path here. Its
 // pages fetch absolute /api/... paths that would resolve against THIS origin
 // and hit the ledger's identically-named routes — same paths, same
@@ -1689,7 +1821,7 @@ function ivHead(inv) {
    registry-driven investments block. With nothing held yet the tile does not
    go blank: it sends them to the portfolio, which is where the shelf of
    things they could buy lives. */
-function ivBody(inv, me) {
+function ivBody(inv, me, pf) {
   const rows = inv.rows || [];
   const open = brokerHref(me);
   if (!rows.length) {
@@ -1723,7 +1855,10 @@ function ivBody(inv, me) {
        <button class="mini" onclick="location.href='${open}'">open portfolio ↗</button></div>
        <div class="prod-sub" style="margin-top:6px">${priced
          ? 'orders go to the broker · the balance moves when the fill settles'
-         : 'no live price right now · buying still works, selling needs a mark'}</div>
+         : 'no live price right now · buying still works, selling needs a mark'}${
+         /* the FX disclosure lived on the deleted Total wealth tile · it belongs
+            where dollars actually become euros, which is here */
+         pf && pf.fxRate ? ` · $→€ ${Number(pf.fxRate).toFixed(4)} ${fxWho(pf.fxSource)}` : ''}</div>
        <div class="ph" id="ph-iv"></div>`;
 }
 window.pLoan = act => prodRun(() => AGENT_TOOLS.loan.exec({ action: act, amount: String(sliderVals[act === 'apply' ? 'ln' : 'lnr']) + '.00' }));
@@ -1738,20 +1873,19 @@ async function loadPortfolio() {
   // The securities leg can be UNKNOWN now that the price feed stops inventing
   // one · net worth is then unknown too, and says so rather than quietly
   // reporting the cash half as if it were the whole.
-  const invEur = inv.value === null ? null : Number(inv.value);
-  const total = invEur === null ? null
-    : Number(pf.main) + Number(pf.savings) + Number(pf.card) + invEur + Number(pf.loan);
+  // THE TOTAL IS NOT COMPUTED HERE ANY MORE. It was summed in this browser out
+  // of five JS floats while /api/networth was already folding the same five in
+  // BigDecimal over the ledger · two answers to one question, one of them in
+  // floating point, on one screen. The wealth card at the top is the total now,
+  // and it is the only one.
   const loanBal = Number(pf.loan), card = Number(pf.card);
   const tile = (k, head, body) => `<div class="prod expandable${openProd === k ? ' open' : ''}" onclick="prodOpen('${k}')">
     <span class="prod-chev">›</span>${head}
     ${openProd === k ? `<div class="prod-x" onclick="event.stopPropagation()">${body}</div>` : ''}</div>`;
+  // FOUR TILES, a clean 2x2. The fifth was the browser-summed total, and it is
+  // the wealth card at the top of the screen now.
   $('#prods').innerHTML =
-    `<div class="prod"><div class="prod-name">💠 Total wealth</div>
-      <div class="prod-val">${total === null ? '<span class="prod-sub">not available</span>' : fmt(total)}</div>
-      <div class="prod-sub">${total === null
-        ? 'a holding has no live price, so the total is withheld rather than partly summed'
-        : `main + savings + investments + card + loan · $→€ ${Number(pf.fxRate).toFixed(4)} ${fxWho(pf.fxSource)}`}</div></div>`
-    + tile('sv',
+    tile('sv',
       `<div class="prod-name">💰 Savings</div><div class="prod-val">${fmt(pf.savings)}</div>
        <div class="prod-sub">a second account, nothing more</div>`,
       slider('sv', 10, 500, 10, 50) +
@@ -1781,7 +1915,7 @@ async function loadPortfolio() {
        two names, hardcoded. This is the Revolut shape · one product, a total
        and a day move on the face, the instruments themselves one level in.
        The bank's own products (savings, card, loan) are untouched. */
-    + tile('iv', ivHead(inv), ivBody(inv, me))
+    + tile('iv', ivHead(inv), ivBody(inv, me, pf))
     + tile('ln',
       `<div class="prod-name">🏦 Loan</div><div class="prod-val">${loanBal === 0 ? '€0.00' : fmt(pf.loan)}</div>
        <div class="prod-sub">${loanBal === 0 ? 'borrow up to €20,000 · instant decision' : 'the debt heals by plain transfers'}</div>`,
@@ -1801,13 +1935,200 @@ async function loadPortfolio() {
   if (openProd === 'cd') loadCreditTile();
 }
 
-/* THE NET WORTH STRIP · /api/networth is the server's own sum over the
-   ledger at request time; this function only formats it. Liabilities arrive
-   negative and DECLARED (kind:'liability'), so the red is the server's
-   claim, not a minus-sign heuristic here. It rides the same 2s cadence as
-   every other loader and the refreshAll tail, so it moves when the money
-   does · and "prices as of Ns ago" appears only when the marks are stale,
-   the exact convention the Investments tile uses. */
+/* THE WEALTH CARD · /api/networth is the server's own sum over the ledger at
+   request time; the code below only formats it. Liabilities arrive negative
+   and DECLARED (kind:'liability'), so both the red and the grouping are the
+   server's claim, not a minus-sign heuristic here. It rides the same 2s
+   cadence as every other loader and the refreshAll tail, so it moves when the
+   money does.
+
+   THE DECISIONS ARE SEPARATED FROM THE PAINT ON PURPOSE. nwPlan() below is a
+   pure function of the payload: it decides how the total formats, which group
+   a leg belongs in, what an unknown label does, what a zero or a missing
+   amount looks like, and how wide each bar segment is. Those are the parts
+   that have been wrong before, and they are now testable without a browser.
+   The painter underneath it does nothing but write the plan into the DOM.
+
+   THE ONLY ARITHMETIC IS SEGMENT GEOMETRY: each leg's share of the gross
+   magnitude, assigned to flex-grow. That is a width. No euro figure on this
+   card is added up in the browser. Group subtotals render only if the server
+   sends nw.assets / nw.liabilities; /api/networth has no such key today, so
+   the group headers stand on their own rather than on a sum this file
+   invented. */
+/* ===================== NETWORTH-PURE-START =====================
+   Everything between these markers is a pure function of the payload plus
+   fmt(). networth-render.test.js lifts this exact text into a vm and runs it,
+   so the tests execute the shipped code rather than matching page source. */
+const NW_LEG = {
+  main:     { title: 'Main',        tone: 't-accent', go: 'acct' },
+  savings:  { title: 'Savings',     tone: 't-green',  go: 'sv'   },
+  /* marked:true is what earns the "cached mark" note · the age belongs to the
+     leg the marks actually value, and this says so in the metadata instead of
+     comparing a label string down in the renderer */
+  invested: { title: 'Investments', tone: 't-violet', go: 'iv', marked: true },
+  card:     { title: 'Credit card', tone: 't-red',    go: 'cd'   },
+  loan:     { title: 'Loan',        tone: 't-red2',   go: 'ln'   }
+};
+/* A LEG THE MAP DOES NOT KNOW IS STILL A LEG. It used to be filtered out,
+   which would have shown a total that silently did not equal its own visible
+   parts the day a sixth product shipped. An unknown label renders unstyled and
+   undecorated, with no destination to tap, but it renders. */
+const nwMeta = label => NW_LEG[label] || { title: String(label), tone: 't-accent', go: null };
+const nwMoney = v => (Number(v) < 0 ? '−' : '') + fmt(Math.abs(v));
+const nwAge = s => (Number(s) < 90 ? Number(s) + 's' : Math.round(Number(s) / 60) + ' min');
+const nwMissing = v => v === null || v === undefined;
+
+/**
+ * THE WHOLE CARD AS DATA. Takes the /api/networth payload, returns what the
+ * screen should say. Never touches the DOM, never fetches, never sums money.
+ */
+function nwPlan(nw) {
+  nw = nw || {};
+  const withheld = nwMissing(nw.total);
+  const age = nw.priceAgeSeconds;
+  const cached = !nwMissing(age);
+
+  const legs = (Array.isArray(nw.breakdown) ? nw.breakdown : []).map(l => {
+    const meta = nwMeta(l.label);
+    const known = !nwMissing(l.amount);
+    return {
+      key: l.label,
+      title: meta.title,
+      tone: meta.tone,
+      go: meta.go,
+      debt: l.kind === 'liability',       // DECLARED, never inferred from a sign
+      known: known,
+      amount: known ? Number(l.amount) : null,
+      text: known ? nwMoney(l.amount) : 'not valued',
+      // an untouched product and an unvalued one both recede rather than shout
+      quiet: !known || Number(l.amount) === 0,
+      flag: meta.marked && cached ? { text: 'cached mark', stale: Number(age) >= 60 } : null
+    };
+  });
+
+  /* GEOMETRY, NOT ACCOUNTING. Share of the gross magnitude, so the bar shows
+     the SHAPE of the balance sheet; the number above it is the authority on
+     its size. An unvalued leg gets no share, because inventing one would be
+     inventing the size the server just refused to state. */
+  const gross = legs.reduce((s, l) => s + (l.known ? Math.abs(l.amount) : 0), 0);
+  const seg = l => ({ key: l.key, tone: l.tone, share: (l.known && gross > 0) ? Math.abs(l.amount) / gross : 0 });
+
+  return {
+    total: withheld
+      ? { text: 'not available', unknown: true, neg: false }
+      : { text: nwMoney(nw.total), unknown: false, neg: Number(nw.total) < 0 },
+    /* BOTH BRANCHES. Balances are live from the ledger and only the marks are
+       cached, so a stale mark has to be able to surface its age even in the
+       run where the sum itself was withheld. */
+    asof: cached ? { text: 'marks ' + nwAge(age) + ' old', stale: Number(age) >= 60 } : null,
+    bar: {
+      own: legs.filter(l => !l.debt).map(seg),
+      owe: legs.filter(l => l.debt).map(seg),
+      unknown: withheld
+    },
+    /* KNOWN LEGS SURVIVE A WITHHELD TOTAL. The old strip blanked the whole
+       breakdown when one holding could not be valued, which told the customer
+       less than the server actually knows: four of the five legs are still
+       facts. Only the unvaluable row says so. */
+    groups: [
+      { key: 'own', head: 'What you own', sum: nw.assets, rows: legs.filter(l => !l.debt) },
+      { key: 'owe', head: 'What you owe', sum: nw.liabilities, rows: legs.filter(l => l.debt) }
+    ],
+    why: withheld ? nwWhy(nw) : null
+  };
+}
+
+/* the same honesty the Investments tile has: a partial sum renders identically
+   to a complete one, so the server withheld it and said which reason */
+function nwWhy(nw) {
+  const exp = Number(nw.expired || 0), un = Number(nw.unpriced || 0);
+  const tail = ' · the total is withheld rather than partly summed';
+  return exp > 0 && un > 0
+      ? `${exp} expired and ${un} unpriced holding${un === 1 ? '' : 's'}` + tail
+    : exp > 0
+      ? `${exp} expired contract${exp === 1 ? '' : 's'} cannot be valued` + tail
+      : 'a holding has no live price right now' + tail;
+}
+
+const nwEsc = s => String(s).replace(/[&<>"]/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ONE ROW PER LEG: dot, name, amount on the right edge, chevron only when
+   there is somewhere to go. Labels are ESCAPED · they are server constants
+   today, and an unknown one now reaches this line unfiltered rather than being
+   dropped, so it may not be trusted into innerHTML raw. */
+function nwRow(l) {
+  const go = l.go ? ` data-go="${nwEsc(l.go)}" onclick="nwGo('${nwEsc(l.go)}')" title="open ${nwEsc(l.title)}"` : '';
+  const flag = l.flag ? ` <span class="nw-flag${l.flag.stale ? ' stale' : ''}">${l.flag.text}</span>` : '';
+  return `<button type="button" class="nw-row${l.debt ? ' owe' : ''}${l.quiet ? ' quiet' : ''}"${go}>` +
+    `<span class="nw-dot ${l.tone}"></span>` +
+    `<span class="nw-name">${nwEsc(l.title)}${flag}</span>` +
+    `<span class="nw-amt">${nwEsc(l.text)}</span>` +
+    `<span class="nw-chev">${l.go ? '›' : ''}</span></button>`;
+}
+
+/* a group with no legs is hidden rather than rendered empty, and the CSS rule
+   that draws the separating hairline is keyed on :not(.hidden), so the rule can
+   never float above a group that is not there */
+function nwGroups(plan) {
+  return plan.groups.map(g =>
+    `<div class="nw-group${g.rows.length ? '' : ' hidden'}">` +
+    `<div class="nw-gh ${g.key}">${g.head}${
+       nwMissing(g.sum) ? '' : `<span class="nw-gsum">${nwMoney(g.sum)}</span>`}</div>` +
+    `<div class="nw-rows">${g.rows.map(nwRow).join('')}</div></div>`).join('');
+}
+/* ====================== NETWORTH-PURE-END ====================== */
+
+/* A ROW TAP OPENS THE PRODUCT IT NAMES. Open, not toggle: the tap came from
+   another card entirely, and closing the thing you just aimed at is not an
+   answer. 'main' has no tile, it IS the balance card, so it scrolls there. */
+window.nwGo = key => {
+  if (!key) return;
+  if (key === 'acct') { $('#acct-card').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+  if (openProd !== key) { openProd = key; prevPortSig = ''; loadPortfolio(); }
+  $('#prods').scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
+
+/* The bar is built ONCE and thereafter only re-weighted, so a balance change
+   slides the split instead of repainting it, and nothing under a finger is
+   swapped out on the 2s cadence. */
+function nwBar(plan) {
+  const bar = $('#nw-bar');
+  const sideOf = cls => {
+    let el = bar.querySelector('.nw-side.' + cls);
+    if (!el) { el = document.createElement('div'); el.className = 'nw-side ' + cls; bar.appendChild(el); }
+    return el;
+  };
+  const paint = (host, segs) => {
+    let grow = 0;
+    segs.forEach(s => {
+      let el = bar.querySelector('.nw-seg[data-leg="' + s.key + '"]');
+      if (!el) {
+        el = document.createElement('div');
+        el.dataset.leg = s.key;
+        host.appendChild(el);
+      }
+      el.className = 'nw-seg ' + s.tone + (s.share === 0 ? ' hidden' : '');
+      if (el.parentNode !== host) host.appendChild(el);
+      el.style.flexGrow = s.share;
+      grow += s.share;
+    });
+    host.style.flexGrow = grow;
+    return grow;
+  };
+  const own = sideOf('own'), owe = sideOf('owe');
+  const ownGrow = paint(own, plan.bar.own), oweGrow = paint(owe, plan.bar.owe);
+  own.classList.toggle('hidden', ownGrow === 0 && !plan.bar.unknown);
+  owe.classList.toggle('hidden', oweGrow === 0);
+  let q = bar.querySelector('.nw-seg.unknown');
+  if (plan.bar.unknown && !q) {
+    q = document.createElement('div');
+    q.className = 'nw-seg unknown';
+    q.title = 'a holding has no live price · its size is not known';
+    bar.insertBefore(q, owe);
+  } else if (!plan.bar.unknown && q) q.remove();
+}
+
 let prevNwSig = '';
 async function loadNetworth() {
   if (me === null) return;
@@ -1815,29 +2136,23 @@ async function loadNetworth() {
   const sig = JSON.stringify(nw);
   if (sig === prevNwSig) return;
   prevNwSig = sig;
-  if (nw.total === null || nw.total === undefined) {
-    // the same honesty as the tile: a partial sum renders identically to a
-    // complete one, so the server withheld it and said which reason
-    const exp = Number(nw.expired || 0), un = Number(nw.unpriced || 0);
-    $('#nw-total').innerHTML = '<span class="prod-sub">not available</span>';
-    $('#nw-break').textContent = exp > 0 && un > 0
-        ? `${exp} expired and ${un} unpriced holding${un === 1 ? '' : 's'} · total withheld`
-      : exp > 0
-        ? `${exp} expired contract${exp === 1 ? '' : 's'} cannot be valued · total withheld`
-        : 'a holding has no live price right now · total withheld';
-    return;
-  }
-  const money = v => (Number(v) < 0 ? '−' : '') + fmt(Math.abs(v));
-  $('#nw-total').textContent = money(nw.total);
-  const legs = (nw.breakdown || []).map(l => l.amount === null ? '' :
-    `<span>${l.label} <b${l.kind === 'liability' && Number(l.amount) < 0 ? ' class="amount-neg"' : ''}>${money(l.amount)}</b></span>`)
-    .join('');
-  let stale = '';
-  if (nw.priceAgeSeconds !== null && nw.priceAgeSeconds !== undefined) {
-    const worst = Number(nw.priceAgeSeconds);
-    stale = `<span>prices as of ${worst < 90 ? worst + 's' : Math.round(worst / 60) + ' min'} ago</span>`;
-  }
-  $('#nw-break').innerHTML = legs + stale;
+  const plan = nwPlan(nw);
+
+  const pill = $('#nw-asof');
+  pill.classList.toggle('hidden', !plan.asof);
+  if (plan.asof) { pill.textContent = plan.asof.text; pill.classList.toggle('stale', plan.asof.stale); }
+
+  const total = $('#nw-total');
+  total.textContent = plan.total.text;
+  total.classList.toggle('unknown', plan.total.unknown);
+  total.classList.toggle('neg', plan.total.neg);
+
+  nwBar(plan);
+  $('#nw-groups').innerHTML = nwGroups(plan);
+
+  const why = $('#nw-why');
+  why.classList.toggle('hidden', !plan.why);
+  if (plan.why) why.textContent = plan.why;
 }
 
 /* MINICREDIT · the cycle, the statement and the accruing interest, drawn
@@ -2364,7 +2679,7 @@ const GUIDE = {
     how: () => [`The execution price is written into the trade event · euros and units live in the ledger, their ratio IS the price paid. No position table exists; holdings are just an account in another currency.`],
     win: () => [`Multi-currency double-entry: the sum-zero invariant holds per currency, so one audit query still covers the whole bank, assets included.`] },
   'ev:mortgage': { t: 'A loan disbursed',
-    plain: c => [`${evLine(c.ev)}. The loan account went negative, the main account went positive, one commit · net worth unchanged, which the Total wealth tile shows live.`],
+    plain: c => [`${evLine(c.ev)}. The loan account went negative, the main account went positive, one commit · net worth unchanged, which the Total wealth card at the top shows live.`],
     how: () => [`The loan floor is a CHECK constraint (≥ −100,000 schema-side, ≤ 20,000 policy-side) · the schema enforces what the product promises. Repayment is a plain transfer back.`],
     win: () => [`Credit is not new machinery: it is an account allowed to be negative, guarded by constraints in the same commit as the money.`] },
   entry: { t: 'A ledger entry',
