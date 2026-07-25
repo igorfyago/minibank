@@ -2010,7 +2010,18 @@ async function loadCardActivity() {
   if (me === null) return;
   let items;
   try { items = await api('/api/card/activity?customer=' + me); }
-  catch (e) { return; }   // an older bank has no such route: the panel stays quiet
+  catch (e) {
+    // A FAILURE MUST NOT WEAR THE EMPTY STATE'S CLOTHES. This used to return
+    // and leave "nothing on your card yet" standing, so a route that was down
+    // and a card that had never been used drew the same picture. An older bank
+    // genuinely has no such route, and that is a 404 and the one honest
+    // silence; anything else is a failure and now says so.
+    const el = $('#cardlist');
+    if (el && !/404/.test(String(e && e.message))) {
+      el.innerHTML = '<span class="muted">card activity is not loading right now</span>';
+    }
+    return;
+  }
   const el = $('#cardlist');
   if (!el) return;
   if (!items.length) { el.innerHTML = '<span class="muted">nothing on your card yet</span>'; return; }
@@ -4817,7 +4828,7 @@ function applyHash() {
 applyHash();
 window.addEventListener('hashchange', applyHash);
 if (location.hash === '#send') { $('#send-panel').classList.remove('hidden'); segPaint(); }
-setInterval(() => { tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); tick(loadNetworth); tick(renderExt); if (!$('#tab-xray').classList.contains('hidden')) { tick(xrayTick); tick(traceRefreshTick); } if (!$('#tab-console').classList.contains('hidden')) tick(kafkaTick); }, 2000);
+setInterval(() => { tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); tick(loadNetworth); tick(loadCardActivity); tick(renderExt); if (!$('#tab-xray').classList.contains('hidden')) { tick(xrayTick); tick(traceRefreshTick); } if (!$('#tab-console').classList.contains('hidden')) tick(kafkaTick); }, 2000);
 </script>
 </body>
 </html>
