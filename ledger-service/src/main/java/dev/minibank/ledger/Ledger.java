@@ -210,10 +210,32 @@ public final class Ledger {
             // credit_limit_events audit table is created further up, before
             // the min_balance repair that consults it.)
             st.execute("CREATE INDEX IF NOT EXISTS idx_entries_account_at ON entries(account_id, created_at)");
+            // THE OTHER SIDE OF A TRANSACTION, BY TRANSACTION (V11 mirror).
+            //
+            // The statement page asks, once per displayed row, "which OTHER
+            // entry belongs to this tx_id" · that is the LATERAL in
+            // HttpApi.STATEMENT_SQL, and it is how a row learns who it was
+            // paid to. entries had no index on tx_id, so answering it was a
+            // Seq Scan of the whole table, forty times over, twice: measured
+            // at 1280 of the query's 1522 shared buffers.
+            //
+            // Note what that cost is proportional to. Not the customer's
+            // history · the lesson-3 guard already watches that one · but the
+            // SHARD's, every entry every customer ever wrote. A busy shard was
+            // slowing down the statements of accounts that had done nothing.
+            st.execute("CREATE INDEX IF NOT EXISTS idx_entries_tx ON entries(tx_id)");
         }
         // the outbox is not optional decoration: a transfer writes to it,
         // so the ledger cannot exist without it.
         Outbox.createTableOn(c);
+        try (var st = c.createStatement()) {
+            // THE DEPARTED EVENT, BY KEY (V11 mirror). The statement reads the
+            // outbox by key to name the far side of a cross-region payment.
+            // The only index on outbox is (id) WHERE published_at IS NULL ·
+            // the relay's queue index, which a key lookup cannot use · so
+            // that read was a Seq Scan of the outbox, once per depart row.
+            st.execute("CREATE INDEX IF NOT EXISTS idx_outbox_key ON outbox(key)");
+        }
         // and neither is the place a settlement step goes when it will not
         // complete · a saga whose failures have nowhere to land is a saga
         // that loses them

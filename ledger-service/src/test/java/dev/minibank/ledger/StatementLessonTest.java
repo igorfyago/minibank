@@ -47,11 +47,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   lesson 4  a settled trade reads 'Bought Bitcoin', with size and price
  *   lesson 5  history from the retired direct path reads the same way
  *
+ * And then the endpoint was measured, and the story turned out to be only
+ * half told. Lesson 3 bounded the cost of FETCHING the forty rows, and the
+ * fetch was never the expensive part: 13ms of a 133ms page. The other 120ms
+ * was the DECORATION · the counterparty each row was paid to, the name behind
+ * that id, whether a departure had landed yet · every one of them fetched per
+ * row, one round trip at a time, several of them to another machine.
+ *
+ * A read model costs what it shows. That is a claim about everything the page
+ * does, not only about the query at the top of it.
+ *
+ *   lesson 6  finding the other side of a transaction is a lookup, not a scan
+ *   lesson 7  thirty rows naming one person are one directory lookup
+ *   lesson 8  ... and batching the in-flight check did not blur it
+ *
  * Requires: docker compose up -d
  */
 class StatementLessonTest {
 
     static final long IGOR = 10;
+    static final long COCO = 11;      // the counterparty who lives on the other shard
     static HttpServer server;
     static int port;
     static final HttpClient HTTP = HttpClient.newHttpClient();
@@ -255,6 +270,176 @@ class StatementLessonTest {
         List<String> labels = fields(statement(IGOR), "label");
         assertTrue(labels.contains("Bought Apple stock"),
                 "an old row is still an event, and still names itself · got " + labels);
+    }
+
+    // ------------------------------------------------------------------
+    /**
+     * THE PAGE COSTS WHAT IT SHOWS · THE OTHER SIDE OF IT TOO.
+     *
+     * Lesson 3 pinned the cost of finding the customer's OWN forty entries.
+     * It never looked at what the query does once it has them, which is to
+     * run a LATERAL per displayed row asking "which OTHER entry belongs to
+     * this transaction" · that is how a row learns who it was paid to.
+     *
+     * entries had no index on tx_id. So the answer to that question was a
+     * sequential scan of the whole entries table, forty times over, twice
+     * (there are two LATERALs). Measured on a 1402-row shard: 1280 of the
+     * query's 1522 shared buffers were those two scans, to render 40 rows.
+     *
+     * Read what that cost is proportional to, because it is the part lesson 3
+     * cannot see. Not the customer's history · theirs was already bounded ·
+     * but the SHARD's, every entry every customer on the machine ever wrote.
+     * A busy shard was slowing down the statements of accounts that had done
+     * nothing at all, and no amount of history-per-customer testing would
+     * ever have shown it.
+     */
+    @Test
+    @DisplayName("lesson 6: finding the other side of a transaction must not read the ledger · index, not scan")
+    void lesson6_theCounterpartyLookupDoesNotScanTheLedger() throws Exception {
+        Shard home = Shards.forCustomer(IGOR);
+        home.transferLocal(UUID.randomUUID(), Shard.WORLD, IGOR, eur("5000.00"));
+        // history belonging to somebody else on the same shard: this is the
+        // volume a Seq Scan inside the LATERAL would wade through, and the
+        // volume an index makes irrelevant
+        Shards.forCustomer(IGOR).createCustomer(IGOR + 40, "neighbour");
+        for (int i = 0; i < 250; i++)
+            home.transferLocal(UUID.randomUUID(), Shard.WORLD, IGOR + 40, eur("1.00"));
+        for (int i = 0; i < 60; i++)
+            home.transferLocal(UUID.randomUUID(), IGOR, IGOR + Products.SAVINGS, eur("1.00"));
+
+        String plan = textPlan(home, IGOR);
+        assertFalse(plan.contains("Seq Scan on entries"),
+                "the counterparty LATERAL must look its answer up, not scan the ledger for it · plan was:\n" + plan);
+        // and the page still says the right things while doing it
+        assertSameNumbers(expectedAfters(home, IGOR), afters(statement(IGOR)), "still correct on an index");
+    }
+
+    // ------------------------------------------------------------------
+    /**
+     * A PAGE NAMES TWO OR THREE PEOPLE. IT ASKED THE DIRECTORY FORTY TIMES.
+     *
+     * Every row that names a human called Directory.owner, and
+     * Directory.owner opens its own connection · DriverManager, no pool ·
+     * resolves one id and closes it. So a month of paying the same flatmate
+     * was forty TCP handshakes and forty SCRAM exchanges against a database
+     * holding twenty-five rows. Measured: 88ms of a 133ms page, two thirds of
+     * the endpoint, and more than four times the entire SQL query it exists
+     * to decorate.
+     *
+     * The witness here is the directory database's own transaction counter,
+     * not a number this code keeps about itself. A connection that was opened
+     * is a transaction that committed, and pg_stat_database counted them
+     * whether or not anybody instrumented the caller.
+     *
+     * Note what is NOT being claimed. Nothing is cached: the memo is scoped
+     * to one request and dies with it, so it can never serve a name the
+     * directory has since changed. The claim is only that a page does not ask
+     * the same question thirty times in one breath.
+     */
+    @Test
+    @DisplayName("lesson 7: thirty rows naming one person are one lookup, not thirty")
+    void lesson7_onePageAsksEachNameOnce() throws Exception {
+        Shard home = Shards.forCustomer(IGOR);
+        assertNotEquals(home, Shards.forCustomer(COCO), "this lesson needs a counterparty who lives elsewhere");
+        Directory.register(COCO, "coco", Shards.forCustomer(COCO).index);
+        String cocoName = Directory.owner(COCO);
+
+        home.transferLocal(UUID.randomUUID(), Shard.WORLD, IGOR, eur("500.00"));
+        int rows = 30;
+        for (int i = 0; i < rows; i++)
+            home.depart(UUID.randomUUID(), IGOR, COCO, eur("1.00"));
+
+        long before = directoryTransactions();
+        List<String> labels = fields(statement(IGOR), "label");
+        long spent = directoryTransactions() - before;
+
+        // every one of those rows names the same person, correctly · the memo
+        // must not be fast by being wrong
+        assertEquals(rows, java.util.Collections.frequency(labels, cocoName),
+                "all " + rows + " departures name the same counterparty · got " + labels);
+
+        // and the directory was asked about them once. A small allowance for
+        // anything else sharing this database; the number being guarded is 30.
+        assertTrue(spent <= 5,
+                "a page that names one person should cost one directory lookup · it cost " + spent
+                        + " transactions for " + rows + " rows");
+    }
+
+    // ------------------------------------------------------------------
+    /**
+     * ...AND BATCHING MUST NOT BLUR WHAT IT BATCHED.
+     *
+     * The in-flight check is the one decoration on this page that can be
+     * WRONG rather than merely slow, because it is what tells a customer
+     * their money has not landed yet. It used to be asked one row at a time,
+     * straight at the destination shard; it is now one query per destination
+     * for the whole page. That is exactly the kind of change that quietly
+     * collapses forty different answers into one shared one.
+     *
+     * So: two departures to the same person, on the same page, one of which
+     * has arrived. They must not agree.
+     */
+    @Test
+    @DisplayName("lesson 8: one settled departure and one still in the air, on one page, do not blur together")
+    void lesson8_pendingSurvivesBatching() throws Exception {
+        Shard home = Shards.forCustomer(IGOR);
+        assertNotEquals(home, Shards.forCustomer(COCO), "this lesson needs a counterparty who lives elsewhere");
+        Directory.register(COCO, "coco", Shards.forCustomer(COCO).index);
+        Shards.forCustomer(COCO).createCustomer(COCO, "coco");
+
+        home.transferLocal(UUID.randomUUID(), Shard.WORLD, IGOR, eur("500.00"));
+        UUID landed = UUID.randomUUID(), stillFlying = UUID.randomUUID();
+        home.depart(landed, IGOR, COCO, eur("10.00"));
+        ShardApplier.handle(Fixtures.outboxEvent(home, "departed:" + landed).payload());
+        home.depart(stillFlying, IGOR, COCO, eur("20.00"));
+
+        String json = statement(IGOR);
+        List<String> txs = fields(json, "tx");
+        List<Boolean> pending = flags(json, "pending");
+
+        int iFlying = txs.indexOf(stillFlying.toString());
+        int iLanded = txs.indexOf(landed.toString());
+        assertTrue(iFlying >= 0 && iLanded >= 0, "both departures are on the page · got " + txs);
+        assertTrue(pending.get(iFlying), "the one nobody has received is still pending");
+        assertFalse(pending.get(iLanded), "the one that arrived is not · a batch answered per row, not per page");
+    }
+
+    /** The shipped statement query's plan, in text, ANALYZEd first · same
+     *  reason lesson 3 does it: a planner with no statistics is not the
+     *  planner anything runs in production. */
+    private static String textPlan(Shard home, long account) throws Exception {
+        try (Connection c = home.open()) {
+            try (var st = c.createStatement()) { st.execute("ANALYZE entries"); }
+            try (var ps = c.prepareStatement("EXPLAIN (ANALYZE) " + HttpApi.STATEMENT_SQL)) {
+                ps.setLong(1, account);
+                StringBuilder plan = new StringBuilder();
+                try (var rs = ps.executeQuery()) {
+                    while (rs.next()) plan.append(rs.getString(1)).append('\n');
+                }
+                return plan.toString();
+            }
+        }
+    }
+
+    /** How many transactions the DIRECTORY database has committed · one per
+     *  Directory.owner call, because each opens its own connection. */
+    private static long directoryTransactions() throws Exception {
+        String url = System.getenv().getOrDefault("MINIBANK_DB_URL", "jdbc:postgresql://localhost:5433/minibank");
+        try (Connection c = java.sql.DriverManager.getConnection(url, "minibank", "minibank");
+             var ps = c.prepareStatement("SELECT xact_commit FROM pg_stat_database WHERE datname = ?")) {
+            ps.setString(1, "minibank_directory");
+            try (var rs = ps.executeQuery()) {
+                return rs.next() ? rs.getLong(1) : 0;
+            }
+        }
+    }
+
+    /** every value of a boolean field, in row order */
+    private static List<Boolean> flags(String json, String name) {
+        List<Boolean> out = new ArrayList<>();
+        var m = java.util.regex.Pattern.compile("\"" + name + "\":(true|false)").matcher(json);
+        while (m.find()) out.add(Boolean.parseBoolean(m.group(1)));
+        return out;
     }
 
     // ------------------------------------------------------------------

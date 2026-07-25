@@ -12,7 +12,11 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 
@@ -266,6 +270,20 @@ public final class HttpApi {
         Shard home = Shards.forCustomer(id);
 
         StringBuilder b = new StringBuilder("[");
+        /* ONE NAME, ONE LOOKUP, PER PAGE.
+           Every row that names a human calls Directory.owner, and
+           Directory.owner opens its OWN database connection · DriverManager,
+           not a pool · resolves one id, and closes it. Forty rows meant forty
+           connection handshakes to a database that holds twenty-five rows,
+           and it was 88ms of a 133ms page: two thirds of the endpoint, and
+           more than four times the entire SQL query it decorates.
+           A page does not name forty different people. It names two or three,
+           over and over: the same flatmate, the same shop. This memo is scoped
+           to ONE REQUEST and dies with it, so it has no staleness question to
+           answer and nothing to invalidate · it only refuses to ask the same
+           question twice inside a single page. */
+        Map<String, String> names = new HashMap<>();
+        Map<String, String> assetNames = new HashMap<>();
         try (Connection c = home.open()) {
             /* THE RUNNING BALANCE, WITHOUT READING THE WHOLE LEDGER.
                This used to be SUM(e.amount) OVER (ORDER BY e.id) · a window
@@ -281,18 +299,38 @@ public final class HttpApi {
                − amount(newer). Same numbers, O(40) instead of O(history), and
                it reuses the projection rather than recomputing the truth. */
             BigDecimal running = Ledger.cachedBalanceOn(c, id);
+            /* FETCH THE PAGE, THEN DECORATE THE PAGE.
+               The rows used to be decorated one at a time, inside the cursor,
+               and every decoration that needed a fact the query had not
+               selected went and got it for that row alone: the departed event
+               out of the outbox, the arrival off the DESTINATION SHARD, the
+               instrument's name out of the registry. Forty rows, forty times.
+               The page is bounded at 40 by construction, so holding it in
+               memory costs nothing and buys the ability to ask each question
+               ONCE for the whole page. Same facts, same answers · a fixed
+               handful of round trips instead of a number that scales with how
+               much of the customer's month was a cross-region payment. */
+            List<StatementRow> rows = new ArrayList<>(40);
             try (var ps = c.prepareStatement(STATEMENT_SQL)) {
-            ps.setLong(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
+                ps.setLong(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next())
+                        rows.add(new StatementRow(rs.getObject(1, UUID.class), rs.getBigDecimal(2),
+                                rs.getTimestamp(3).toInstant(), rs.getString(4), rs.getString(5),
+                                rs.getString(6), rs.getBigDecimal(7)));
+                }
+            }
+            PageFacts facts = pageFacts(c, home, rows);
+            {
                 boolean first = true;
-                while (rs.next()) {
-                    UUID tx = rs.getObject(1, UUID.class);
-                    var amount = rs.getBigDecimal(2);
-                    var at = rs.getTimestamp(3).toInstant();
-                    String kind = rs.getString(4);
-                    String otherOwner = rs.getString(5);
-                    String otherKind = rs.getString(6);
-                    BigDecimal assetUnits = rs.getBigDecimal(7);
+                for (StatementRow r : rows) {
+                    UUID tx = r.tx();
+                    var amount = r.amount();
+                    var at = r.at();
+                    String kind = r.kind();
+                    String otherOwner = r.otherOwner();
+                    String otherKind = r.otherKind();
+                    BigDecimal assetUnits = r.assetUnits();
                     // newest row first: its "after" IS the current balance
                     var after = running;
                     running = running.subtract(amount);
@@ -314,18 +352,18 @@ public final class HttpApi {
                         case "charge" -> { label = capitalize(kind.substring("charge:".length())); tag = "sent"; }
                         case "depart" -> {
                             cross = true;
-                            String to = outboxField(c, tx, "to");
+                            String to = facts.departedTo().get(tx);
                             if (to != null && Long.parseLong(to) == id) { label = "Relocation"; tag = "relocation"; }
-                            else { label = ownerName(to); tag = "sent"; }
+                            else { label = ownerName(names, to); tag = "sent"; }
                             // Revolut-style honesty: a departed payment is
                             // PENDING until its arrival (or refund) commits.
-                            pending = isStillInFlight(c, home, tx, to);
+                            pending = facts.inFlight().contains(tx);
                         }
                         case "arrive" -> {
                             cross = true;
-                            String from = departedFieldElsewhere(home, tx, "from");
+                            String from = facts.arrivedFrom().get(tx);
                             if (from != null && Long.parseLong(from) == id) { label = "Relocation"; tag = "relocation"; }
-                            else { label = ownerName(from); tag = "received"; }
+                            else { label = ownerName(names, from); tag = "received"; }
                         }
                         case "refund" -> { cross = true; label = "Refund"; tag = "refund"; }
                         case "mortgage" -> { label = "Loan"; tag = "loan"; }
@@ -369,7 +407,11 @@ public final class HttpApi {
                                 // data, not headings · the capital belongs to
                                 // the sentence this builds, not to the row in
                                 // the table
-                                String name = capitalize(AssetRegistry.labelOrSymbol(c, parts[1]));
+                                // memoised for the page, same reason as the
+                                // owner names: a month of buying one coin is
+                                // one instrument, not thirty
+                                String name = assetNames.computeIfAbsent(parts[1],
+                                        s -> capitalize(AssetRegistry.labelOrSymbol(c, s)));
                                 boolean bought = "buy".equals(parts[2]);
                                 label = (bought ? "Bought " : "Sold ") + name;
                                 tag = parts[2];   // buy | sell
@@ -400,57 +442,151 @@ public final class HttpApi {
                      .append(",\"pending\":").append(pending).append('}');
                 }
             }
-            }
         }
         return Response.json(200, b.append(']').toString());
     }
 
-    /** pending = departed, and neither the arrival (destination shard) nor a
-     *  compensating refund (this shard) has committed yet. */
-    private static boolean isStillInFlight(Connection homeConn, Shard home, UUID tx, String toStr) {
-        try {
-            UUID refundId = UUID.nameUUIDFromBytes(("refund:" + tx).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            try (var ps = homeConn.prepareStatement("SELECT 1 FROM transactions WHERE id = ? AND kind = 'refund'")) {
-                ps.setObject(1, refundId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) return false;    // bounced and refunded: settled
-                }
+    /** One row of the statement page, exactly as STATEMENT_SQL returns it.
+     *  The page is bounded at 40, so it is read out of the cursor in one go
+     *  and decorated afterwards · see the comment at the fetch. */
+    private record StatementRow(UUID tx, BigDecimal amount, Instant at, String kind,
+                                String otherOwner, String otherKind, BigDecimal assetUnits) {}
+
+    /**
+     * Everything the page needs that STATEMENT_SQL cannot select, gathered
+     * for the WHOLE page.
+     *
+     * These three facts all live outside the entries table, and two of them
+     * live outside this shard entirely: who a departed payment was addressed
+     * to (this shard's outbox), who an arrival came from (some OTHER
+     * region's outbox), and whether a departure is still in the air (the
+     * DESTINATION shard's transactions). Each was being fetched per row, so
+     * a statement page of cross-region payments opened a connection to
+     * another machine forty times to ask forty single-row questions.
+     *
+     * Nothing here changes what an answer is. It changes how many times the
+     * question is asked: once per page, per shard, instead of once per row.
+     */
+    private record PageFacts(Map<UUID, String> departedTo,
+                             Map<UUID, String> arrivedFrom,
+                             Set<UUID> inFlight) {}
+
+    private static PageFacts pageFacts(Connection c, Shard home, List<StatementRow> rows) throws Exception {
+        Map<UUID, String> departedTo = new HashMap<>();
+        Map<UUID, String> arrivedFrom = new HashMap<>();
+        Set<UUID> inFlight = new HashSet<>();
+
+        List<UUID> departs = new ArrayList<>(), arrives = new ArrayList<>();
+        for (StatementRow r : rows) {
+            if ("depart".equals(r.kind())) departs.add(r.tx());
+            else if ("arrive".equals(r.kind())) arrives.add(r.tx());
+        }
+        if (departs.isEmpty() && arrives.isEmpty()) return new PageFacts(departedTo, arrivedFrom, inFlight);
+
+        // the depart legs' own events, from this shard's outbox · one query
+        departedTo.putAll(outboxFields(c, departs, "to"));
+
+        // the arrival legs have no local event · ask the other regions, one
+        // query per region rather than one per row, and stop as soon as every
+        // arrival on the page has been named
+        List<UUID> unnamed = new ArrayList<>(arrives);
+        for (Shard s : Shards.all()) {
+            if (s == home || unnamed.isEmpty()) continue;
+            try (Connection sc = s.open()) {
+                Map<UUID, String> found = outboxFields(sc, unnamed, "from");
+                arrivedFrom.putAll(found);
+                unnamed.removeAll(found.keySet());
             }
-            if (toStr == null) return false;
-            Shard dest = Shards.forCustomer(Long.parseLong(toStr));
-            if (dest == home) return false;
-            try (Connection dc = dest.open();
-                 var ps = dc.prepareStatement("SELECT 1 FROM transactions WHERE id = ? AND kind = 'arrive'")) {
-                ps.setObject(1, tx);
-                try (ResultSet rs = ps.executeQuery()) {
-                    return !rs.next();
+        }
+
+        /* PENDING · departed, with neither a compensating refund here nor an
+           arrival there.
+           The catch is deliberately only around THIS part, and it is the
+           trade-off the per-row version made: a pending flag that cannot be
+           checked right now reads as "not pending", because the alternative
+           is telling a customer their settled payment is in the air. The
+           labels above do not get the same treatment · a statement that
+           cannot name its own rows should fail loudly, as it always has. */
+        try {
+            if (!departs.isEmpty()) {
+                // the refund ids are DERIVED from the departure's, not stored,
+                // so they have to be mapped back after the lookup
+                Map<UUID, UUID> refundToDepart = new HashMap<>();
+                for (UUID tx : departs) refundToDepart.put(refundIdFor(tx), tx);
+                Set<UUID> settledByRefund = new HashSet<>();
+                for (UUID r : txIdsOfKind(c, new ArrayList<>(refundToDepart.keySet()), "refund"))
+                    settledByRefund.add(refundToDepart.get(r));
+
+                // group what is left by the shard it was addressed to: one
+                // arrival query per destination, however many rows point there
+                Map<Shard, List<UUID>> byDest = new HashMap<>();
+                for (UUID tx : departs) {
+                    if (settledByRefund.contains(tx)) continue;
+                    String to = departedTo.get(tx);
+                    if (to == null) continue;                  // unaddressed · not in flight
+                    Shard dest = Shards.forCustomer(Long.parseLong(to));
+                    if (dest == home) continue;                // never left · not in flight
+                    byDest.computeIfAbsent(dest, d -> new ArrayList<>()).add(tx);
+                    inFlight.add(tx);                          // until an arrival says otherwise
+                }
+                for (var e : byDest.entrySet()) {
+                    try (Connection dc = e.getKey().open()) {
+                        inFlight.removeAll(txIdsOfKind(dc, e.getValue(), "arrive"));
+                    }
                 }
             }
         } catch (Exception e) {
-            return false;   // cannot check right now · don't alarm the user
+            inFlight.clear();   // cannot check right now · don't alarm the user
         }
+        return new PageFacts(departedTo, arrivedFrom, inFlight);
     }
 
-    /** a field of the departed event in THIS shard's outbox (the depart leg) */
-    private static String outboxField(Connection c, UUID tx, String field) throws Exception {
-        try (var ps = c.prepareStatement("SELECT payload FROM outbox WHERE key = ?")) {
-            ps.setString(1, "departed:" + tx);
+    /** the compensating refund's id is derived from the departure's · the
+     *  saga names it rather than storing a pointer to it */
+    private static UUID refundIdFor(UUID tx) {
+        return UUID.nameUUIDFromBytes(("refund:" + tx).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    /** which of these transactions exist here with this kind · one round trip */
+    private static Set<UUID> txIdsOfKind(Connection c, List<UUID> ids, String kind) throws Exception {
+        Set<UUID> found = new HashSet<>();
+        if (ids.isEmpty()) return found;
+        try (var ps = c.prepareStatement("SELECT id FROM transactions WHERE kind = ? AND id = ANY (?)")) {
+            ps.setString(1, kind);
+            ps.setArray(2, c.createArrayOf("uuid", ids.toArray()));
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Json.num(rs.getString(1), field) : null;
+                while (rs.next()) found.add(rs.getObject(1, UUID.class));
             }
         }
+        return found;
     }
 
-    /** the arrival leg has no local event · ask the other regions' outboxes */
-    private static String departedFieldElsewhere(Shard home, UUID tx, String field) throws Exception {
-        for (Shard s : Shards.all()) {
-            if (s == home) continue;
-            try (Connection c = s.open()) {
-                String v = outboxField(c, tx, field);
-                if (v != null) return v;
+    /**
+     * One field of the departed event of EACH of these transactions, from
+     * this shard's outbox · one query for the whole page.
+     *
+     * The single-row version of this was called once per cross-region row,
+     * and because outbox is indexed only on (id) WHERE published_at IS NULL ·
+     * the relay's queue index, useless for a key · every one of those calls
+     * was a Seq Scan of the outbox. V11 adds the key index; this stops asking
+     * forty times regardless, because the round trip is a cost of its own
+     * that no index removes.
+     */
+    private static Map<UUID, String> outboxFields(Connection c, List<UUID> txs, String field) throws Exception {
+        Map<UUID, String> out = new HashMap<>();
+        if (txs.isEmpty()) return out;
+        Map<String, UUID> byKey = new HashMap<>();
+        for (UUID tx : txs) byKey.put("departed:" + tx, tx);
+        try (var ps = c.prepareStatement("SELECT key, payload FROM outbox WHERE key = ANY (?)")) {
+            ps.setArray(1, c.createArrayOf("text", byKey.keySet().toArray()));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String v = Json.num(rs.getString(2), field);
+                    if (v != null) out.put(byKey.get(rs.getString(1)), v);
+                }
             }
         }
-        return null;
+        return out;
     }
 
     /** The system accounts, by their seeded owner names. */
@@ -524,6 +660,27 @@ public final class HttpApi {
         } catch (Exception e) {
             return product == null ? "account " + id : product;
         }
+    }
+
+    /**
+     * The same, asked AT MOST ONCE PER PAGE for any given id.
+     *
+     * Not a cache · a memo. It lives for the length of one request and dies
+     * with it, so there is no TTL to pick, no invalidation to get wrong, and
+     * no window in which it can serve something the database has since
+     * changed: a name it returns twice was read once, milliseconds ago,
+     * inside the same page.
+     *
+     * That distinction is why this is allowed to exist at all. The bank does
+     * not cache what it is the system of record for. It is merely entitled to
+     * decline to ask the same question thirty times in one breath.
+     */
+    private static String ownerName(Map<String, String> memo, String idStr) {
+        String hit = memo.get(idStr);
+        if (hit != null) return hit;
+        String name = ownerName(idStr);
+        memo.put(idStr, name);
+        return name;
     }
 
     // ------------------------------------------------------------------ x-ray
