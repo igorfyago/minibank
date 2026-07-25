@@ -2100,8 +2100,13 @@ function nwBar(plan) {
     return el;
   };
   const paint = (host, segs) => {
+    // The SIDE is sized by its share of the gross, which is what makes own and
+    // owe comparable across the bar. The SEGMENTS are sized against the side
+    // they live in, because flex-grow values summing under 1 fill only that
+    // fraction and leave the rest as bare track · see MB.barGrows.
+    const grows = MB.barGrows(segs.map(s => s.share));
     let grow = 0;
-    segs.forEach(s => {
+    segs.forEach((s, i) => {
       let el = bar.querySelector('.nw-seg[data-leg="' + s.key + '"]');
       if (!el) {
         el = document.createElement('div');
@@ -2110,7 +2115,7 @@ function nwBar(plan) {
       }
       el.className = 'nw-seg ' + s.tone + (s.share === 0 ? ' hidden' : '');
       if (el.parentNode !== host) host.appendChild(el);
-      el.style.flexGrow = s.share;
+      el.style.flexGrow = grows[i];
       grow += s.share;
     });
     host.style.flexGrow = grow;

@@ -116,6 +116,33 @@
     }));
   }
 
+  /**
+   * Segment widths WITHIN one side of the net worth bar.
+   *
+   * Each leg arrives carrying its share of the GROSS magnitude, which is the
+   * right number for sizing the two sides against each other: own against owe
+   * across the whole bar. It is the wrong number to hand to flex-grow inside a
+   * side, and the failure is quiet rather than loud.
+   *
+   * CSS distributes free space in proportion to flex-grow ONLY when the values
+   * sum to at least 1. Below that it hands out exactly that fraction and leaves
+   * the remainder unfilled. A side holding 0.44 of the bar gave its segments
+   * grow values summing to 0.44, so they filled 44 percent of a side that was
+   * already only 44 percent of the bar, and the rest showed as bare track: two
+   * transparent gaps that looked like a rendering fault and were really a
+   * denominator mistake.
+   *
+   * So the share is renormalised against the side it lives in. The side keeps
+   * its share of the gross, which is the comparison worth seeing, and the
+   * segments divide the side they were given.
+   */
+  function barGrows(shares) {
+    const list = Array.isArray(shares) ? shares.map(Number) : [];
+    const total = list.reduce((a, v) => a + (Number.isFinite(v) && v > 0 ? v : 0), 0);
+    if (total <= 0) return list.map(() => 0);
+    return list.map(v => (Number.isFinite(v) && v > 0 ? v / total : 0));
+  }
+
   // ================================================================== cache
 
   /**
@@ -1452,5 +1479,6 @@
     payeeSig: payeeSig,
     keepPayee: keepPayee,
     pollPlan: pollPlan,
+    barGrows,
   };
 });
