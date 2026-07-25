@@ -35,9 +35,13 @@
   #topnav { min-width:0; overflow-x:auto; scrollbar-width:none; }
   #topnav::-webkit-scrollbar { display:none; }
   #topnav .tab-btn { flex:none; white-space:nowrap; }
-  /* TWO ROWS, TWO JOBS. The estate bar above (auth's eco-nav.js) names the
-     SERVICES: Bank, Invest, Shop, Pay, Trade, Data, Agents. #topnav names the
-     views inside THIS service and nothing else. The seam between them used to
+  /* TWO ROWS, TWO JOBS. The estate bar above names the SERVICES and #topnav
+     names the views inside THIS service, nothing else. The list of services is
+     deliberately NOT repeated here: it lives in auth's eco-nav.js, one shared
+     file every app loads, and that is the whole point. A copy of the list in
+     this comment would be a copy that can drift, which is the failure the
+     shared bar exists to prevent, and it did drift · a hand-written seven-name
+     version of it here was already missing Stats. The seam between them used to
      be a hairline inside this row, because this row carried both jobs: a
      sibling service (Invest) and the repo sat in the same pill row as the
      bank's own tabs, so the row answered two questions at once and answered
