@@ -5102,6 +5102,33 @@ dashTick();
   });
   el.innerHTML = '<span style="color:var(--dim)">' + head + '</span>\n' + rows.join('\n');
 })();
+/* ===================== BOOT-PURE-START =====================================
+ *
+ * FIRST PAINT WAS A SCHEDULING PROBLEM, NOT A SLOW SERVER AND NOT A MISSING
+ * CACHE.
+ *
+ * Measured on the box with no network in the way, best of three: /api/accounts
+ * 4ms, /api/portfolio 7ms, /api/networth 6ms, /api/credit/current 13ms,
+ * /api/card/activity 19ms. Nothing there is worth two seconds of anybody's
+ * attention. What the owner was actually watching was a timer.
+ *
+ * loadAccounts is the ONLY function that resolves `me`, and loadStatement,
+ * loadPortfolio, loadNetworth, loadCardActivity and renderExt all open with
+ * `if (me === null) return`. The page used to fire the lot side by side, which
+ * looks like parallelism and is not: on that first pass the dependent five ran
+ * straight through their early returns while the accounts fetch was still in
+ * the air, having painted nothing. The card rail was not even in the boot list.
+ * So the balance appeared at once and every other panel waited for a tick of
+ * the 2s poller · a two second delay bought with a 6ms request.
+ *
+ * The order is declared now instead of implied. MB.pollPlan decides which
+ * loaders can run this pass and which are owed a run the moment the identity
+ * lands; lib.test.js drives that decision and boot-order.test.js drives this
+ * whole block, in a vm, against stub loaders. Everything the plan releases
+ * runs CONCURRENTLY: the five are independent of each other and of everything
+ * else, so a waterfall would spend five round trips to buy nothing.
+ */
+
 /* Every poller runs through this. api() now throws on 429 and 5xx instead of
    returning an error body as data, and a rejected promise from a bare
    setInterval callback is an unhandled rejection that tells nobody anything.
@@ -5110,8 +5137,102 @@ dashTick();
    two seconds later almost always succeeds. That is the whole recovery. */
 const tick = fn => { try { const p = fn(); if (p && p.catch) p.catch(() => {}); } catch (e) {} };
 
+/* What one pass is made of, as data. `identity: 'resolves'` is the fetch that
+   learns who we are, `identity: 'needs'` is a loader that early-returns
+   without it, and `tab` is a panel only worth polling while it is on screen. */
+const POLL_STEPS = [
+  { name: 'accounts', identity: 'resolves' },
+  { name: 'statement', identity: 'needs' },
+  { name: 'portfolio', identity: 'needs' },
+  { name: 'networth', identity: 'needs' },
+  { name: 'cardActivity', identity: 'needs' },
+  { name: 'ext', identity: 'needs' },
+  { name: 'xray', tab: 'xray' },
+  { name: 'traceRefresh', tab: 'xray' },
+  { name: 'kafka', tab: 'console' },
+];
+const POLL_FNS = {
+  accounts: () => loadAccounts(),
+  statement: () => loadStatement(),
+  portfolio: () => loadPortfolio(),
+  networth: () => loadNetworth(),
+  cardActivity: () => loadCardActivity(),
+  ext: () => renderExt(),
+  xray: () => xrayTick(),
+  traceRefresh: () => traceRefreshTick(),
+  kafka: () => kafkaTick(),
+};
+/** Which tabs are on screen · the only part of the plan's input the DOM owns. */
+function pollTabs() {
+  const shown = sel => { const el = $(sel); return !!el && !el.classList.contains('hidden'); };
+  return { xray: shown('#tab-xray'), console: shown('#tab-console') };
+}
+
+/* THE IDENTITY, FETCHED ONCE AND SHARED · BUT NEVER WAITED ON FOREVER.
+   loadAccounts is what resolves `me`, and the boot pass has to know when it
+   has. A bare call cannot be awaited by two callers without fetching twice, so
+   the in-flight promise is held and handed to whoever asks for it, and dropped
+   the moment it settles. Dropping it on FAILURE is the part that matters most:
+   the next pass must be free to make a fresh request rather than re-await a
+   rejection that can never turn into an identity.
+   A REJECTION IS NOT THE ONLY WAY THIS ENDS BADLY. api() carries no
+   AbortSignal, and a fetch on a stalled connection never settles at all · so a
+   held promise can be dead without ever failing. The old code was accidentally
+   immune, because it simply asked again every two seconds and never held
+   anything. Five poll intervals is four orders of magnitude past the 4ms this
+   endpoint actually takes, so past that the attempt is abandoned and a new one
+   made. Sharing a promise must never turn into waiting on a corpse. */
+const ME_ABANDON_MS = 10000;   // five poll intervals
+let mePromise = null, meAt = 0;
+function meStalled() { return mePromise !== null && Date.now() - meAt >= ME_ABANDON_MS; }
+function ensureMe() {
+  if (me !== null) return Promise.resolve(me);
+  if (meStalled()) mePromise = null;
+  if (!mePromise) {
+    const p = loadAccounts();
+    mePromise = p; meAt = Date.now();
+    const drop = () => { if (mePromise === p) mePromise = null; };
+    p.then(drop, drop);
+  }
+  return mePromise.then(() => me);
+}
+
+/** One poll pass · and the boot pass, because the boot pass IS a poll. */
+async function pollAll() {
+  const plan = MB.pollPlan(POLL_STEPS, { identityKnown: me !== null, tabs: pollTabs() });
+  const pending = plan.waiting.length > 0;
+  for (const name of plan.now) {
+    // The identity fetch and the accounts refresh are the same request. While
+    // something is waiting on it, ensureMe owns that call so the pass makes it
+    // once, not twice.
+    if (pending && name === plan.resolver) continue;
+    tick(POLL_FNS[name]);
+  }
+  if (!pending) return;
+  // ONE pass waits on the identity, and the pass that waited is the one that
+  // releases the dependents. Let every pass wait and a slow identity stacks
+  // them: three passes queued behind one fetch fire all five loaders each when
+  // it lands, fifteen requests to fill five panels. A STALLED fetch is not a
+  // wait though, so this pass takes over and ensureMe asks again.
+  if (mePromise && !meStalled()) return;
+  try { await ensureMe(); }
+  catch (e) { return; }   // no identity, no dependents · the next pass retries
+  for (const name of plan.waiting) tick(POLL_FNS[name]);   // concurrently
+}
+
+/* Paint NOW, then keep painting every two seconds. Idempotent on purpose: a
+   second call · another script, a re-run, a test · must not stack a second
+   interval on top of the first. */
+let pollTimer = null;
+function boot() {
+  if (pollTimer !== null) return;
+  pollTimer = setInterval(() => tick(pollAll), 2000);
+  tick(pollAll);
+}
+/* ====================== BOOT-PURE-END ====================================== */
+
 setReplayable(false);   // nothing is selected yet, and the buttons must say so
-tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); tick(loadNetworth); renderQuiz(); gShow('welcome');
+boot(); renderQuiz(); gShow('welcome');
 $('#homelink').onclick = () => switchTab('app');
 /* DEEP LINKS.
  *
@@ -5143,7 +5264,9 @@ function applyHash() {
 applyHash();
 window.addEventListener('hashchange', applyHash);
 if (location.hash === '#send') { $('#send-panel').classList.remove('hidden'); segPaint(); }
-setInterval(() => { tick(loadAccounts); tick(loadStatement); tick(loadPortfolio); tick(loadNetworth); tick(loadCardActivity); tick(renderExt); if (!$('#tab-xray').classList.contains('hidden')) { tick(xrayTick); tick(traceRefreshTick); } if (!$('#tab-console').classList.contains('hidden')) tick(kafkaTick); }, 2000);
+// the 2s poll used to be declared here, as a setInterval carrying the loader
+// list. It is boot()'s now, above, because the first paint must not be the
+// first thing that timer happens to do.
 </script>
 </body>
 </html>

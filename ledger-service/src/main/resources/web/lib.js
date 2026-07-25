@@ -420,6 +420,51 @@
   }
 
 
+  // ============================================================== poll order
+
+  /**
+   * WHICH LOADERS MAY RUN RIGHT NOW, AND WHICH MUST WAIT FOR THE IDENTITY.
+   *
+   * The app tab's loaders are not peers. One of them resolves who the visitor
+   * is; most of the rest open with `if (me === null) return` and do nothing at
+   * all without it; a couple belong to a tab and are pure waste while that tab
+   * is off screen. Fired as one flat list they produce the bug this function
+   * exists to remove: the dependent loaders all run to their early return
+   * before the identity fetch has come back, so the first pass paints the
+   * balance and nothing else, and every other panel waits for a poll interval
+   * to come round. That wait was never the server · those endpoints answer in
+   * single-digit to low tens of milliseconds.
+   *
+   * Three buckets, and the difference between the last two is the point:
+   *   now      · run this pass
+   *   waiting  · would early-return today; run the moment the identity lands
+   *   skipped  · a hidden tab's poller, correctly not run at all this pass
+   * A skip outranks a wait: nobody is owed a repaint of a panel they are not
+   * looking at.
+   *
+   * `resolver` names the step that learns the identity, so the caller can put
+   * that one call behind its own await rather than issuing the fetch twice.
+   *
+   * Steps are declared as data · { name, identity: 'resolves'|'needs', tab } ·
+   * because a decision that lives in a chain of ifs at the tail of a 5000 line
+   * page is a decision nobody can test.
+   */
+  function pollPlan(steps, state) {
+    var o = state || {};
+    var known = !!o.identityKnown;
+    var tabs = o.tabs || {};
+    var now = [], waiting = [], skipped = [], resolver = null;
+    (steps || []).forEach(function (s) {
+      if (!s || !s.name) return;
+      if (s.identity === 'resolves') { resolver = s.name; now.push(s.name); return; }
+      if (s.tab && !tabs[s.tab]) { skipped.push(s.name); return; }
+      if (s.identity === 'needs' && !known) { waiting.push(s.name); return; }
+      now.push(s.name);
+    });
+    return { now: now, waiting: waiting, skipped: skipped, resolver: resolver };
+  }
+
+
   // ================================================================== the map
 
   /**
@@ -1406,5 +1451,6 @@
     payeeOptions: payeeOptions,
     payeeSig: payeeSig,
     keepPayee: keepPayee,
+    pollPlan: pollPlan,
   };
 });

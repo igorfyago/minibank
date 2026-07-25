@@ -3259,11 +3259,26 @@ test('a selection made mid-fetch discards the stale answer', async () => {
 test('the 2s cadence drives the refresher', () => {
   /* Structural and narrow, like the xrayTick wiring check: the behaviour tests
      drive traceRefreshTick itself, and the one thing they cannot see is
-     whether the page's interval still calls it. */
-  const line = INDEX.split(/\r?\n/).find(l => l.includes('setInterval') && l.includes('xrayTick'));
-  assert.ok(line, 'the 2s interval must still be findable in the page');
-  assert.ok(line.includes('traceRefreshTick'),
-    'the interval must tick the selected panel refresher alongside the feed poller');
+     whether the page's poll still calls it.
+
+     This used to look for a single line holding both setInterval and xrayTick,
+     because the poll WAS one line: an inline setInterval carrying the whole
+     loader list. That list is boot()'s POLL_STEPS now, so the question moved
+     with it · is the selected-panel refresher still polled, on the same tab
+     gate as the feed poller, at the same 2s cadence. boot-order.test.js runs
+     the pass for real and watches traceRefreshTick get called; this only has
+     to pin the wiring that a run in a vm cannot distinguish from a stub. */
+  const a = INDEX.indexOf('const POLL_STEPS');
+  const b = INDEX.indexOf('function pollTabs');
+  assert.ok(a > 0 && b > a, 'the poll step list must still be findable in the page');
+  const poll = INDEX.slice(a, b);
+  assert.ok(/name: 'xray', tab: 'xray'/.test(poll), 'the feed poller is still tab-gated');
+  assert.ok(/name: 'traceRefresh', tab: 'xray'/.test(poll),
+    'the poll must run the selected panel refresher alongside the feed poller, on the same gate');
+  assert.ok(/traceRefresh: \(\) => traceRefreshTick\(\)/.test(poll),
+    'and that step must be wired to the real function');
+  assert.ok(/setInterval\(\(\) => tick\(pollAll\), 2000\)/.test(INDEX),
+    'at the 2s cadence, which is still what the timer is for');
 });
 
 /* ==========================================================================
@@ -3433,4 +3448,73 @@ test('the player narrates through the shared caption, not an inline template', (
   const src = INDEX.slice(i, j);
   assert.ok(/MB\.playCaption\(/.test(src), 'the caption text must come from the tested function');
   assert.ok(!src.includes('`step ${'), 'the inline "step i/n" template is the bug · it must be gone');
+});
+
+// ---------------------------------------------------------------- pollPlan
+/* Which loaders may run right now. The app tab's first paint used to wait a
+   full poll interval for panels the server answers in single-digit
+   milliseconds, because the loaders were fired as one flat list and the five
+   that need `me` all ran to their early return before the one that resolves
+   `me` came back. The order is a decision now, so it is tested like one. */
+const STEPS = [
+  { name: 'accounts', identity: 'resolves' },
+  { name: 'statement', identity: 'needs' },
+  { name: 'portfolio', identity: 'needs' },
+  { name: 'xray', tab: 'xray' },
+  { name: 'kafka', tab: 'console' },
+];
+
+test('pollPlan holds back everything that needs an identity nobody has yet', () => {
+  const p = MB.pollPlan(STEPS, { identityKnown: false, tabs: {} });
+  assert.deepEqual(p.now, ['accounts'], 'only the fetch that can resolve `me` runs');
+  assert.deepEqual(p.waiting, ['statement', 'portfolio']);
+});
+
+test('pollPlan releases them all at once when the identity is known', () => {
+  const p = MB.pollPlan(STEPS, { identityKnown: true, tabs: {} });
+  assert.deepEqual(p.now, ['accounts', 'statement', 'portfolio']);
+  assert.deepEqual(p.waiting, [], 'nothing is deferred once `me` is known');
+});
+
+test('pollPlan names the resolver so one accounts fetch serves both jobs', () => {
+  assert.equal(MB.pollPlan(STEPS, { identityKnown: false, tabs: {} }).resolver, 'accounts');
+  assert.equal(MB.pollPlan(STEPS, { identityKnown: true, tabs: {} }).resolver, 'accounts',
+    'the resolver is named whether or not anything is waiting on it');
+});
+
+test('pollPlan skips a hidden tab, and skipping is not waiting', () => {
+  const p = MB.pollPlan(STEPS, { identityKnown: true, tabs: { xray: false, console: false } });
+  assert.deepEqual(p.skipped, ['xray', 'kafka']);
+  assert.deepEqual(p.waiting, [], 'a hidden panel is not owed a run later · it is not owed one at all');
+});
+
+test('pollPlan runs a visible tab and only that one', () => {
+  const p = MB.pollPlan(STEPS, { identityKnown: true, tabs: { xray: true } });
+  assert.ok(p.now.includes('xray'));
+  assert.deepEqual(p.skipped, ['kafka']);
+});
+
+test('pollPlan gates a hidden tab BEFORE the identity · a skip outranks a wait', () => {
+  const steps = [{ name: 'both', identity: 'needs', tab: 'xray' }];
+  assert.deepEqual(MB.pollPlan(steps, { identityKnown: false, tabs: { xray: false } }),
+    { now: [], waiting: [], skipped: ['both'], resolver: null });
+  assert.deepEqual(MB.pollPlan(steps, { identityKnown: false, tabs: { xray: true } }).waiting,
+    ['both'], 'visible but identity-less · owed a run, not started');
+});
+
+test('pollPlan buckets every step exactly once, whatever the state', () => {
+  for (const known of [true, false]) {
+    for (const tabs of [{}, { xray: true }, { console: true }, { xray: true, console: true }]) {
+      const p = MB.pollPlan(STEPS, { identityKnown: known, tabs });
+      const all = p.now.concat(p.waiting, p.skipped).sort();
+      assert.deepEqual(all, STEPS.map(s => s.name).sort(),
+        'no step vanishes and none is scheduled twice · ' + known + ' ' + JSON.stringify(tabs));
+    }
+  }
+});
+
+test('pollPlan survives being handed nothing at all', () => {
+  assert.deepEqual(MB.pollPlan(), { now: [], waiting: [], skipped: [], resolver: null });
+  assert.deepEqual(MB.pollPlan(STEPS, {}).waiting, ['statement', 'portfolio'],
+    'no state means no identity · the safe reading, not the optimistic one');
 });
