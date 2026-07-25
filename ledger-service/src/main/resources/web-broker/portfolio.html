@@ -29,10 +29,11 @@
   header { display:flex; align-items:center; gap:20px; padding:14px 22px; border-bottom:1px solid var(--line); }
   h1 { font-size:17px; font-weight:650; }
   h1 span { color:var(--accent); }
-  nav { display:flex; gap:6px; margin-left:auto; }
-  .tab-btn { background:none; border:1px solid var(--line); color:var(--dim); padding:6px 16px;
-             border-radius:999px; font:600 13px system-ui; cursor:pointer; }
-  .tab-btn.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  /* NO PILL ROW HERE, so no rules for one. This app has exactly one view, and
+     a row holding a single pill that is permanently active is decoration: it
+     tells you nothing you cannot see by looking at the page. The pills and
+     their phone sizing left with the markup rather than lingering as rules
+     nothing draws, which is the state a copied stylesheet drifts from. */
   main { max-width:1100px; margin:0 auto; padding:22px; }
   .phone { max-width: 540px; margin: 0 auto; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px;
@@ -117,9 +118,6 @@
      own two changes, nothing extra */
   @media (max-width: 760px) {
     header { padding:10px 12px; gap:10px; }
-    nav { overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
-    nav::-webkit-scrollbar { display:none; }
-    .tab-btn { padding:5px 12px; font-size:12px; white-space:nowrap; }
     main { padding:12px; }
     .balance-num { font-size:38px; }
   }
@@ -136,10 +134,13 @@
        2026-07-20, which read as the bank having two front doors rather than
        two services pointing at each other. -->
   <h1>mini<span>broker</span></h1>
-  <nav>
-    <button class="tab-btn on">Portfolio</button>
-    <a class="tab-btn" id="bank-link" href="#" style="text-decoration:none">Bank</a>
-  </nav>
+  <!-- AND NO SECOND ROW. What stood here was one pill named Portfolio, always
+       active because this app has one view, and one named Bank, which is a
+       SERVICE the estate bar above already offers. So the row repeated a
+       destination that was on the screen twice over and marked a place you
+       could not leave. An app bar carries the views inside the app; with a
+       single view there is nothing for it to carry, and the wordmark alone
+       says which app you are in. -->
 </header>
 <main>
   <div class="phone">
@@ -359,16 +360,11 @@ let catalog = null;   // /api/instruments, for the empty watchlist invitation
 let lastMsg = null;   // { symbol, html }
 const sliderVals = {};
 
-/** THE BANK IS ON ITS OWN HOSTNAME · the mirror of index.html's brokerHref.
- *  Derived from the current host so dev and prod both work; local dev has no
- *  bank./broker. split, so it falls back to the ledger's own port. */
-function bankHref() {
-  const h = location.hostname;
-  const base = h.startsWith('broker.')
-    ? location.protocol + '//bank.' + h.slice('broker.'.length)
-    : location.protocol + '//' + h + ':8080';
-  return base + '/?customer=' + encodeURIComponent(customer);
-}
+/* THE BANK'S HOSTNAME IS NOT THIS PAGE'S PROBLEM ANY MORE. bankHref() lived
+ * here to point one header pill at bank.<host>, carrying ?customer= across the
+ * origin split. That pill named a SERVICE, so it belongs to the estate bar,
+ * which is served by auth for every app and derives the same links once
+ * instead of once per page. The function left with its only caller. */
 
 async function api(path, opts) {
   // A rejected fetch (server down, DNS, offline) used to throw out of here and
@@ -1059,7 +1055,6 @@ async function load() {
   $('guide-hint').textContent = '';
 }
 
-$('bank-link').href = bankHref();
 load();
 </script>
 </body>

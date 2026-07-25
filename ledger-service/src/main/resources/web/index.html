@@ -35,9 +35,24 @@
   #topnav { min-width:0; overflow-x:auto; scrollbar-width:none; }
   #topnav::-webkit-scrollbar { display:none; }
   #topnav .tab-btn { flex:none; white-space:nowrap; }
-  /* the seam between this service's tabs and the rest of the estate ·
-     one product, one row, a hairline where the process boundary is */
-  .nav-sep { flex:none; width:1px; align-self:stretch; background:var(--line); margin:0 4px; }
+  /* TWO ROWS, TWO JOBS. The estate bar above (auth's eco-nav.js) names the
+     SERVICES: Bank, Invest, Shop, Pay, Trade, Data, Agents. #topnav names the
+     views inside THIS service and nothing else. The seam between them used to
+     be a hairline inside this row, because this row carried both jobs: a
+     sibling service (Invest) and the repo sat in the same pill row as the
+     bank's own tabs, so the row answered two questions at once and answered
+     neither cleanly. The seam is now the gap between the two bars, and
+     .nav-sep is gone with the things it separated.
+
+     THE DEMO IS AN ACTION, NOT A PLACE. Show wore .tab-btn and sat among the
+     tabs, which told the eye it was a fifth view: pressing it does not change
+     where you are, it starts a 60-second self-driving tour. It keeps its
+     handler and its behaviour, and takes a shape the pills deliberately do not
+     have · filled tint, 8px corners, the play glyph, outside the pill row. */
+  .demo-btn { flex:none; white-space:nowrap; background:rgba(88,166,255,.12);
+              border:1px solid var(--accent); color:var(--accent); padding:6px 14px;
+              border-radius:8px; font:600 13px system-ui; cursor:pointer; }
+  .demo-btn:hover { background:rgba(88,166,255,.22); }
   main { max-width:1100px; margin:0 auto; padding:22px; }
   main:has(#tab-xray:not(.hidden)), main:has(#tab-console:not(.hidden)) { max-width:1520px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px; }
@@ -792,6 +807,7 @@
     nav { overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
     nav::-webkit-scrollbar { display:none; }
     .tab-btn { padding:5px 12px; font-size:12px; white-space:nowrap; }
+    .demo-btn { padding:5px 11px; font-size:12px; }
     #xsvg { min-width:620px; }
     #scalesvg { min-width:780px; }
     main { padding:12px; }
@@ -823,28 +839,28 @@
 <script src="https://auth.b4rruf3t.com/eco-nav.js" defer></script>
 <header>
   <h1 id="homelink">mini<span>bank</span></h1>
+  <!-- ROW 2, THE APP BAR · one pill per VIEW INSIDE the bank, nothing else.
+       The estate bar above is row 1 and it names the services; anything that
+       is a SERVICE, an ACTION or an external link has left this row:
+
+         "App" was never a view. It is the accounts screen, so it says
+         Accounts, which is the noun for what you are looking at. The
+         data-tab key stays "app" because it addresses #tab-app and every
+         existing #app deep link.
+         "Invest" is a sibling service and the estate bar already offers it.
+         Two doors to the broker, one of them shaped like a tab of this app,
+         made the boundary between the two services invisible.
+         "Show" starts a demo, so it is a control, not a destination. It is
+         still in the header, to the right, wearing .demo-btn.
+         "GitHub" is neither a view nor a service. The hero already carries
+         the repo link, which is where a first-time visitor meets it. -->
   <nav id="topnav">
-    <button class="tab-btn on" data-tab="app">App</button>
-    <!-- Invest sits beside App, not inside it. Until now the only door to the
-         broker was a button inside the Investments tile, which you had to know
-         to expand: someone who came here to trade had nowhere to click. App and
-         Invest are the two things a CUSTOMER does; X-ray, Console, Quiz and
-         Show are how the thing works. An anchor rather than a tab because the
-         broker is a separate service on its own origin, which is what keeps its
-         four fetches same-origin against itself. -->
-    <a class="tab-btn" id="nav-invest" href="https://broker.b4rruf3t.com/portfolio">Invest</a>
+    <button class="tab-btn on" data-tab="app">Accounts</button>
     <button class="tab-btn" data-tab="xray">X-ray</button>
     <button class="tab-btn" data-tab="console">Console</button>
     <button class="tab-btn" data-tab="quiz">Quiz</button>
-    <button class="tab-btn" id="nav-show" title="a 60-second guided, self-driving demo">▶ Show</button>
-    <span class="nav-sep" aria-hidden="true"></span>
-    <!-- THE ESTATE lives in the eco-nav bar above, one bar served by auth for
-         every app, with the signed-in user beside it. It used to be repeated
-         here as pills, which put the same four links on the screen twice and
-         made every header a different length. This row is the BANK's: its own
-         tabs, its one state-carrying partner (Invest, above), and the repo. -->
-    <a class="tab-btn" href="https://github.com/igorfyago/minibank" target="_blank" style="text-decoration:none">GitHub</a>
   </nav>
+  <button id="show-demo" class="demo-btn" title="a 60-second guided, self-driving demo">▶ Show</button>
 </header>
 <main>
 
@@ -1506,12 +1522,11 @@ async function loadAccounts() {
   const mine = accounts.find(a => a.id === me);
   $('#balance').textContent = mine ? fmt(mine.balance) : '·';
   $('#acct-label').textContent = mine ? `Main · EUR · ${mine.region} region` : 'Main · EUR';
-  // The broker defaults to customer 10 when asked without one, so a link that
-  // forgets this lands the visitor in somebody else's portfolio. brokerHref
-  // already carries it; the nav just has to be told each time the customer
-  // changes, which switchUser does by calling straight back through here.
-  const invest = $('#nav-invest');
-  if (invest && me !== null) invest.href = brokerHref(me);
+  // The broker link that used to be repainted here left the header with the
+  // Invest pill: the estate bar owns cross-service navigation now. The only
+  // door to the broker this page still writes is the one inside the
+  // Investments tile, and it calls brokerHref(me) at render time, so the
+  // customer is still carried and still current after switchUser.
   // The "To" dropdown is inside a 2s poll. Repainting a <select> with
   // innerHTML throws away its <option> nodes and the selection collapses to
   // the first entry, so picking coco reverted to oscar seconds later. Repaint
@@ -4420,7 +4435,7 @@ function dismissHero() {
   $('#hero').classList.add('hidden');
   try { localStorage.setItem('mb-seen', '1'); } catch (e) {}
 }
-$('#nav-show').onclick = startShow;
+$('#show-demo').onclick = startShow;
 $('#hero-show').onclick = startShow;
 $('#hero-explore').onclick = dismissHero;
 $('#show-skip').onclick = stopShow;
