@@ -17,7 +17,9 @@
     { id: 'desk',   label: 'Trade',  href: 'https://desk.b4rruf3t.com' },
     { id: 'gex',    label: 'Data',   href: 'https://gex.b4rruf3t.com' },
     { id: 'stats',  label: 'Stats',  href: 'https://analytics.b4rruf3t.com' },
-    { id: 'obs',    label: 'Agents', href: 'https://obs.b4rruf3t.com' }
+    { id: 'obs',    label: 'Agents', href: 'https://obs.b4rruf3t.com' },
+    { id: 'ask',    label: 'Ask',    href: 'https://ask.b4rruf3t.com' },
+    { id: 'ware',   label: 'Warehouse', href: 'https://warehouse.b4rruf3t.com' }
   ];
 
   /* The bar is a DIV, not a <nav>, and its geometry rides inline on the
