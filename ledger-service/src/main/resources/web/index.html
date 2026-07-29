@@ -4147,10 +4147,21 @@ async function followPoll(tx, token, attempt) {
  * buttons) both hand it to followed() afterwards, so the follow is a property
  * of running a tool rather than something each tool has to remember. */
 let pendingFollow = null;
+/* The id of the last transaction the visitor CAUSED. The show needs it: when
+   Rita sends the money, the id is minted inside the tool and never returned,
+   so the later steps (the duplicate retry, the replay on the map) would have
+   nothing to point at. */
+let lastFollowedTx = null;
+/* The show drives its own pacing and narrates each move before making it, so
+   while it is running an action must not also yank the page to the X-ray tab
+   on its own. The id is still recorded; only the jump is suppressed. */
+let showSuppressFollow = false;
 function willFollow(spec) { pendingFollow = spec || null; return spec && spec.tx; }
 function followed(out) {
   const spec = pendingFollow; pendingFollow = null;
   if (!spec || (out && out.err)) return;      // a failed action created nothing
+  lastFollowedTx = spec.tx;
+  if (showSuppressFollow) return;
   followStart(spec);
 }
 /** The owner name the events feed uses for both sides of this customer's rows. */
@@ -4387,15 +4398,39 @@ const SHOW = [
     run: async () => { switchTab('app'); window.scrollTo({ top: 0, behavior: 'smooth' }); await loadAccounts(); }, dwell: 4600 },
   { cap: 'igor lives in the eu region. coco lives in uk · physically a different database on a different machine. No transaction can span the two.',
     run: () => switchUser(10), dwell: 4800 },
-  { cap: 'Sending €21 from igor to coco · a payment that has to cross countries…',
+  { cap: 'Nobody is going to press Send. This bank has an agent that can act on the account, so I am simply going to ask it, in English.',
     run: async () => {
       const mine = (await api('/api/accounts')).find(a => a.id === 10);
       if (!mine || Number(mine.balance) < 25)
         await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: uuid(), from: 1, to: 10, amount: '100.00' }) });
-      showTx = uuid();
-      await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: showTx, from: 10, to: 11, amount: '21.00' }) });
+      showTx = null; lastFollowedTx = null;
+      ritaOpen(true);
+      chatLog = []; chatHello(); chatPaint();
+      await showSleep(650);
+      $('#chat-in').value = 'hi! please send 21 EUR to Coco, please';
+    }, dwell: 2400 },
+  { cap: 'The agent gets the sentence, the customer it belongs to, and a set of real tools: send, trade, borrow, relocate. It has to pick one and fill it in.',
+    run: async () => { await $('#chat-send').onclick(); }, dwell: 1400 },
+  { cap: 'It chose to send, and it is asking first. An agent that can move money proposes; a human allows. Nothing moves on the model’s word alone.',
+    run: async () => {
+      // never hang the show on a slow model · about ten seconds, then move on
+      for (let i = 0; i < 40 && !chatLog.some(m => m.role === 'action' && m.status === 'pending'); i++)
+        await showSleep(250);
+    }, dwell: 4200 },
+  { cap: 'Allowed. The agent now calls exactly the endpoint the Send button calls, with a transaction id minted before the request · same rails, same rules.',
+    run: async () => {
+      const i = chatLog.findIndex(m => m.role === 'action' && m.status === 'pending');
+      if (i >= 0) { await actAllow(i); showTx = lastFollowedTx; }
+      if (!showTx) {
+        /* The model was slow, or declined. The show still has a payment to
+           tell the rest of the story with, and it says so rather than
+           narrating an agent that never answered. */
+        $('#show-cap').textContent = 'The agent did not answer in time, so this one goes the ordinary way. Everything after this point is identical.';
+        showTx = uuid();
+        await api('/api/transfer', { method: 'POST', body: JSON.stringify({ txId: showTx, from: 10, to: 11, amount: '21.00' }) });
+      }
       prevStmtSig = ''; await loadStatement(); await loadAccounts();
-    }, dwell: 3400 },
+    }, dwell: 4400 },
   { cap: 'The app answers instantly · and honestly: PENDING. The money is truly in flight between two machines, and the books say so.',
     run: () => {}, dwell: 4600 },
   { cap: 'Now a network retry hits the bank with the SAME transaction id… and bounces off a primary key: “already processed”. Money cannot move twice.',
@@ -4414,6 +4449,7 @@ const SHOW = [
 
 async function startShow() {
   stopShow(); dismissHero();
+  showSuppressFollow = true;
   const my = Symbol(); showRun = my;
   $('#showbar').classList.remove('hidden');
   $('#show-dots').innerHTML = SHOW.map(() => '<span class="show-dot"></span>').join('');
@@ -4432,6 +4468,7 @@ async function startShow() {
 }
 function stopShow() {
   showRun = null;
+  showSuppressFollow = false;
   if (showTimer) clearTimeout(showTimer);
   $('#showbar').classList.add('hidden');
 }

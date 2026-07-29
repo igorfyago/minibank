@@ -2180,6 +2180,10 @@ function liftFollow(replies) {
     following: null, deepLinkTx: null, loopTimer: null,
     activeTrace: null, selectionExplicit: false, latestEvents: [],
     MAP: FOLLOW_MAP, pendingFollow: null,
+    // the page records the id of whatever the visitor caused, and lets the
+    // guided show keep the wheel rather than being yanked to another tab
+    // mid-narration. Both live beside pendingFollow and followed() reads them.
+    lastFollowedTx: null, showSuppressFollow: false,
     // what the test watches
     polled: [], rendered: [], played: [], captions: [], stopped: 0,
     document: { querySelector: () => null, querySelectorAll: () => [] },
