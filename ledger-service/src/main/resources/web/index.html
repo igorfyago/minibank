@@ -3912,9 +3912,22 @@ let replayInFlight = null;
 function showReplayInFlight(amount) {
   replayInFlight = amount == null ? null : amount;
   const fly = $('#inflight-num'); if (!fly) return;
-  if (replayInFlight == null) { fly.parentNode.classList.remove('inflight-on'); return; }
+  if (replayInFlight == null) { fly.parentNode.classList.remove('inflight-on'); fly.textContent = '€' + (lastSummary ? lastSummary.inFlight : '0.00'); return; }
   fly.textContent = '€' + Number(amount).toFixed(2);
   fly.parentNode.classList.add('inflight-on');
+}
+
+/* A local payment commits in one region and never enters the cross-region
+   pipe, so nothing is ever in flight for it · correctly zero. But a bare 0.00
+   sitting under "in flight" while a payment replays reads as a stuck number,
+   not as "this one stayed home". During a local replay the box says so, and
+   because it owns replayInFlight the 2s poller yields to it exactly as it does
+   for the amber state. */
+function showReplayLocal() {
+  replayInFlight = 'local';
+  const fly = $('#inflight-num'); if (!fly) return;
+  fly.parentNode.classList.remove('inflight-on');
+  fly.textContent = 'stayed local';
 }
 
 /** Highlight the step being narrated. */
@@ -4006,6 +4019,9 @@ function playTrace(tr) {
   const arr = j.hops.find(h => h.step === 'arrive' || h.step === 'refund');
   if (dep) playTimers.push(setTimeout(() => showReplayInFlight(tr.amount), dep.end));
   if (arr) playTimers.push(setTimeout(() => showReplayInFlight(null), arr.end));
+  // a payment with a transfer leg but no depart never crossed a region · the
+  // box should say that rather than leave a zero standing that looks broken
+  else if (!dep && steps.some(x => /^transfer/.test(x.step))) showReplayLocal();
 
   playTimers.push(setTimeout(() => {
     document.querySelectorAll('.trace-step').forEach(el => el.classList.remove('active'));
