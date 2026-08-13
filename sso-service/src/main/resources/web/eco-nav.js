@@ -7,6 +7,7 @@
 
   var TOKEN_KEY = 'b4rruf3t_token';
   var REFRESH_KEY = 'b4rruf3t_refresh';
+  var USER_KEY = 'b4rruf3t_user';
   var API = 'https://auth.b4rruf3t.com';
 
   /* Tab label = subdomain = the app's own wordmark. One name per app,
@@ -166,6 +167,26 @@
     document.body.insertBefore(nav, document.body.firstChild);
     buildTape();
     paintUser(user, nav);
+
+    /* The other apps PRE-RENDER on hover (Chrome speculation rules; every
+     * estate host answers Supports-Loading-Mode: credentialed-prerender via
+     * Caddy), so a tab click swaps to a page that is already built and the
+     * bar reads as one static object that adapts. There is no shared DOM to
+     * keep alive across ten origins · the illusion is the achievable half,
+     * and it is indistinguishable. Browsers without the API skip this. */
+    if (typeof HTMLScriptElement !== 'undefined' && HTMLScriptElement.supports
+        && HTMLScriptElement.supports('speculationrules')) {
+      var spec = document.createElement('script');
+      spec.type = 'speculationrules';
+      spec.textContent = JSON.stringify({
+        prerender: [{
+          urls: TABS.filter(function (t) { return new URL(t.href).hostname !== host; })
+                    .map(function (t) { return t.href; }),
+          eagerness: 'moderate'
+        }]
+      });
+      document.head.appendChild(spec);
+    }
   }
 
   /* The band is reserved by the stylesheet (html{padding-top}), and the bar's
@@ -176,11 +197,31 @@
     return '<a href="' + API + '/login?next=' + encodeURIComponent(location.href) + '">Sign in</a>';
   }
 
-  /* Stable placeholder so the async /users/me paint never moves anything. */
+  function renderUser(widget, name) {
+    var avatar = document.createElement('span');
+    avatar.className = 'eco-avatar';
+    avatar.textContent = name[0].toUpperCase();
+    var label = document.createElement('span');
+    label.textContent = name;
+    var out = document.createElement('a');
+    out.href = '#';
+    out.style.marginLeft = '8px';
+    out.textContent = 'Sign out';
+    out.onclick = function () { window.ecoLogout(); return false; };
+    widget.replaceChildren(avatar, label, out);
+  }
+
+  /* The LAST KNOWN identity paints synchronously; the fetch only confirms it.
+   * The widget used to sit empty for a network round trip on every single
+   * page, and that late name arriving was the bar visibly assembling itself:
+   * the one part of the "static" chrome that moved on every navigation. A
+   * transient fetch failure keeps the painted name (the next page revalidates);
+   * only a real 401 signs the visitor out of the widget. */
   function paintUser(widget, nav) {
-    var done = function () {};
     var token = localStorage.getItem(TOKEN_KEY);
-    if (!token) { widget.innerHTML = signInLink(); done(); return; }
+    if (!token) { widget.innerHTML = signInLink(); return; }
+    var known = localStorage.getItem(USER_KEY);
+    if (known) renderUser(widget, known);
 
     fetch(API + '/v1/users/me', { headers: { 'Authorization': 'Bearer ' + token } })
       .then(function (r) {
@@ -191,26 +232,20 @@
           });
           localStorage.removeItem(TOKEN_KEY);
           localStorage.removeItem(REFRESH_KEY);
+          localStorage.removeItem(USER_KEY);
           throw new Error('session expired');
         });
       })
       .then(function (r) { return r.json(); })
       .then(function (u) {
         var name = u.name || u.email || '?';
-        var avatar = document.createElement('span');
-        avatar.className = 'eco-avatar';
-        avatar.textContent = name[0].toUpperCase();
-        var label = document.createElement('span');
-        label.textContent = name;
-        var out = document.createElement('a');
-        out.href = '#';
-        out.style.marginLeft = '8px';
-        out.textContent = 'Sign out';
-        out.onclick = function () { window.ecoLogout(); return false; };
-        widget.replaceChildren(avatar, label, out);
-        done();
+        localStorage.setItem(USER_KEY, name);
+        if (name !== known) renderUser(widget, name);
       })
-      .catch(function () { widget.innerHTML = signInLink(); done(); });
+      .catch(function () {
+        if (!localStorage.getItem(TOKEN_KEY)) { widget.innerHTML = signInLink(); return; }
+        if (!known) widget.innerHTML = signInLink();
+      });
   }
 
   function refreshToken() {
@@ -241,6 +276,7 @@
     }
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_KEY);
+    localStorage.removeItem(USER_KEY);
     location.reload();
   };
 
