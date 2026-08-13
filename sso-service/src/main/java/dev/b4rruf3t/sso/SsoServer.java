@@ -259,7 +259,10 @@ public final class SsoServer {
         try (var in = getClass().getResourceAsStream("/web/" + name)) {
             if (in == null) return Response.json(404, "{\"error\":\"not found\"}");
             String js = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-            ex.getResponseHeaders().add("Cache-Control", "max-age=300");
+            // Serve-stale semantics: after the 5-minute window the browser paints
+            // from its cached copy INSTANTLY and refreshes in the background,
+            // instead of blocking the estate bar on a cross-origin round trip.
+            ex.getResponseHeaders().add("Cache-Control", "public, max-age=300, stale-while-revalidate=86400");
             return new Response(200, js, "application/javascript; charset=utf-8");
         }
     }

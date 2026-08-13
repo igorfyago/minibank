@@ -9,15 +9,18 @@
   var REFRESH_KEY = 'b4rruf3t_refresh';
   var API = 'https://auth.b4rruf3t.com';
 
+  /* Tab label = subdomain = the app's own wordmark. One name per app,
+   * everywhere: the bar, the URL and the page header must never disagree
+   * (they did: Data/gex/options-flow-analytics, Invest/broker/minibroker). */
   var TABS = [
     { id: 'bank',   label: 'Bank',   href: 'https://bank.b4rruf3t.com' },
-    { id: 'broker', label: 'Invest', href: 'https://broker.b4rruf3t.com' },
-    { id: 'mart',   label: 'Shop',   href: 'https://mart.b4rruf3t.com' },
+    { id: 'broker', label: 'Broker', href: 'https://broker.b4rruf3t.com' },
+    { id: 'mart',   label: 'Mart',   href: 'https://mart.b4rruf3t.com' },
     { id: 'pay',    label: 'Pay',    href: 'https://pay.b4rruf3t.com' },
-    { id: 'desk',   label: 'Trade',  href: 'https://desk.b4rruf3t.com' },
-    { id: 'gex',    label: 'Data',   href: 'https://gex.b4rruf3t.com' },
+    { id: 'desk',   label: 'Desk',   href: 'https://desk.b4rruf3t.com' },
+    { id: 'gex',    label: 'GEX',    href: 'https://gex.b4rruf3t.com' },
     { id: 'stats',  label: 'Spark',  href: 'https://spark.b4rruf3t.com' },
-    { id: 'obs',    label: 'Agents', href: 'https://obs.b4rruf3t.com' },
+    { id: 'obs',    label: 'Obs',    href: 'https://obs.b4rruf3t.com' },
     { id: 'rag',    label: 'RAG',    href: 'https://rag.b4rruf3t.com' },
     { id: 'ware',   label: 'Warehouse', href: 'https://warehouse.b4rruf3t.com' }
   ];
@@ -75,8 +78,22 @@
     '#eco-tape .tp-a{margin-left:auto;font-weight:750;white-space:nowrap}',
     '#eco-tape .tp-a.pos{color:#31e981;text-shadow:0 0 11px rgba(49,233,129,.5)}',
     '#eco-tape .tp-a.neg{color:#ff5d6c;text-shadow:0 0 11px rgba(255,93,108,.4)}',
-    '#eco-tape .tp-a.amb{color:#d29922}'
+    '#eco-tape .tp-a.amb{color:#d29922}',
+    /* Placeholder band: paints the bar's dark strip the moment this script
+     * EXECUTES, before the DOM bar is built at DOMContentLoaded. Kills the
+     * "header pops in after the page" flash; the real bar lands on top of it
+     * (higher z) with the identical background, so the seam is invisible. */
+    'html::before{content:"";position:fixed;top:0;left:0;right:0;',
+    'height:var(--eco-nav-h);background:rgba(13,17,23,.95);',
+    'border-bottom:1px solid #21262d;z-index:2147482998;pointer-events:none}'
   ].join('');
+
+  /* Styles go in NOW, not at DOMContentLoaded: the band reservation
+   * (html{padding-top}) and the placeholder strip must be there for the
+   * first paint. Only the bar's DOM waits for the parser to finish. */
+  var earlyStyle = document.createElement('style');
+  earlyStyle.textContent = CSS;
+  (document.head || document.documentElement).appendChild(earlyStyle);
 
   /* The tape lives beside the bar: one fixture, one look, every app. Events
    * queue so a burst paints in order; the tape dims itself back to silence a
@@ -116,10 +133,6 @@
 
   function build() {
     if (document.getElementById('eco-nav')) return;
-
-    var style = document.createElement('style');
-    style.textContent = CSS;
-    document.head.appendChild(style);
 
     var nav = document.createElement('div');
     nav.id = 'eco-nav';
