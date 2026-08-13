@@ -1641,16 +1641,29 @@ test('a live event arriving while an animation runs is queued and drawn later', 
 test('the live poller hands its events to the queue rather than drawing directly', () => {
   // The structural half, and deliberately narrow: it only checks the WIRING
   // that the behaviour test above cannot reach into. See the note above.
-  const i = INDEX.indexOf('async function xrayTick()');
+  const i = INDEX.indexOf('async function xrayTickOnce()');
   const j = INDEX.indexOf('window.tickClick', i);
-  assert.ok(i > 0 && j > i, 'xrayTick must still be findable in the page');
+  assert.ok(i > 0 && j > i, 'the tick body must still be findable in the page');
   const tick = INDEX.slice(i, j);
   assert.ok(/liveQueue\.push\(/.test(tick),
-    'xrayTick must enqueue the events it fetched');
+    'the tick must enqueue the events it fetched');
   assert.ok(/drainLiveQueue\(\)/.test(tick),
-    'xrayTick must ask the queue to drain');
+    'the tick must ask the queue to drain');
   assert.ok(!/runJourney\(/.test(tick),
-    'xrayTick must not animate directly · that is how it used to race replays');
+    'the tick must not animate directly · that is how it used to race replays');
+});
+
+test('the live poller is single flight · concurrent boots must not defeat the backlog gate', () => {
+  /* A cold #xray load starts the tick from three places at once (welcome
+     guide, deep link, poller). The first tick queues history and suppresses
+     the drain via firstPoll; a CONCURRENT tick runs after firstPoll flips
+     and drains that backlog as runs nobody started. The wrapper is the cure,
+     so its wiring is what this pins: one in-flight promise, shared. */
+  const w = INDEX.indexOf('function xrayTick()');
+  assert.ok(w > 0, 'the single-flight wrapper must exist');
+  const body = INDEX.slice(w, INDEX.indexOf('async function xrayTickOnce()'));
+  assert.ok(/if \(!xrayTickFlight\)/.test(body), 'a tick already in flight is reused, not raced');
+  assert.ok(/xrayTickFlight = null/.test(body), 'and the flight is released when it lands');
 });
 
 /* ==========================================================================
@@ -3020,11 +3033,11 @@ test('the live poller reconciles the ticker rather than rebuilding it', () => {
   /* The structural half, narrow on purpose, like the drainLiveQueue wiring
      check above: the behaviour tests drive renderTicker itself, and the one
      thing they cannot see is whether xrayTick still CALLS it. */
-  const i = INDEX.indexOf('async function xrayTick()');
+  const i = INDEX.indexOf('async function xrayTickOnce()');
   const j = INDEX.indexOf('window.tickClick', i);
-  assert.ok(i > 0 && j > i, 'xrayTick must still be findable in the page');
+  assert.ok(i > 0 && j > i, 'the tick body must still be findable in the page');
   const tick = INDEX.slice(i, j);
-  assert.ok(/renderTicker\(/.test(tick), 'xrayTick must hand the feed to the reconciler');
+  assert.ok(/renderTicker\(/.test(tick), 'the tick must hand the feed to the reconciler');
   assert.ok(!/\$\('#ticker'\)\.innerHTML\s*=/.test(tick),
     'and must not assign the list wholesale · that is the rebuild that dropped the reader');
 });
