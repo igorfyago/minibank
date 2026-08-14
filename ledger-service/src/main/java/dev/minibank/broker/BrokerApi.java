@@ -847,6 +847,7 @@ public final class BrokerApi {
                         "{\"error\":\"not found\"}".getBytes(StandardCharsets.UTF_8));
                 return;
             }
+            ex.getResponseHeaders().set("Cache-Control", "no-cache");
             send(ex, 200, "text/html; charset=utf-8", in.readAllBytes());
         }
     }
@@ -862,7 +863,11 @@ public final class BrokerApi {
                         "{\"error\":\"not found\"}".getBytes(StandardCharsets.UTF_8));
                 return;
             }
-            send(ex, 200, contentType(path), in.readAllBytes());
+            // Estate contract: images a week, documents revalidate every use.
+            String ct = contentType(path);
+            ex.getResponseHeaders().set("Cache-Control",
+                    ct.startsWith("image/") ? "public, max-age=604800" : "no-cache");
+            send(ex, 200, ct, in.readAllBytes());
         }
     }
 

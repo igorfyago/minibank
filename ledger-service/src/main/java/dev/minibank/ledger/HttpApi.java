@@ -1158,6 +1158,11 @@ public final class HttpApi {
                     : path.endsWith(".svg") ? "image/svg+xml"
                     : path.endsWith(".png") ? "image/png"
                     : path.endsWith(".json") ? "application/manifest+json" : "application/octet-stream";
+            // Icons and images hold for a week in any cache; documents revalidate
+            // on every use so a deploy never leaves a stale page behind. Headers
+            // pre-set on the exchange ride out with the Response (sso pattern).
+            ex.getResponseHeaders().set("Cache-Control",
+                    type.startsWith("image/") ? "public, max-age=604800" : "no-cache");
             return new Response(200, type, in.readAllBytes());
         }
     }
