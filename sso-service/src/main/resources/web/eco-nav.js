@@ -1,5 +1,8 @@
 /* b4rruf3t estate navigation · the one bar every app includes.
- * Canonical delivery: <script src="https://auth.b4rruf3t.com/eco-nav.js" defer></script>
+ * Canonical delivery: <script src="https://auth.b4rruf3t.com/eco-nav.js" async></script>
+ * (async, not defer: defer waits for the WHOLE parse, and on the bank's long
+ *  document the band stood empty until the end; async + the body gate below
+ *  puts the bar up before the first app content paints)
  * Progressive enhancement: if auth. is unreachable the page simply has no estate bar.
  * Replaces the old eco-nav.html fragments that were vendored per app and drifted. */
 (function () {
@@ -140,6 +143,9 @@
     nav.setAttribute('role', 'navigation');
     nav.setAttribute('aria-label', 'b4rruf3t estate');
     nav.style.cssText = GEOMETRY;
+    /* When the bar stood up, in page-clock ms · the proof the body-gate works:
+     * on the bank this must be far below domContentLoadedEventStart. */
+    nav.dataset.builtAt = String(Math.round((window.performance && performance.now()) || 0));
 
     var brand = document.createElement('a');
     brand.className = 'eco-brand';
@@ -280,9 +286,18 @@
     location.reload();
   };
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', build);
-  } else {
-    build();
+  /* Build the moment <body> EXISTS, not when the document finishes parsing.
+   * The include is async: on a warm cache it executes at the top of <body>,
+   * and the bar is standing before the first line of app content paints.
+   * DOMContentLoaded was the old gate, and on the bank's five-thousand-line
+   * document that meant a visibly empty band for the whole parse: the top
+   * row looked REMOVED while the page loaded. The bar only needs body as an
+   * insertion point; it does not care what has parsed below it. */
+  function whenBody(fn) {
+    if (document.body) { fn(); return; }
+    new MutationObserver(function (m, o) {
+      if (document.body) { o.disconnect(); fn(); }
+    }).observe(document.documentElement, { childList: true });
   }
+  whenBody(build);
 })();
